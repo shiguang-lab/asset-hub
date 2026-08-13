@@ -2,8 +2,36 @@
 
 ## 1. 本次交付范围
 
-基于 PRD V1.0、72 张 UI 交互图与 5 份应用技术设计，实现全部 P0 能力并以可运行 monorepo 交付。
+基于 PRD V1.0、72 张 UI 交互图与 5 份应用技术设计，实现 PRD 附录 A 全部 42 个页面及
+P0/P1 全部可落地的后台链路，以可运行 monorepo 交付。
 不包含占位实现：所有页面、接口、任务、索引、发布与 MCP 工具均为真实功能，且全流程可在本地无外部依赖运行。
+
+## 1.1 页面清单覆盖
+
+PRD 附录 A 42 个页面全部实现：
+
+- P0（01–32、34–38、41–42）：首页、全局新建/搜索、资产中心与详情（内容/信息/版本/关系）、
+  Markdown/HTML 编辑器、知识库（列表/新建/详情/Ask/资料管理）、调研（首页/新建）、任务中心与详情、
+  Research 结果/Source/Evidence、Dataset 数据页与 AI 分析、在线演示（首页/新建/编辑器/播放）、模板中心、
+  发布/分享、公开文档页、通知、Credits、设置、MCP 设置与连接向导、API Token、404/异常状态页。
+- P1（08、15、33、39、40）：资产关系视图、Research 计划确认（新建页内 AI 范围确认）、个人中心
+  （`/profile`）、Git 集成（`/settings` Git 页 + worker 同步链路）、自定义域名（`/settings` 域名页 +
+  DNS 验证 + 网关 Host 解析）。
+- 额外交付：`/publishes` 发布管理页（二维码/重新发布/撤销/访问量）、定时任务管理（任务中心内）、
+  团队与权限（成员邀请/角色/资产 ACL/分享通知）。
+
+## 1.2 后台链路覆盖
+
+- 演示大纲确认：`POST /presentations/outline`（AI 生成大纲）→ 前端确认编辑 → `POST /presentations/outline/confirm`
+  （创建演示资产并自动建立 `generated_from` 关系）；
+- Git 同步：连接（GitHub/GitLab/本地目录）→ `git_sync` 任务 → worker 拉取/扫描 Markdown 文档 →
+  投影为文档资产 → 连接状态回写；
+- 定时任务：cron 表 + worker Scheduler 轮询到期 → 经 internal API 创建 Research 任务（含 Credits 预留与
+  完成通知），支持停用/启用/删除；
+- 自定义域名：添加 → DNS TXT Token 验证 → 绑定发布 → public-gateway 按 Host 解析域名并分发内容；
+- 团队与权限：工作区成员（admin/editor/viewer）、资产 ACL（editor/viewer）、分享（自动切换 link 可见性 +
+  站内通知），`canAccess` 校验读写权限；
+- 双向资产关系：`listRelations` 同时返回 out/in 方向与目标资产，Web 关系视图展示来源/输出。
 
 ## 2. 实现决策
 
@@ -29,6 +57,12 @@
 7. MCP：官方 SDK 客户端 initialize → tools/list（7 工具）→ search_assets 返回真实资产 ✅
 8. Web：`http://localhost:3000` 可访问，页面路由与 API 代理正常 ✅
 9. `pnpm check`（format/lint/typecheck/test/build）全绿 ✅
+10. 演示大纲生成 → 确认编辑 → 创建演示资产（含 `generated_from` 关系）✅
+11. Git 本地目录同步 → 2 篇 Markdown 导入为文档资产 ✅
+12. 定时任务（cron）→ worker 到期创建 Research 任务并完成 ✅
+13. 自定义域名：添加 → Token 验证 → 绑定发布 → 网关 Host 解析返回内容 ✅
+14. 团队成员邀请 + 资产分享（ACL + link 可见性 + 通知）✅
+15. 扩充冒烟脚本至 12 项，12/12 通过 ✅
 
 ## 4. 修复的关键问题
 
@@ -38,6 +72,7 @@
 - 数据集投影未创建 `datasets` 记录；
 - 演示 manifest 嵌套导致 0 页；
 - MCP SDK Node transport 与 Fastify 兼容问题（改为自研 JSON-RPC 层）。
+- 定时任务 goal 未随 spec 下发导致 Research 校验失败（internal 创建任务时补 goal）。
 
 ## 5. 生产化路径
 

@@ -10,6 +10,7 @@ import { registerPresentations } from "./presentations.js";
 import { registerPublishing } from "./publishing.js";
 import { registerTasks } from "./tasks.js";
 import { registerTemplates } from "./templates.js";
+import { registerWorkspace } from "./workspace.js";
 
 export function registerModules(app: FastifyInstance): void {
   registerHome(app);
@@ -23,4 +24,5 @@ export function registerModules(app: FastifyInstance): void {
   registerBilling(app);
   registerIntegrations(app);
   registerTemplates(app);
+  registerWorkspace(app);
 }

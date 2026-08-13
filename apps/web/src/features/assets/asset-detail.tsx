@@ -2,7 +2,9 @@ import {
   Button,
   Card,
   Empty,
+  Field,
   formatDate,
+  Input,
   Modal,
   Select,
   StatusBadge,
@@ -27,6 +29,9 @@ export function AssetDetailPage() {
   const [tab, setTab] = useState("content");
   const [kbModal, setKbModal] = useState(false);
   const [kbId, setKbId] = useState("");
+  const [shareModal, setShareModal] = useState(false);
+  const [shareSubject, setShareSubject] = useState("");
+  const [shareRole, setShareRole] = useState("viewer");
   const [publishOpen, setPublishOpen] = useState(false);
 
   const { data: asset } = useQuery<Asset>({
@@ -47,10 +52,19 @@ export function AssetDetailPage() {
     enabled: Boolean(id),
   });
   const { data: relations } = useQuery<
-    Array<{ relation: { relationType: string; targetAssetId: string }; asset: Asset | null }>
+    Array<{
+      relation: { relationType: string; targetAssetId: string };
+      asset: Asset | null;
+      direction: "in" | "out";
+    }>
   >({
     queryKey: ["asset-relations", id],
     queryFn: () => api(`/assets/${id}/relations`),
+    enabled: Boolean(id),
+  });
+  const { data: acl } = useQuery<{ acl: Array<{ principal_id: string; role: string }> }>({
+    queryKey: ["asset-acl", id],
+    queryFn: () => api(`/assets/${id}/acl`),
     enabled: Boolean(id),
   });
   const { data: kbs } = useQuery<KnowledgeBase[]>({
@@ -74,6 +88,29 @@ export function AssetDetailPage() {
       setKbModal(false);
     },
     onError: (e: Error) => toast("error", e.message),
+  });
+
+  const share = useMutation({
+    mutationFn: () =>
+      api(`/assets/${id}/share`, {
+        method: "POST",
+        body: { subject: shareSubject, role: shareRole },
+      }),
+    onSuccess: () => {
+      toast("success", "已分享给成员");
+      setShareModal(false);
+      setShareSubject("");
+      void queryClient.invalidateQueries({ queryKey: ["asset-acl", id] });
+    },
+    onError: (e: Error) => toast("error", e.message),
+  });
+
+  const revokeShare = useMutation({
+    mutationFn: (subject: string) => api(`/assets/${id}/acl/${subject}`, { method: "DELETE" }),
+    onSuccess: () => {
+      toast("success", "已取消分享");
+      void queryClient.invalidateQueries({ queryKey: ["asset-acl", id] });
+    },
   });
 
   const deleteAsset = useMutation({
@@ -121,6 +158,7 @@ export function AssetDetailPage() {
             <Button onClick={() => navigate(`/datasets/${asset.id}`)}>打开数据</Button>
           ) : null}
           <Button onClick={() => setKbModal(true)}>加入知识库</Button>
+          <Button onClick={() => setShareModal(true)}>分享</Button>
           <Button onClick={() => navigate(`/presentations/new?asset=${asset.id}`)}>生成演示</Button>
           {published ? (
             <Button variant="primary" onClick={() => setPublishOpen(true)}>
@@ -204,6 +242,30 @@ export function AssetDetailPage() {
                   <code>{asset.currentVersionId}</code>
                 </td>
               </tr>
+              <tr>
+                <td>共享权限</td>
+                <td>
+                  {(acl?.acl.length ?? 0) === 0 ? (
+                    <span className="sg-subtle">仅所有者可见</span>
+                  ) : (
+                    <div className="sg-col" style={{ gap: 4 }}>
+                      {acl?.acl.map((entry) => (
+                        <div key={entry.principal_id} className="sg-row">
+                          <span className="sg-badge">{entry.principal_id}</span>
+                          <span className="sg-badge sg-badge-accent">{entry.role}</span>
+                          <Button
+                            size="sm"
+                            variant="danger"
+                            onClick={() => revokeShare.mutate(entry.principal_id)}
+                          >
+                            取消
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </td>
+              </tr>
             </tbody>
           </Table>
         </Card>
@@ -255,9 +317,12 @@ export function AssetDetailPage() {
             <Empty title="暂无关联" hint="由文档生成演示、报告引用来源等操作会在这里建立关系。" />
           ) : (
             <div className="sg-col">
-              {relations?.map(({ relation, asset: target }) => (
+              {relations?.map(({ relation, asset: target, direction }) => (
                 <div key={relation.targetAssetId} className="sg-row-between">
                   <div className="sg-row">
+                    <span className={`sg-badge ${direction === "out" ? "" : "sg-badge-success"}`}>
+                      {direction === "out" ? "→ 输出" : "← 来源"}
+                    </span>
                     <span className="sg-badge sg-badge-accent">{relation.relationType}</span>
                     <strong>{target?.title ?? relation.targetAssetId}</strong>
                     {target && <span className="sg-subtle">{target.type}</span>}
@@ -308,6 +373,38 @@ export function AssetDetailPage() {
             })),
           ]}
         />
+      </Modal>
+
+      <Modal
+        open={shareModal}
+        onClose={() => setShareModal(false)}
+        title="分享给工作区成员"
+        footer={
+          <Button variant="primary" disabled={!shareSubject.trim()} onClick={() => share.mutate()}>
+            分享
+          </Button>
+        }
+      >
+        <div className="sg-col">
+          <Field label="成员 subject">
+            <Input
+              value={shareSubject}
+              onChange={(e) => setShareSubject(e.target.value)}
+              placeholder="例如 zhangsan"
+            />
+          </Field>
+          <Field label="权限">
+            <Select
+              value={shareRole}
+              onChange={setShareRole}
+              options={[
+                { value: "viewer", label: "查看" },
+                { value: "editor", label: "编辑" },
+              ]}
+            />
+          </Field>
+          <p className="sg-hint">分享后资产可见性自动切换为"链接"，成员会收到站内通知。</p>
+        </div>
       </Modal>
 
       {publishOpen && <PublishDialog asset={asset} open onClose={() => setPublishOpen(false)} />}

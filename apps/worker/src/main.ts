@@ -3,6 +3,7 @@ import { createObjectStore } from "@shiguang/database";
 import { createLogger } from "@shiguang/observability";
 import { ApiClient } from "./api-client.js";
 import { Executor } from "./executor.js";
+import { Scheduler } from "./scheduler.js";
 import { WorkerState } from "./state.js";
 
 const config = loadWorkerConfig();
@@ -11,6 +12,7 @@ const state = new WorkerState(config.statePath);
 const storage = createObjectStore(loadObjectStoreConfig("worker").rootDir);
 const api = new ApiClient(config, logger);
 const executor = new Executor(api, state, storage, logger, config.maxConcurrent);
+const scheduler = new Scheduler(api, logger);
 
 logger.info(
   { profiles: config.profiles, api: config.apiBase, pollMs: config.pollIntervalMs },
@@ -21,9 +23,11 @@ const timer = setInterval(() => {
   void executor.poll();
 }, config.pollIntervalMs);
 void executor.poll();
+scheduler.start();
 
 const shutdown = async () => {
   executor.stop();
+  scheduler.stop();
   clearInterval(timer);
   state.close();
   process.exit(0);

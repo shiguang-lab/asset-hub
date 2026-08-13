@@ -22,6 +22,11 @@ type Config struct {
 	HTTPClient   *http.Client
 }
 
+type DomainResolution struct {
+	PublishID string `json:"publishId"`
+	Slug      string `json:"slug"`
+}
+
 func LoadConfig() Config {
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -158,6 +163,27 @@ func (c Config) VerifyToken(token string) bool {
 	}
 	mac := hmacSHA256(payload, c.HMACSecret)
 	return mac == parts[1]
+}
+
+func (c Config) ResolveDomain(host string) (DomainResolution, error) {
+	req, err := http.NewRequest(http.MethodGet, c.APIBase+"/internal/v1/domains/resolve?host="+host, nil)
+	if err != nil {
+		return DomainResolution{}, err
+	}
+	req.Header.Set("X-Internal-Token", c.GatewayToken)
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return DomainResolution{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return DomainResolution{}, fmt.Errorf("domain resolve status %d", resp.StatusCode)
+	}
+	var resolution DomainResolution
+	if err := json.NewDecoder(resp.Body).Decode(&resolution); err != nil {
+		return DomainResolution{}, err
+	}
+	return resolution, nil
 }
 
 func hmacSHA256(payload, secret string) string {

@@ -118,6 +118,29 @@ func main() {
 		http.Redirect(w, r, "/p/"+meta.Publish.Slug, http.StatusFound)
 	})
 
+	mux.HandleFunc("GET /{path...}", func(w http.ResponseWriter, r *http.Request) {
+		host := r.Host
+		if idx := strings.Index(host, ":"); idx >= 0 {
+			host = host[:idx]
+		}
+		if host == "" || host == "localhost" || host == "127.0.0.1" || strings.HasSuffix(host, ".local") {
+			serveErrorPage(w, http.StatusNotFound, "内容不存在", "该路径没有对应的发布内容。")
+			return
+		}
+		resolved, err := cfg.ResolveDomain(host)
+		if err != nil {
+			serveErrorPage(w, http.StatusNotFound, "域名未绑定", "该域名未绑定任何已发布的资产。")
+			return
+		}
+		meta, status := cache.resolve(resolved.Slug)
+		if status != 200 || meta.Release == nil {
+			serveErrorPage(w, http.StatusNotFound, "内容不存在", "该域名绑定的内容不存在。")
+			return
+		}
+		serveReleaseFile(w, r, cfg, meta, "index.html", false)
+		go recordAccess(cfg, meta, "index.html", r)
+	})
+
 	mux.HandleFunc("POST /p/{slug}/unlock", func(w http.ResponseWriter, r *http.Request) {
 		slug := r.PathValue("slug")
 		if err := r.ParseForm(); err != nil {

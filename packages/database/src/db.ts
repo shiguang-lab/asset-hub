@@ -34,6 +34,28 @@ CREATE TABLE IF NOT EXISTS users (
   created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS workspace_members (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+  subject TEXT NOT NULL,
+  role TEXT NOT NULL DEFAULT 'viewer',
+  status TEXT NOT NULL DEFAULT 'active',
+  invited_by TEXT,
+  created_at TEXT NOT NULL,
+  UNIQUE (workspace_id, subject)
+);
+
+CREATE TABLE IF NOT EXISTS asset_acl (
+  id TEXT PRIMARY KEY,
+  asset_id TEXT NOT NULL REFERENCES assets(id),
+  principal_type TEXT NOT NULL,
+  principal_id TEXT NOT NULL,
+  role TEXT NOT NULL DEFAULT 'viewer',
+  created_at TEXT NOT NULL,
+  UNIQUE (asset_id, principal_type, principal_id)
+);
+CREATE INDEX IF NOT EXISTS idx_asset_acl_asset ON asset_acl(asset_id);
+
 CREATE TABLE IF NOT EXISTS assets (
   id TEXT PRIMARY KEY,
   workspace_id TEXT NOT NULL REFERENCES workspaces(id),
@@ -394,6 +416,54 @@ CREATE TABLE IF NOT EXISTS mcp_configs (
   server_url TEXT NOT NULL DEFAULT '',
   updated_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS git_connections (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+  name TEXT NOT NULL,
+  provider TEXT NOT NULL DEFAULT 'github',
+  repo_url TEXT NOT NULL,
+  branch TEXT NOT NULL DEFAULT 'main',
+  sync_path TEXT NOT NULL DEFAULT '/',
+  local_dir TEXT,
+  status TEXT NOT NULL DEFAULT 'idle',
+  last_sync_at TEXT,
+  last_sync_status TEXT,
+  last_error TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_git_conn_ws ON git_connections(workspace_id);
+
+CREATE TABLE IF NOT EXISTS custom_domains (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+  domain TEXT NOT NULL UNIQUE,
+  verification_token TEXT NOT NULL,
+  verified_at TEXT,
+  status TEXT NOT NULL DEFAULT 'pending',
+  publish_id TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_custom_domains_ws ON custom_domains(workspace_id);
+
+CREATE TABLE IF NOT EXISTS task_schedules (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+  name TEXT NOT NULL,
+  task_type TEXT NOT NULL DEFAULT 'research',
+  goal TEXT NOT NULL,
+  spec_json TEXT NOT NULL DEFAULT '{}',
+  cron TEXT NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  next_run_at TEXT,
+  last_run_at TEXT,
+  run_count INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_task_schedules_due ON task_schedules(enabled, next_run_at);
 
 CREATE TABLE IF NOT EXISTS audit_events (
   id TEXT PRIMARY KEY,

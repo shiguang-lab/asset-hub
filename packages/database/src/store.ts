@@ -648,18 +648,22 @@ export class Store {
     return { id, sourceAssetId, targetAssetId, relationType, provenance, createdAt: nowIso() };
   }
 
-  listRelations(assetId: string): Array<{ relation: AssetRelation; asset: Asset | null }> {
+  listRelations(
+    assetId: string,
+  ): Array<{ relation: AssetRelation; asset: Asset | null; direction: "in" | "out" }> {
     const rows = this.db
       .prepare(
         `SELECT r.*, a.title AS target_title, a.type AS target_type, a.workspace_id AS target_workspace
          FROM asset_relations r
          LEFT JOIN assets a ON a.id = r.target_asset_id
-         WHERE r.source_asset_id = ?
+         WHERE r.source_asset_id = ? OR r.target_asset_id = ?
          ORDER BY r.created_at DESC`,
       )
-      .all(assetId) as Row[];
+      .all(assetId, assetId) as Row[];
     return rows.map((r) => {
-      const target = this.getAsset(str(r.target_workspace), str(r.target_asset_id));
+      const outgoing = str(r.source_asset_id) === assetId;
+      const otherId = outgoing ? str(r.target_asset_id) : str(r.source_asset_id);
+      const other = this.getAssetAny(otherId);
       return {
         relation: {
           id: str(r.id),
@@ -669,7 +673,8 @@ export class Store {
           provenance: parse(r.provenance_json, {}),
           createdAt: str(r.created_at),
         },
-        asset: target,
+        direction: outgoing ? ("out" as const) : ("in" as const),
+        asset: other,
       };
     });
   }
@@ -2307,6 +2312,355 @@ export class Store {
     return { value, replayed: false };
   }
 
+  /* ---------------- git connections ---------------- */
+
+  createGitConnection(
+    workspaceId: string,
+    input: {
+      name: string;
+      provider: string;
+      repoUrl: string;
+      branch: string;
+      syncPath: string;
+      localDir?: string;
+    },
+  ): Record<string, unknown> {
+    const now = nowIso();
+    const id = nextId("git");
+    this.db
+      .prepare(
+        `INSERT INTO git_connections (id, workspace_id, name, provider, repo_url, branch, sync_path, local_dir, status, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'idle', ?, ?)`,
+      )
+      .run(
+        id,
+        workspaceId,
+        input.name,
+        input.provider,
+        input.repoUrl,
+        input.branch,
+        input.syncPath,
+        input.localDir ?? null,
+        now,
+        now,
+      );
+    return this.getGitConnection(workspaceId, id) as Record<string, unknown>;
+  }
+
+  listGitConnections(workspaceId: string): Array<Record<string, unknown>> {
+    return this.db
+      .prepare("SELECT * FROM git_connections WHERE workspace_id = ? ORDER BY updated_at DESC")
+      .all(workspaceId) as Array<Record<string, unknown>>;
+  }
+
+  getGitConnection(workspaceId: string, id: string): Record<string, unknown> | null {
+    const row = this.db
+      .prepare("SELECT * FROM git_connections WHERE id = ? AND workspace_id = ?")
+      .get(id, workspaceId) as Row | undefined;
+    return row ?? null;
+  }
+
+  updateGitConnection(
+    workspaceId: string,
+    id: string,
+    patch: Partial<{
+      status: string;
+      lastSyncAt: string | null;
+      lastSyncStatus: string | null;
+      lastError: string | null;
+      localDir: string | null;
+    }>,
+  ): Record<string, unknown> | null {
+    const current = this.getGitConnection(workspaceId, id);
+    if (!current) return null;
+    this.db
+      .prepare(
+        `UPDATE git_connections SET status = ?, last_sync_at = ?, last_sync_status = ?, last_error = ?, local_dir = ?, updated_at = ? WHERE id = ?`,
+      )
+      .run(
+        String(patch.status ?? current.status),
+        patch.lastSyncAt !== undefined ? patch.lastSyncAt : (current.last_sync_at as string | null),
+        patch.lastSyncStatus !== undefined
+          ? patch.lastSyncStatus
+          : (current.last_sync_status as string | null),
+        patch.lastError !== undefined ? patch.lastError : (current.last_error as string | null),
+        patch.localDir !== undefined ? patch.localDir : (current.local_dir as string | null),
+        nowIso(),
+        id,
+      );
+    return this.getGitConnection(workspaceId, id);
+  }
+
+  deleteGitConnection(workspaceId: string, id: string): void {
+    this.db
+      .prepare("DELETE FROM git_connections WHERE id = ? AND workspace_id = ?")
+      .run(id, workspaceId);
+  }
+
+  /* ---------------- custom domains ---------------- */
+
+  createCustomDomain(workspaceId: string, domain: string): Record<string, unknown> {
+    const now = nowIso();
+    const id = nextId("dom");
+    const token = `sg-verify-${crypto.randomUUID().replaceAll("-", "").slice(0, 16)}`;
+    this.db
+      .prepare(
+        `INSERT INTO custom_domains (id, workspace_id, domain, verification_token, status, created_at, updated_at)
+         VALUES (?, ?, ?, ?, 'pending', ?, ?)`,
+      )
+      .run(id, workspaceId, domain.toLowerCase(), token, now, now);
+    return this.getCustomDomain(workspaceId, id) as Record<string, unknown>;
+  }
+
+  listCustomDomains(workspaceId: string): Array<Record<string, unknown>> {
+    return this.db
+      .prepare("SELECT * FROM custom_domains WHERE workspace_id = ? ORDER BY created_at DESC")
+      .all(workspaceId) as Array<Record<string, unknown>>;
+  }
+
+  getCustomDomain(workspaceId: string, id: string): Record<string, unknown> | null {
+    const row = this.db
+      .prepare("SELECT * FROM custom_domains WHERE id = ? AND workspace_id = ?")
+      .get(id, workspaceId) as Row | undefined;
+    return row ?? null;
+  }
+
+  getCustomDomainByDomain(domain: string): Record<string, unknown> | null {
+    const row = this.db
+      .prepare("SELECT * FROM custom_domains WHERE domain = ?")
+      .get(domain.toLowerCase()) as Row | undefined;
+    return row ?? null;
+  }
+
+  verifyCustomDomain(workspaceId: string, id: string, token: string): boolean {
+    const domain = this.getCustomDomain(workspaceId, id);
+    if (!domain) return false;
+    if (String(domain.verification_token) !== token) return false;
+    this.db
+      .prepare(
+        "UPDATE custom_domains SET status = 'verified', verified_at = ?, updated_at = ? WHERE id = ?",
+      )
+      .run(nowIso(), nowIso(), id);
+    return true;
+  }
+
+  bindDomainPublish(workspaceId: string, id: string, publishId: string | null): void {
+    this.db
+      .prepare(
+        "UPDATE custom_domains SET publish_id = ?, updated_at = ? WHERE id = ? AND workspace_id = ?",
+      )
+      .run(publishId, nowIso(), id, workspaceId);
+  }
+
+  deleteCustomDomain(workspaceId: string, id: string): void {
+    this.db
+      .prepare("DELETE FROM custom_domains WHERE id = ? AND workspace_id = ?")
+      .run(id, workspaceId);
+  }
+
+  /* ---------------- task schedules ---------------- */
+
+  createSchedule(
+    workspaceId: string,
+    input: {
+      name: string;
+      taskType: string;
+      goal: string;
+      spec: Record<string, unknown>;
+      cron: string;
+    },
+  ): Record<string, unknown> {
+    const now = nowIso();
+    const id = nextId("sch");
+    const next = computeNextCron(input.cron, new Date());
+    this.db
+      .prepare(
+        `INSERT INTO task_schedules (id, workspace_id, name, task_type, goal, spec_json, cron, enabled, next_run_at, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`,
+      )
+      .run(
+        id,
+        workspaceId,
+        input.name,
+        input.taskType,
+        input.goal,
+        json(input.spec),
+        input.cron,
+        next,
+        now,
+        now,
+      );
+    return this.getSchedule(workspaceId, id) as Record<string, unknown>;
+  }
+
+  listSchedules(workspaceId: string): Array<Record<string, unknown>> {
+    return this.db
+      .prepare("SELECT * FROM task_schedules WHERE workspace_id = ? ORDER BY created_at DESC")
+      .all(workspaceId) as Array<Record<string, unknown>>;
+  }
+
+  getSchedule(workspaceId: string, id: string): Record<string, unknown> | null {
+    const row = this.db
+      .prepare("SELECT * FROM task_schedules WHERE id = ? AND workspace_id = ?")
+      .get(id, workspaceId) as Row | undefined;
+    return row ?? null;
+  }
+
+  updateSchedule(
+    workspaceId: string,
+    id: string,
+    patch: Partial<{
+      enabled: boolean;
+      name: string;
+      goal: string;
+      cron: string;
+      spec: Record<string, unknown>;
+    }>,
+  ): Record<string, unknown> | null {
+    const current = this.getSchedule(workspaceId, id);
+    if (!current) return null;
+    const enabled = patch.enabled ?? bool(current.enabled);
+    const cron = patch.cron ?? str(current.cron);
+    const nextRunAt =
+      patch.enabled !== undefined || patch.cron !== undefined
+        ? enabled
+          ? computeNextCron(cron, new Date())
+          : null
+        : (current.next_run_at as string | null);
+    this.db
+      .prepare(
+        `UPDATE task_schedules SET name = ?, goal = ?, spec_json = ?, cron = ?, enabled = ?, next_run_at = ?, updated_at = ? WHERE id = ?`,
+      )
+      .run(
+        String(patch.name ?? current.name),
+        String(patch.goal ?? current.goal),
+        json(patch.spec ?? parse<Record<string, unknown>>(current.spec_json, {})),
+        cron,
+        enabled ? 1 : 0,
+        nextRunAt,
+        nowIso(),
+        id,
+      );
+    return this.getSchedule(workspaceId, id);
+  }
+
+  deleteSchedule(workspaceId: string, id: string): void {
+    this.db
+      .prepare("DELETE FROM task_schedules WHERE id = ? AND workspace_id = ?")
+      .run(id, workspaceId);
+  }
+
+  getDueSchedules(): Array<Record<string, unknown>> {
+    const now = nowIso();
+    return this.db
+      .prepare(
+        "SELECT * FROM task_schedules WHERE enabled = 1 AND next_run_at IS NOT NULL AND next_run_at <= ? ORDER BY next_run_at LIMIT 10",
+      )
+      .all(now) as Array<Record<string, unknown>>;
+  }
+
+  markScheduleRun(id: string): void {
+    const schedule = this.db.prepare("SELECT * FROM task_schedules WHERE id = ?").get(id) as
+      | Row
+      | undefined;
+    if (!schedule) return;
+    const next = computeNextCron(str(schedule.cron), new Date());
+    this.db
+      .prepare(
+        "UPDATE task_schedules SET last_run_at = ?, next_run_at = ?, run_count = run_count + 1, updated_at = ? WHERE id = ?",
+      )
+      .run(nowIso(), next, nowIso(), id);
+  }
+
+  /* ---------------- workspace members & ACL ---------------- */
+
+  listMembers(workspaceId: string): Array<Record<string, unknown>> {
+    return this.db
+      .prepare("SELECT * FROM workspace_members WHERE workspace_id = ? ORDER BY created_at")
+      .all(workspaceId) as Array<Record<string, unknown>>;
+  }
+
+  addMember(
+    workspaceId: string,
+    subject: string,
+    role: string,
+    invitedBy: string,
+  ): Record<string, unknown> {
+    this.db
+      .prepare(
+        `INSERT INTO workspace_members (id, workspace_id, subject, role, status, invited_by, created_at)
+         VALUES (?, ?, ?, ?, 'active', ?, ?)
+         ON CONFLICT(workspace_id, subject) DO UPDATE SET role = excluded.role`,
+      )
+      .run(nextId("mem"), workspaceId, subject, role, invitedBy, nowIso());
+    return this.listMembers(workspaceId).find((m) => m.subject === subject) as Record<
+      string,
+      unknown
+    >;
+  }
+
+  updateMemberRole(workspaceId: string, subject: string, role: string): void {
+    this.db
+      .prepare("UPDATE workspace_members SET role = ? WHERE workspace_id = ? AND subject = ?")
+      .run(role, workspaceId, subject);
+  }
+
+  removeMember(workspaceId: string, subject: string): void {
+    this.db
+      .prepare("DELETE FROM workspace_members WHERE workspace_id = ? AND subject = ?")
+      .run(workspaceId, subject);
+  }
+
+  grantAcl(assetId: string, principalType: string, principalId: string, role: string): void {
+    this.db
+      .prepare(
+        `INSERT INTO asset_acl (id, asset_id, principal_type, principal_id, role, created_at)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON CONFLICT(asset_id, principal_type, principal_id) DO UPDATE SET role = excluded.role`,
+      )
+      .run(nextId("acl"), assetId, principalType, principalId, role, nowIso());
+  }
+
+  listAcl(assetId: string): Array<Record<string, unknown>> {
+    return this.db
+      .prepare("SELECT * FROM asset_acl WHERE asset_id = ? ORDER BY created_at")
+      .all(assetId) as Array<Record<string, unknown>>;
+  }
+
+  revokeAcl(assetId: string, principalType: string, principalId: string): void {
+    this.db
+      .prepare(
+        "DELETE FROM asset_acl WHERE asset_id = ? AND principal_type = ? AND principal_id = ?",
+      )
+      .run(assetId, principalType, principalId);
+  }
+
+  canAccess(workspaceId: string, assetId: string, subject: string, needWrite: boolean): boolean {
+    const asset = this.getAsset(workspaceId, assetId);
+    if (!asset) return false;
+    if (asset.ownerSubject === subject) return true;
+    const member = this.db
+      .prepare(
+        "SELECT role FROM workspace_members WHERE workspace_id = ? AND subject = ? AND status = 'active'",
+      )
+      .get(workspaceId, subject) as { role: string } | undefined;
+    if (member) {
+      if (!needWrite && ["admin", "editor", "viewer"].includes(member.role)) return true;
+      if (needWrite && ["admin", "editor"].includes(member.role)) return true;
+    }
+    const acl = this.db
+      .prepare(
+        "SELECT role FROM asset_acl WHERE asset_id = ? AND principal_id = ? AND principal_type = 'user'",
+      )
+      .get(assetId, subject) as { role: string } | undefined;
+    if (acl) {
+      if (!needWrite && ["editor", "viewer"].includes(acl.role)) return true;
+      if (needWrite && acl.role === "editor") return true;
+    }
+    if (!needWrite && ["public", "link", "unlisted"].includes(asset.visibility)) return true;
+    return false;
+  }
+
   /* ---------------- proposed patches (AI) ---------------- */
 
   createProposedPatch(input: {
@@ -2378,6 +2732,66 @@ export function randomSalt(): string {
 
 export function hashPassword(password: string, salt: string): string {
   return createHash("sha256").update(`${salt}:${password}`).digest("hex");
+}
+
+export function computeNextCron(cron: string, after: Date): string {
+  const trimmed = cron.trim().toLowerCase();
+  if (trimmed === "hourly") {
+    const next = new Date(after.getTime());
+    next.setMinutes(0, 0, 0);
+    next.setHours(next.getHours() + 1);
+    return next.toISOString();
+  }
+  const daily = /^daily\s+(\d{1,2}):(\d{2})$/.exec(trimmed);
+  if (daily) {
+    const hour = Number(daily[1]);
+    const minute = Number(daily[2]);
+    const next = new Date(after.getTime());
+    next.setHours(hour, minute, 0, 0);
+    if (next.getTime() <= after.getTime()) next.setDate(next.getDate() + 1);
+    return next.toISOString();
+  }
+  const every = /^every\s+(\d+)\s*(h|hour|hours|m|min|mins|minute|minutes)$/.exec(trimmed);
+  if (every) {
+    const amount = Number(every[1]);
+    const unitMs = every[2]?.startsWith("h") ? 3600_000 : 60_000;
+    return new Date(after.getTime() + amount * unitMs).toISOString();
+  }
+  const fields = cron.trim().split(/\s+/);
+  if (fields.length === 5) {
+    const start = after.getTime() + 60_000;
+    for (let offset = 0; offset < 2 * 24 * 60; offset += 1) {
+      const candidate = new Date(start + offset * 60_000);
+      if (
+        matchCronField(fields[0], candidate.getMinutes()) &&
+        matchCronField(fields[1], candidate.getHours()) &&
+        matchCronField(fields[2], candidate.getDate()) &&
+        matchCronField(fields[3], candidate.getMonth() + 1) &&
+        matchCronField(fields[4], candidate.getDay())
+      ) {
+        return candidate.toISOString();
+      }
+    }
+  }
+  return new Date(after.getTime() + 24 * 3600_000).toISOString();
+}
+
+function matchCronField(field: string | undefined, value: number): boolean {
+  if (!field || field === "*") return true;
+  for (const part of field.split(",")) {
+    const stepMatch = /^\*\/(\d+)$/.exec(part);
+    if (stepMatch) {
+      if (value % Number(stepMatch[1]) === 0) return true;
+      continue;
+    }
+    const range = /^(\d+)-(\d+)$/.exec(part);
+    if (range) {
+      if (value >= Number(range[1]) && value <= Number(range[2])) return true;
+      continue;
+    }
+    if (Number(part) === value) return true;
+  }
+  return false;
 }
 
 export function createStore(db: DatabaseSync, storage: ObjectStore): Store {

@@ -14,6 +14,7 @@ const NAV = [
       { to: "/knowledge", label: "知识库", icon: "▤" },
       { to: "/research", label: "调研", icon: "◎" },
       { to: "/tasks", label: "任务", icon: "⚙" },
+      { to: "/publishes", label: "发布", icon: "⇪" },
     ],
   },
   {
@@ -29,6 +30,7 @@ const NAV = [
     items: [
       { to: "/notifications", label: "通知", icon: "🔔" },
       { to: "/billing", label: "Credits", icon: "✦" },
+      { to: "/profile", label: "个人中心", icon: "👤" },
       { to: "/settings", label: "设置", icon: "⚙" },
     ],
   },

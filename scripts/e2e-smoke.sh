@@ -82,7 +82,41 @@ done
 Q=$(curl_json -X POST "$API/api/v1/datasets/$DSID/query" -d "{\"datasetVersionId\":\"$DSV\",\"groupBy\":[\"city\"],\"aggregations\":[{\"column\":\"amount\",\"op\":\"sum\",\"as\":\"total\"}],\"limit\":10}")
 check "数据集聚合查询返回结果" bash -c "echo '$Q' | grep -q '\"total\"'"
 
-# 6. MCP 工具列表
+# 6. 演示大纲：生成 → 确认 → 创建
+OUT=$(curl_json -X POST "$API/api/v1/presentations/outline" -d "{\"assetId\":\"$ASSET\",\"title\":\"冒烟大纲\",\"theme\":\"dark\"}")
+OUT_BODY=$(printf '%s' "$OUT" | python3 -c 'import sys,json;o=json.load(sys.stdin)["outline"];o["sourceAssetId"]="'$ASSET'";print(json.dumps(o))')
+PA_CONFIRM=$(curl_json -X POST "$API/api/v1/presentations/outline/confirm" -d "$OUT_BODY")
+check "演示大纲确认创建" bash -c "printf '%s' '$PA_CONFIRM' | grep -q '\"type\":\"presentation\"'"
+
+# 7. Git 本地同步
+mkdir -p /tmp/sg-smoke-docs/docs
+printf '# 冒烟文档\n\n正文。\n' >/tmp/sg-smoke-docs/docs/readme.md
+GIT_CONN=$(curl_json -X POST "$API/api/v1/integrations/git" -d '{"name":"冒烟仓库","provider":"local","repoUrl":"/tmp/sg-smoke-docs","branch":"main","syncPath":"docs","localDir":"/tmp/sg-smoke-docs"}')
+GIT_ID=$(printf '%s' "$GIT_CONN" | python3 -c 'import sys,json;print(json.load(sys.stdin)["id"])')
+GTASK=$(curl_json -X POST "$API/api/v1/integrations/git/$GIT_ID/sync" -d '{}')
+GTID=$(printf '%s' "$GTASK" | python3 -c 'import sys,json;print(json.load(sys.stdin)["task"]["id"])')
+for _ in $(seq 1 8); do
+  GSTS=$(curl -s -H "$H" "$API/api/v1/tasks/$GTID" | json 'd["status"]')
+  case "$GSTS" in completed*|failed*|partial*) break;; esac
+  sleep 2
+done
+check "Git 同步导入文档" test "$GSTS" = "completed"
+
+# 8. 自定义域名：添加 → 验证 → 绑定 → Host 解析
+DOMAIN=$(curl_json -X POST "$API/api/v1/integrations/domains" -d '{"domain":"smoke.example.dev"}')
+DID2=$(printf '%s' "$DOMAIN" | python3 -c 'import sys,json;print(json.load(sys.stdin)["id"])')
+DTOK=$(printf '%s' "$DOMAIN" | python3 -c 'import sys,json;print(json.load(sys.stdin)["verification_token"])')
+curl_json -X POST "$API/api/v1/integrations/domains/$DID2/verify" -d "{\"token\":\"$DTOK\"}" >/dev/null
+PUB_ID=$(echo "$PUB" | json 'd["id"]')
+curl_json -X POST "$API/api/v1/integrations/domains/$DID2/bind" -d "{\"publishId\":\"$PUB_ID\"}" >/dev/null
+check "自定义域名 Host 解析" curl -sf -H "Host: smoke.example.dev" "$GATEWAY/"
+
+# 9. 团队与分享
+curl_json -X POST "$API/api/v1/workspace/members" -d '{"subject":"smoke-member","role":"viewer"}' >/dev/null
+SHARE=$(curl_json -X POST "$API/api/v1/assets/$ASSET/share" -d '{"subject":"smoke-member","role":"viewer"}')
+check "资产分享建立 ACL" bash -c "printf '%s' '$SHARE' | grep -q '\"ok\":true'"
+
+# 10. MCP 工具列表
 curl_json -X PATCH "$API/api/v1/integrations/mcp" -d '{"enabled":true,"scope":"all","writeEnabled":true}' >/dev/null
 TOK=$(curl -s -H "$H" -H "$CT" -X POST "$API/api/v1/integrations/tokens" -d '{"name":"smoke","scopes":["read"]}' | json 'd["secret"]')
 TOOLS=$(curl -s -H "Authorization: Bearer $TOK" -H "$CT" -H "accept: application/json" -X POST "$API/mcp" -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' | json 'd.get("result",{}).get("tools",[]) and "ok" or ""')

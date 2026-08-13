@@ -1,4 +1,10 @@
-import { nextId, nowIso, presentationDocumentSchema } from "@shiguang/contracts";
+import {
+  nextId,
+  nowIso,
+  presentationDocumentSchema,
+  presentationThemeSchema,
+  slideSchema,
+} from "@shiguang/contracts";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { badRequest, notFound } from "../platform/errors.js";
@@ -92,6 +98,153 @@ export function registerPresentations(app: FastifyInstance): void {
       {},
     );
     return { task, estimate };
+  });
+
+  /* ---------------- 大纲确认流程（生成 → 确认 → 创建） ---------------- */
+
+  app.post("/api/v1/presentations/outline", async (req) => {
+    const body = z
+      .object({
+        assetId: z.string().optional(),
+        sourceText: z.string().max(100_000).optional(),
+        title: z.string().max(200).optional(),
+        theme: presentationThemeSchema.optional(),
+      })
+      .parse(req.body);
+    if (!body.assetId && !body.sourceText) {
+      throw badRequest("SOURCE_REQUIRED", "需要提供 assetId 或 sourceText");
+    }
+    let source = body.sourceText ?? "";
+    let sourceTitle = body.title ?? "";
+    if (body.assetId) {
+      const asset = ctx.store.getAsset(req.actor.workspaceId, body.assetId);
+      if (!asset) throw notFound("源资产");
+      const content = await ctx.store.readContent(body.assetId);
+      source = content?.text ?? "";
+      sourceTitle = sourceTitle || asset.title;
+    }
+    const res = await ctx.ai.complete({
+      messages: [
+        {
+          role: "system",
+          content: "你是演示文稿助手。根据源内容生成结构化演示文稿 JSON（含 slides 数组）。",
+        },
+        {
+          role: "user",
+          content: `presentation-outline\ntitle: ${sourceTitle}\ntheme: ${body.theme ?? "light"}\nsource:\n${source.slice(0, 20_000)}`,
+        },
+      ],
+      quality: "balanced",
+    });
+    let outline: Record<string, unknown>;
+    try {
+      const raw = res.text
+        .trim()
+        .replace(/^```(?:json)?\s*/i, "")
+        .replace(/\s*```$/, "");
+      outline = JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+      outline = {
+        title: sourceTitle,
+        theme: body.theme ?? "light",
+        aspectRatio: "16:9",
+        slides: [
+          {
+            id: "s1",
+            layout: "title",
+            title: sourceTitle,
+            blocks: [{ id: "b1", type: "heading", content: sourceTitle }],
+          },
+          {
+            id: "s2",
+            layout: "content",
+            title: "核心要点",
+            blocks: [
+              { id: "b2", type: "heading", content: "核心要点" },
+              { id: "b3", type: "bullet", content: "背景与现状\n关键数据\n结论与建议" },
+            ],
+          },
+          {
+            id: "s3",
+            layout: "closing",
+            title: "总结",
+            blocks: [{ id: "b4", type: "heading", content: "总结与展望" }],
+          },
+        ],
+      };
+    }
+    if (!Array.isArray(outline.slides) || outline.slides.length === 0) {
+      throw badRequest("OUTLINE_EMPTY", "生成的演示大纲为空，请重试", {});
+    }
+    ctx.store.audit(
+      req.actor.workspaceId,
+      req.actor.subject,
+      "presentation.outline",
+      "presentation",
+      "success",
+      {},
+    );
+    return {
+      outline: outline as { title: string; theme: string; aspectRatio: string; slides: unknown[] },
+      provider: res.provider,
+    };
+  });
+
+  app.post("/api/v1/presentations/outline/confirm", async (req) => {
+    const body = z
+      .object({
+        title: z.string().min(1).max(200),
+        theme: presentationThemeSchema,
+        aspectRatio: z.enum(["16:9", "4:3", "9:16"]),
+        slides: z.array(slideSchema),
+        sourceAssetId: z.string().optional(),
+      })
+      .parse(req.body);
+    const document = { theme: body.theme, aspectRatio: body.aspectRatio, slides: body.slides };
+    const asset = ctx.store.createAssetWithVersion(req.actor, {
+      type: "presentation",
+      title: body.title,
+      sourceType: "template",
+      content: {
+        kind: "manifest",
+        text: null,
+        manifest: document as unknown as Record<string, unknown>,
+        refs: [],
+      },
+    });
+    if (body.sourceAssetId) {
+      ctx.store.addRelation(
+        req.actor.workspaceId,
+        body.sourceAssetId,
+        asset.asset.id,
+        "generated_from",
+        {
+          via: "outline-confirm",
+        },
+      );
+    }
+    ctx.bus.emit({
+      eventId: nextId("evt"),
+      eventType: "asset.created",
+      schemaVersion: 1,
+      occurredAt: nowIso(),
+      producer: "api",
+      tenantId: req.actor.workspaceId,
+      aggregate: { type: "asset", id: asset.asset.id, version: 1 },
+      trace: {},
+      data: { assetId: asset.asset.id, assetType: "presentation" },
+    });
+    ctx.store.audit(
+      req.actor.workspaceId,
+      req.actor.subject,
+      "presentation.create",
+      asset.asset.id,
+      "success",
+      {
+        slides: body.slides.length,
+      },
+    );
+    return asset.asset;
   });
 
   app.get("/api/v1/presentations/:id", async (req, reply) => {

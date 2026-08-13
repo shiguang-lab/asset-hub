@@ -1,5 +1,16 @@
-import { Button, Card, Empty, Progress, StatusBadge, Tabs, useToast } from "@shiguang/ui";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  Button,
+  Card,
+  Empty,
+  Input,
+  Progress,
+  Select,
+  StatusBadge,
+  Table,
+  Tabs,
+  useToast,
+} from "@shiguang/ui";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { api, type Task } from "../../entities/api.js";
@@ -16,12 +27,54 @@ const STATUSES = [
 
 export function TasksPage() {
   const [status, setStatus] = useState("all");
+  const toast = useToast();
+  const queryClient = useQueryClient();
   const { data } = useQuery<{ items: Task[]; total: number }>({
     queryKey: ["tasks", status],
     queryFn: () =>
       api("/tasks", { params: { status: status === "all" ? undefined : status, limit: 100 } }),
   });
   const navigate = useNavigate();
+  const [scheduleName, setScheduleName] = useState("");
+  const [scheduleGoal, setScheduleGoal] = useState("");
+  const [scheduleCron, setScheduleCron] = useState("daily 09:00");
+  const { data: schedules } = useQuery<
+    Array<{
+      id: string;
+      name: string;
+      goal: string;
+      cron: string;
+      enabled: boolean;
+      next_run_at: string | null;
+      run_count: number;
+    }>
+  >({
+    queryKey: ["schedules"],
+    queryFn: () => api("/task-schedules"),
+  });
+  const createSchedule = useMutation({
+    mutationFn: () =>
+      api("/task-schedules", {
+        method: "POST",
+        body: { name: scheduleName, taskType: "research", goal: scheduleGoal, cron: scheduleCron },
+      }),
+    onSuccess: () => {
+      toast("success", "定时任务已创建");
+      setScheduleName("");
+      setScheduleGoal("");
+      void queryClient.invalidateQueries({ queryKey: ["schedules"] });
+    },
+  });
+  const toggleSchedule = useMutation({
+    mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) =>
+      api(`/task-schedules/${id}`, { method: "PATCH", body: { enabled } }),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["schedules"] }),
+  });
+  const deleteSchedule = useMutation({
+    mutationFn: (id: string) => api(`/task-schedules/${id}`, { method: "DELETE" }),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["schedules"] }),
+  });
+
   return (
     <div>
       <h1 className="sg-h1 sg-mb">任务中心</h1>
@@ -52,6 +105,103 @@ export function TasksPage() {
           ))}
         </div>
       )}
+
+      <h2 className="sg-h2 sg-mt">定时任务</h2>
+      <Card className="sg-mb">
+        <div className="sg-row sg-mb">
+          <Input
+            value={scheduleName}
+            onChange={(e) => setScheduleName(e.target.value)}
+            placeholder="任务名称"
+            style={{ maxWidth: 180 }}
+          />
+          <Input
+            value={scheduleGoal}
+            onChange={(e) => setScheduleGoal(e.target.value)}
+            placeholder="研究目标"
+            style={{ maxWidth: 320 }}
+          />
+          <Select
+            value={scheduleCron}
+            onChange={setScheduleCron}
+            options={[
+              { value: "daily 09:00", label: "每天 09:00" },
+              { value: "hourly", label: "每小时" },
+              { value: "0 0 * * *", label: "每天 00:00" },
+              { value: "0 9 * * 1", label: "每周一 09:00" },
+            ]}
+            className=""
+            style={{ width: 140 }}
+          />
+          <Button
+            variant="primary"
+            size="sm"
+            disabled={!scheduleName.trim() || !scheduleGoal.trim()}
+            onClick={() => createSchedule.mutate()}
+          >
+            创建
+          </Button>
+        </div>
+        {(schedules?.length ?? 0) > 0 && (
+          <Table>
+            <thead>
+              <tr>
+                <th>名称</th>
+                <th>目标</th>
+                <th>Cron</th>
+                <th>下次运行</th>
+                <th>已运行</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {schedules?.map((s) => (
+                <tr key={s.id}>
+                  <td>{s.name}</td>
+                  <td
+                    style={{
+                      maxWidth: 260,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {s.goal}
+                  </td>
+                  <td>
+                    <code>{s.cron}</code>
+                  </td>
+                  <td>
+                    {s.enabled
+                      ? s.next_run_at
+                        ? new Date(s.next_run_at).toLocaleString("zh-CN")
+                        : "-"
+                      : "已停用"}
+                  </td>
+                  <td>{s.run_count}</td>
+                  <td>
+                    <div className="sg-row">
+                      <Button
+                        size="sm"
+                        onClick={() => toggleSchedule.mutate({ id: s.id, enabled: !s.enabled })}
+                      >
+                        {s.enabled ? "停用" : "启用"}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="danger"
+                        onClick={() => deleteSchedule.mutate(s.id)}
+                      >
+                        删除
+                      </Button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </Table>
+        )}
+      </Card>
     </div>
   );
 }

@@ -70,6 +70,7 @@ export const taskTypeSchema = z.enum([
   "file_process",
   "dataset_import",
   "dataset_query",
+  "git_sync",
 ]);
 export type TaskType = z.infer<typeof taskTypeSchema>;
 

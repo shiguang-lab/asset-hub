@@ -192,14 +192,17 @@ export function Card({
   children,
   className,
   onClick,
+  style,
 }: {
   children: ReactNode;
   className?: string;
   onClick?: () => void;
+  style?: React.CSSProperties;
 }) {
   return (
     <div
       className={cx("sg-card", onClick && "hoverable", className)}
+      style={style}
       onClick={onClick}
       role={onClick ? "button" : undefined}
       tabIndex={onClick ? 0 : undefined}

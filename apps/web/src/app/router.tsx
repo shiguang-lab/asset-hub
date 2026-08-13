@@ -13,12 +13,14 @@ import {
 } from "../features/knowledge/knowledge.js";
 import { NotFoundPage } from "../features/misc/not-found.js";
 import { NotificationsPage } from "../features/notifications/notifications.js";
+import { PresentationNewPage } from "../features/presentations/presentation-new.js";
 import {
   PresentationEditorPage,
-  PresentationNewPage,
   PresentationPlayerPage,
   PresentationsPage,
 } from "../features/presentations/presentations.js";
+import { ProfilePage } from "../features/profile/profile.js";
+import { PublishesPage } from "../features/publishing/publishes.js";
 import { ResearchNewPage, ResearchPage } from "../features/research/research.js";
 import { SettingsPage } from "../features/settings/settings.js";
 import { TaskDetailPage, TasksPage } from "../features/tasks/tasks.js";
@@ -53,6 +55,8 @@ export const router = createBrowserRouter([
       { path: "templates", element: <TemplatesPage /> },
       { path: "notifications", element: <NotificationsPage /> },
       { path: "billing", element: <BillingPage /> },
+      { path: "profile", element: <ProfilePage /> },
+      { path: "publishes", element: <PublishesPage /> },
       { path: "settings", element: <SettingsPage /> },
       { path: "*", element: <NotFoundPage /> },
     ],

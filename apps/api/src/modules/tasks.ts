@@ -284,4 +284,59 @@ export function registerTasks(app: FastifyInstance): void {
       .parse(req.query);
     return estimateCredits(query as never);
   });
+
+  /* ---------------- 定时任务 ---------------- */
+
+  app.get("/api/v1/task-schedules", async (req) => ctx.store.listSchedules(req.actor.workspaceId));
+
+  app.post("/api/v1/task-schedules", async (req) => {
+    const body = z
+      .object({
+        name: z.string().min(1),
+        taskType: taskTypeSchema.default("research"),
+        goal: z.string().min(1),
+        spec: z.record(z.string(), z.unknown()).optional(),
+        cron: z.string().min(1),
+      })
+      .parse(req.body);
+    const schedule = ctx.store.createSchedule(req.actor.workspaceId, {
+      name: body.name,
+      taskType: body.taskType,
+      goal: body.goal,
+      spec: body.spec ?? {},
+      cron: body.cron,
+    });
+    ctx.store.audit(
+      req.actor.workspaceId,
+      req.actor.subject,
+      "schedule.create",
+      String(schedule.id),
+      "success",
+      {},
+    );
+    return schedule;
+  });
+
+  app.patch("/api/v1/task-schedules/:id", async (req) => {
+    const { id } = req.params as { id: string };
+    const body = z
+      .object({
+        enabled: z.boolean().optional(),
+        name: z.string().optional(),
+        goal: z.string().optional(),
+        cron: z.string().optional(),
+      })
+      .parse(req.body);
+    const schedule = ctx.store.updateSchedule(req.actor.workspaceId, id, body);
+    if (!schedule) throw notFound("定时任务");
+    return schedule;
+  });
+
+  app.delete("/api/v1/task-schedules/:id", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const schedule = ctx.store.getSchedule(req.actor.workspaceId, id);
+    if (!schedule) throw notFound("定时任务");
+    ctx.store.deleteSchedule(req.actor.workspaceId, id);
+    return reply.code(204).send();
+  });
 }

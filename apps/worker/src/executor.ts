@@ -3,6 +3,7 @@ import type { Logger } from "@shiguang/observability";
 import type { ApiClient } from "./api-client.js";
 import type { WorkerState } from "./state.js";
 import { runDatasetImportWorkflow } from "./workflows/dataset-import.js";
+import { runGitSyncWorkflow } from "./workflows/git-sync.js";
 import { runKnowledgeWorkflow } from "./workflows/knowledge.js";
 import { runPresentationWorkflow } from "./workflows/presentation.js";
 import { runResearchWorkflow } from "./workflows/research.js";
@@ -114,6 +115,9 @@ export class Executor {
         break;
       case "dataset_import":
         await runDatasetImportWorkflow(ctx, spec, this.storage);
+        break;
+      case "git_sync":
+        await runGitSyncWorkflow(ctx, spec);
         break;
       case "knowledge_index":
       case "publish_bundle":

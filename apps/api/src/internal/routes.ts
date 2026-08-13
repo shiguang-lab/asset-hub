@@ -528,6 +528,112 @@ export function registerInternalRoutes(app: FastifyInstance): void {
 
   /* ---------------- publish metadata for public-gateway ---------------- */
 
+  /* ---------------- git / schedules / domains internals ---------------- */
+
+  app.get("/internal/v1/git/:id", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const row = ctx.store.getDb().prepare("SELECT * FROM git_connections WHERE id = ?").get(id) as
+      | Record<string, unknown>
+      | undefined;
+    if (!row) return reply.status(404).send({ code: "NOT_FOUND" });
+    return row;
+  });
+
+  app.post("/internal/v1/git/:id/status", async (req) => {
+    const { id } = req.params as { id: string };
+    const body = z
+      .object({
+        status: z.string(),
+        lastSyncStatus: z.string().optional(),
+        lastError: z.string().optional(),
+      })
+      .parse(req.body);
+    ctx.store
+      .getDb()
+      .prepare(
+        "UPDATE git_connections SET status = ?, last_sync_at = ?, last_sync_status = ?, last_error = ?, updated_at = ? WHERE id = ?",
+      )
+      .run(
+        body.status,
+        nowIso(),
+        body.lastSyncStatus ?? null,
+        body.lastError ?? null,
+        nowIso(),
+        id,
+      );
+    return { ok: true };
+  });
+
+  app.get("/internal/v1/schedules/due", async () => ({
+    schedules: ctx.store.getDueSchedules().map((s) => ({
+      id: s.id,
+      workspaceId: s.workspace_id,
+      name: s.name,
+      goal: s.goal,
+      spec: parseJson(s.spec_json),
+    })),
+  }));
+
+  app.post("/internal/v1/schedules/:id/run", async (req) => {
+    const { id } = req.params as { id: string };
+    ctx.store.markScheduleRun(id);
+    return { ok: true };
+  });
+
+  app.post("/internal/v1/tasks:create", async (req) => {
+    const body = z
+      .object({
+        workspaceId: z.string(),
+        type: z.string().default("research"),
+        goal: z.string(),
+        spec: z.record(z.string(), z.unknown()).default({}),
+      })
+      .parse(req.body);
+    const owner = ctx.store.getWorkspaceOwnerSubject(body.workspaceId);
+    if (!owner) return { ok: false, reason: "workspace_not_found" };
+    const actor = {
+      subject: owner,
+      workspaceId: body.workspaceId,
+      requestId: `req_${crypto.randomUUID().replaceAll("-", "").slice(0, 16)}`,
+      isService: true,
+      tokenScopes: ["read", "write"] as Array<"read" | "write">,
+    };
+    const task = ctx.store.createTask(actor, {
+      type: body.type as "research",
+      goal: body.goal,
+      spec: body.spec,
+    });
+    ctx.store.reserveCredits(body.workspaceId, task.id, 400, `op_reserve_${task.id}`);
+    ctx.bus.emit({
+      eventId: nextId("evt"),
+      eventType: "task.created",
+      schemaVersion: 1,
+      occurredAt: nowIso(),
+      producer: "scheduler",
+      tenantId: body.workspaceId,
+      aggregate: { type: "task", id: task.id, version: 1 },
+      trace: {},
+      data: { taskId: task.id, taskType: "research", spec: { ...body.spec, goal: body.goal } },
+    });
+    return { ok: true, taskId: task.id };
+  });
+
+  app.get("/internal/v1/domains/resolve", async (req, reply) => {
+    const query = z.object({ host: z.string() }).parse(req.query);
+    const host = query.host.toLowerCase();
+    const domain = ctx.store.getCustomDomainByDomain(host);
+    if (!domain || String(domain.status) !== "verified" || !domain.publish_id) {
+      return reply.status(404).send({ code: "DOMAIN_NOT_FOUND" });
+    }
+    const publish = ctx.store
+      .getDb()
+      .prepare("SELECT * FROM publishes WHERE id = ?")
+      .get(String(domain.publish_id)) as Record<string, unknown> | undefined;
+    if (!publish) return reply.status(404).send({ code: "PUBLISH_NOT_FOUND" });
+    const slug = (publish as { slug?: string }).slug ?? String(domain.publish_id);
+    return { publishId: domain.publish_id, slug };
+  });
+
   app.get("/internal/v1/publishes/:slug", async (req, reply) => {
     const { slug } = req.params as { slug: string };
     const publish = ctx.store.getPublishBySlug(slug) ?? ctx.store.getPublishByShortSlug(slug);
@@ -600,4 +706,13 @@ export function registerInternalRoutes(app: FastifyInstance): void {
     ctx.store.recordAccessEvent(body);
     return { ok: true };
   });
+}
+
+function parseJson(value: unknown): Record<string, unknown> {
+  if (typeof value !== "string") return {};
+  try {
+    return JSON.parse(value) as Record<string, unknown>;
+  } catch {
+    return {};
+  }
 }

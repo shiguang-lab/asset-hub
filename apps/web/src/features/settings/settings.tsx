@@ -1,4 +1,15 @@
-import { Button, Card, Field, Input, Select, Switch, Table, Tabs, useToast } from "@shiguang/ui";
+import {
+  Button,
+  Card,
+  Field,
+  formatDate,
+  Input,
+  Select,
+  Switch,
+  Table,
+  Tabs,
+  useToast,
+} from "@shiguang/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { type ApiToken, api, type McpConfig } from "../../entities/api.js";
@@ -11,8 +22,11 @@ export function SettingsPage() {
       <Tabs
         tabs={[
           { id: "profile", label: "个人与 AI" },
+          { id: "team", label: "团队与权限" },
           { id: "mcp", label: "MCP 连接" },
           { id: "tokens", label: "API Token" },
+          { id: "git", label: "Git 集成" },
+          { id: "domains", label: "自定义域名" },
           { id: "publish", label: "发布" },
           { id: "audit", label: "安全审计" },
         ]}
@@ -20,11 +34,404 @@ export function SettingsPage() {
         onChange={setTab}
       />
       {tab === "profile" && <ProfileSettings />}
+      {tab === "team" && <TeamSettings />}
       {tab === "mcp" && <McpSettings />}
       {tab === "tokens" && <TokenSettings />}
+      {tab === "git" && <GitSettings />}
+      {tab === "domains" && <DomainSettings />}
       {tab === "publish" && <PublishSettings />}
       {tab === "audit" && <AuditLog />}
     </div>
+  );
+}
+
+interface GitConnection {
+  id: string;
+  name: string;
+  provider: string;
+  repo_url: string;
+  branch: string;
+  sync_path: string;
+  local_dir: string | null;
+  status: string;
+  last_sync_at: string | null;
+  last_sync_status: string | null;
+  last_error: string | null;
+}
+
+function GitSettings() {
+  const toast = useToast();
+  const queryClient = useQueryClient();
+  const { data } = useQuery<GitConnection[]>({
+    queryKey: ["git"],
+    queryFn: () => api("/integrations/git"),
+  });
+  const [name, setName] = useState("");
+  const [provider, setProvider] = useState("github");
+  const [repoUrl, setRepoUrl] = useState("");
+  const [branch, setBranch] = useState("main");
+  const [syncPath, setSyncPath] = useState("/");
+  const [localDir, _setLocalDir] = useState("");
+
+  const create = useMutation({
+    mutationFn: () =>
+      api<GitConnection>("/integrations/git", {
+        method: "POST",
+        body: { name, provider, repoUrl, branch, syncPath, localDir: localDir || undefined },
+      }),
+    onSuccess: () => {
+      toast("success", "Git 连接已创建");
+      setName("");
+      setRepoUrl("");
+      void queryClient.invalidateQueries({ queryKey: ["git"] });
+    },
+    onError: (e: Error) => toast("error", e.message),
+  });
+
+  const sync = useMutation({
+    mutationFn: (id: string) => api(`/integrations/git/${id}/sync`, { method: "POST" }),
+    onSuccess: () => {
+      toast("success", "同步任务已创建，文档将导入为资产");
+      void queryClient.invalidateQueries({ queryKey: ["git"] });
+      void queryClient.invalidateQueries({ queryKey: ["tasks"] });
+    },
+  });
+
+  const remove = useMutation({
+    mutationFn: (id: string) => api(`/integrations/git/${id}`, { method: "DELETE" }),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["git"] }),
+  });
+
+  return (
+    <div className="sg-col">
+      <Card>
+        <div className="sg-grid" style={{ gridTemplateColumns: "1fr 1fr" }}>
+          <Field label="连接名称">
+            <Input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="例如：产品文档仓库"
+            />
+          </Field>
+          <Field label="Provider">
+            <Select
+              value={provider}
+              onChange={setProvider}
+              options={[
+                { value: "github", label: "GitHub" },
+                { value: "gitlab", label: "GitLab" },
+                { value: "local", label: "本地目录（演示）" },
+              ]}
+            />
+          </Field>
+        </div>
+        <Field
+          label="仓库地址"
+          hint={
+            provider === "local"
+              ? "本地模式直接填目录路径，无需克隆"
+              : "例如 https://github.com/org/docs.git"
+          }
+        >
+          <Input
+            value={repoUrl}
+            onChange={(e) => setRepoUrl(e.target.value)}
+            placeholder={provider === "local" ? "/Users/me/docs" : "https://…"}
+          />
+        </Field>
+        <div className="sg-grid" style={{ gridTemplateColumns: "1fr 1fr" }}>
+          <Field label="分支">
+            <Input value={branch} onChange={(e) => setBranch(e.target.value)} />
+          </Field>
+          <Field label="同步路径（仓库内子目录）">
+            <Input value={syncPath} onChange={(e) => setSyncPath(e.target.value)} />
+          </Field>
+        </div>
+        <Button
+          variant="primary"
+          disabled={!name.trim() || !repoUrl.trim()}
+          onClick={() => create.mutate()}
+        >
+          创建连接
+        </Button>
+      </Card>
+
+      {(data?.length ?? 0) > 0 && (
+        <Table>
+          <thead>
+            <tr>
+              <th>名称</th>
+              <th>仓库</th>
+              <th>分支</th>
+              <th>状态</th>
+              <th>最近同步</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {data?.map((c) => (
+              <tr key={c.id}>
+                <td>{c.name}</td>
+                <td style={{ fontSize: 12 }}>{c.repo_url}</td>
+                <td>{c.branch}</td>
+                <td>{c.status}</td>
+                <td className="sg-subtle">
+                  {c.last_sync_at ? formatDate(c.last_sync_at) : "-"}
+                  {c.last_sync_status && <div style={{ fontSize: 11 }}>{c.last_sync_status}</div>}
+                </td>
+                <td>
+                  <div className="sg-row">
+                    <Button size="sm" onClick={() => sync.mutate(c.id)}>
+                      同步
+                    </Button>
+                    <Button size="sm" variant="danger" onClick={() => remove.mutate(c.id)}>
+                      删除
+                    </Button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </Table>
+      )}
+    </div>
+  );
+}
+
+interface CustomDomain {
+  id: string;
+  domain: string;
+  verification_token: string;
+  status: string;
+  verified_at: string | null;
+  publish_id: string | null;
+}
+
+function DomainSettings() {
+  const toast = useToast();
+  const queryClient = useQueryClient();
+  const { data } = useQuery<CustomDomain[]>({
+    queryKey: ["domains"],
+    queryFn: () => api("/integrations/domains"),
+  });
+  const { data: publishes } = useQuery<Array<{ id: string; slug: string; assetId: string }>>({
+    queryKey: ["publishes"],
+    queryFn: () => api("/publishes"),
+  });
+  const [domain, setDomain] = useState("");
+  const [token, setToken] = useState("");
+
+  const create = useMutation({
+    mutationFn: () =>
+      api<CustomDomain>("/integrations/domains", { method: "POST", body: { domain } }),
+    onSuccess: () => {
+      toast("success", "域名已添加，请按提示配置 DNS TXT 记录");
+      setDomain("");
+      void queryClient.invalidateQueries({ queryKey: ["domains"] });
+    },
+    onError: (e: Error) => toast("error", e.message),
+  });
+
+  const verify = useMutation({
+    mutationFn: (id: string) =>
+      api(`/integrations/domains/${id}/verify`, { method: "POST", body: { token } }),
+    onSuccess: () => {
+      toast("success", "域名验证通过");
+      setToken("");
+      void queryClient.invalidateQueries({ queryKey: ["domains"] });
+    },
+    onError: (e: Error) => toast("error", e.message),
+  });
+
+  const bind = useMutation({
+    mutationFn: ({ id, publishId }: { id: string; publishId: string | null }) =>
+      api(`/integrations/domains/${id}/bind`, { method: "POST", body: { publishId } }),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["domains"] }),
+  });
+
+  const remove = useMutation({
+    mutationFn: (id: string) => api(`/integrations/domains/${id}`, { method: "DELETE" }),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["domains"] }),
+  });
+
+  return (
+    <div className="sg-col">
+      <Card>
+        <Field label="域名" hint="例如 docs.example.com（需备案/解析至公开网关）">
+          <div className="sg-row">
+            <Input
+              value={domain}
+              onChange={(e) => setDomain(e.target.value)}
+              placeholder="docs.example.com"
+            />
+            <Button variant="primary" disabled={!domain.trim()} onClick={() => create.mutate()}>
+              添加
+            </Button>
+          </div>
+        </Field>
+      </Card>
+      {(data ?? []).map((d) => (
+        <Card key={d.id}>
+          <div className="sg-row-between">
+            <div>
+              <strong>{d.domain}</strong>
+              <span
+                className={`sg-badge ${d.status === "verified" ? "sg-badge-success" : "sg-badge-warning"}`}
+              >
+                {d.status === "verified" ? "已验证" : "待验证"}
+              </span>
+            </div>
+            <div className="sg-row">
+              <Select
+                value={d.publish_id ?? ""}
+                onChange={(v) => bind.mutate({ id: d.id, publishId: v || null })}
+                options={[
+                  { value: "", label: "绑定发布内容…" },
+                  ...(publishes ?? []).map((p) => ({
+                    value: p.id,
+                    label: `${p.slug}（${p.assetId}）`,
+                  })),
+                ]}
+                className=""
+                style={{ width: 220 }}
+              />
+              <Button size="sm" variant="danger" onClick={() => remove.mutate(d.id)}>
+                删除
+              </Button>
+            </div>
+          </div>
+          {d.status !== "verified" && (
+            <div className="sg-card sg-mt" style={{ background: "var(--sg-bg-3)" }}>
+              <p className="sg-label">添加 DNS TXT 记录：</p>
+              <code>{d.verification_token}</code>
+              <div className="sg-row sg-mt-sm">
+                <Input
+                  value={token}
+                  onChange={(e) => setToken(e.target.value)}
+                  placeholder="粘贴验证 Token"
+                  style={{ maxWidth: 240 }}
+                />
+                <Button size="sm" variant="primary" onClick={() => verify.mutate(d.id)}>
+                  验证
+                </Button>
+              </div>
+            </div>
+          )}
+        </Card>
+      ))}
+    </div>
+  );
+}
+
+function TeamSettings() {
+  const toast = useToast();
+  const queryClient = useQueryClient();
+  const { data } = useQuery<{
+    workspaceId: string;
+    ownerSubject: string;
+    members: Array<{ subject: string; role: string; created_at: string }>;
+  }>({
+    queryKey: ["workspace"],
+    queryFn: () => api("/workspace"),
+  });
+  const [subject, setSubject] = useState("");
+  const [role, setRole] = useState("viewer");
+
+  const invite = useMutation({
+    mutationFn: () => api("/workspace/members", { method: "POST", body: { subject, role } }),
+    onSuccess: () => {
+      toast("success", "已邀请成员");
+      setSubject("");
+      void queryClient.invalidateQueries({ queryKey: ["workspace"] });
+    },
+    onError: (e: Error) => toast("error", e.message),
+  });
+
+  const updateRole = useMutation({
+    mutationFn: ({ subject: s, role: r }: { subject: string; role: string }) =>
+      api(`/workspace/members/${s}`, { method: "PATCH", body: { role: r } }),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["workspace"] }),
+  });
+
+  const remove = useMutation({
+    mutationFn: (s: string) => api(`/workspace/members/${s}`, { method: "DELETE" }),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["workspace"] }),
+  });
+
+  return (
+    <Card>
+      <h3 className="sg-h3">工作区成员</h3>
+      <div className="sg-row sg-mb">
+        <Input
+          value={subject}
+          onChange={(e) => setSubject(e.target.value)}
+          placeholder="成员 subject（如 zhangsan）"
+          style={{ maxWidth: 220 }}
+        />
+        <Select
+          value={role}
+          onChange={setRole}
+          options={[
+            { value: "admin", label: "管理员" },
+            { value: "editor", label: "编辑者" },
+            { value: "viewer", label: "查看者" },
+          ]}
+          className=""
+          style={{ width: 120 }}
+        />
+        <Button
+          variant="primary"
+          size="sm"
+          disabled={!subject.trim()}
+          onClick={() => invite.mutate()}
+        >
+          邀请
+        </Button>
+      </div>
+      <Table>
+        <thead>
+          <tr>
+            <th>成员</th>
+            <th>角色</th>
+            <th>加入时间</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>{data?.ownerSubject}（所有者）</td>
+            <td>owner</td>
+            <td>-</td>
+            <td></td>
+          </tr>
+          {(data?.members ?? []).map((m) => (
+            <tr key={m.subject}>
+              <td>{m.subject}</td>
+              <td>
+                <Select
+                  value={m.role}
+                  onChange={(v) => updateRole.mutate({ subject: m.subject, role: v })}
+                  options={[
+                    { value: "admin", label: "管理员" },
+                    { value: "editor", label: "编辑者" },
+                    { value: "viewer", label: "查看者" },
+                  ]}
+                  className=""
+                  style={{ width: 110 }}
+                />
+              </td>
+              <td>{formatDate(m.created_at)}</td>
+              <td>
+                <Button size="sm" variant="danger" onClick={() => remove.mutate(m.subject)}>
+                  移除
+                </Button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </Table>
+      <p className="sg-hint">在资产详情页可将资产分享给成员并指定编辑/查看权限。</p>
+    </Card>
   );
 }
 

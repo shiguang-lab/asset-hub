@@ -84,4 +84,16 @@ export class ApiClient {
       body: JSON.stringify(input),
     });
   }
+
+  async getInternal<T>(path: string): Promise<T> {
+    const res = await fetch(`${this.config.apiBase}${path}`, {
+      headers: { "x-internal-token": this.config.workerToken },
+    });
+    if (!res.ok) throw new Error(`api ${res.status} ${path}`);
+    return (await res.json()) as T;
+  }
+
+  async postInternal<T>(path: string, body: Record<string, unknown>): Promise<T> {
+    return this.request<T>(path, { method: "POST", body: JSON.stringify(body) });
+  }
 }
