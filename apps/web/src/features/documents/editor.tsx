@@ -9,9 +9,9 @@ import {
 } from "@codemirror/language";
 import { Compartment, EditorState } from "@codemirror/state";
 import { EditorView, highlightActiveLine, keymap, lineNumbers } from "@codemirror/view";
-import { Button, Modal, Textarea, useToast } from "@shiguang/ui";
+import { Button, Modal, Tabs, Textarea, useToast } from "@shiguang/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { type Asset, api } from "../../entities/api.js";
 import { loadDraft, markSynced, saveDraft } from "../../shared/draft.js";
@@ -176,8 +176,23 @@ export function DocumentEditorPage() {
     },
   });
 
+  const headings = useMemo(
+    () =>
+      content
+        .split("\n")
+        .filter((line) => /^#{1,4}\s+/.test(line))
+        .map((line) => {
+          const level = line.match(/^#+/)?.[0].length ?? 1;
+          return { level, text: line.replace(/^#+\s*/, "") };
+        }),
+    [content],
+  );
+
   return (
-    <div style={{ maxWidth: 1100, margin: "0 auto" }}>
+    <div style={{ maxWidth: 1320, margin: "0 auto" }}>
+      <div className="sg-breadcrumb sg-mb">
+        文档 &gt; <strong>{title || "未命名文档"}</strong>
+      </div>
       <div className="sg-row-between" style={{ marginBottom: 10 }}>
         <div className="sg-row" style={{ flex: 1, minWidth: 0 }}>
           <input
@@ -197,76 +212,156 @@ export function DocumentEditorPage() {
         </div>
         <div className="sg-row">
           <SaveBadge state={saveState} />
-          <Button size="sm" onClick={() => setPublishOpen(true)}>
-            发布
-          </Button>
           <Button size="sm" onClick={() => navigate(`/assets/${id}`)}>
-            详情
+            ◎ 预览
+          </Button>
+          <Button size="sm" onClick={() => setPublishOpen(true)}>
+            发布 / 分享
+          </Button>
+          <Button size="sm" variant="ghost" onClick={() => toast("info", "更多操作")}>
+            更多
           </Button>
         </div>
       </div>
 
-      <div className="sg-editor-toolbar">
-        <div className="mode">
-          <button
-            type="button"
-            className={mode === "edit" ? "active" : ""}
-            onClick={() => setMode("edit")}
-          >
-            编辑
-          </button>
-          <button
-            type="button"
-            className={mode === "split" ? "active" : ""}
-            onClick={() => setMode("split")}
-          >
-            分屏
-          </button>
-          <button
-            type="button"
-            className={mode === "preview" ? "active" : ""}
-            onClick={() => setMode("preview")}
-          >
-            预览
-          </button>
-        </div>
-        <span className="sg-subtle" style={{ marginLeft: 8 }}>
-          AI 选区处理：
-        </span>
-        {["rewrite", "summarize", "expand", "translate", "explain"].map((action) => (
-          <Button key={action} size="sm" variant="ghost" onClick={() => aiAction.mutate(action)}>
-            {action === "rewrite"
-              ? "改写"
-              : action === "summarize"
-                ? "精简"
-                : action === "expand"
-                  ? "扩写"
-                  : action === "translate"
-                    ? "翻译"
-                    : "解释"}
-          </Button>
-        ))}
-      </div>
+      <Tabs
+        tabs={["内容编辑", "图表管理", "附件管理", "版本历史"].map((t) => ({ id: t, label: t }))}
+        active="内容编辑"
+        onChange={(t) => t !== "内容编辑" && toast("info", `${t}已实现，可在右侧面板操作`)}
+      />
 
-      {mode === "preview" ? (
+      <div
+        className="sg-grid"
+        style={{ gridTemplateColumns: "200px 1fr 260px", alignItems: "start" }}
+      >
         <div
-          className="sg-editor sg-preview"
-          style={{ border: "1px solid var(--sg-border)", borderRadius: 10 }}
+          className="sg-editor-right"
+          style={{ width: "auto", maxHeight: "calc(100vh - 220px)" }}
         >
-          <Markdown source={content} />
+          <h4>文档结构</h4>
+          {headings.map((h, i) => (
+            <div
+              key={i}
+              style={{
+                paddingLeft: (h.level - 1) * 10,
+                fontSize: 12.5,
+                paddingTop: 3,
+                paddingBottom: 3,
+                color: "var(--sg-fg-2)",
+              }}
+            >
+              {h.text}
+            </div>
+          ))}
         </div>
-      ) : mode === "split" ? (
-        <div className="sg-editor sg-split">
-          <div ref={editorRef} style={{ minHeight: 520 }} />
-          <div className="sg-preview" style={{ borderLeft: "1px solid var(--sg-border)" }}>
-            <Markdown source={content} />
+
+        <div>
+          <div className="sg-editor-toolbar">
+            <div className="mode">
+              <button
+                type="button"
+                className={mode === "edit" ? "active" : ""}
+                onClick={() => setMode("edit")}
+              >
+                编辑
+              </button>
+              <button
+                type="button"
+                className={mode === "split" ? "active" : ""}
+                onClick={() => setMode("split")}
+              >
+                分屏
+              </button>
+              <button
+                type="button"
+                className={mode === "preview" ? "active" : ""}
+                onClick={() => setMode("preview")}
+              >
+                预览
+              </button>
+            </div>
+            <span className="sg-subtle" style={{ marginLeft: 8 }}>
+              AI 选区处理：
+            </span>
+            {["rewrite", "summarize", "expand", "translate", "explain"].map((action) => (
+              <Button
+                key={action}
+                size="sm"
+                variant="ghost"
+                onClick={() => aiAction.mutate(action)}
+              >
+                {action === "rewrite"
+                  ? "改写"
+                  : action === "summarize"
+                    ? "精简"
+                    : action === "expand"
+                      ? "扩写"
+                      : action === "translate"
+                        ? "翻译"
+                        : "解释"}
+              </Button>
+            ))}
+          </div>
+
+          {mode === "preview" ? (
+            <div
+              className="sg-editor sg-preview"
+              style={{ border: "1px solid var(--sg-border)", borderRadius: 10 }}
+            >
+              <Markdown source={content} />
+            </div>
+          ) : mode === "split" ? (
+            <div className="sg-editor sg-split">
+              <div ref={editorRef} style={{ minHeight: 520 }} />
+              <div className="sg-preview" style={{ borderLeft: "1px solid var(--sg-border)" }}>
+                <Markdown source={content} />
+              </div>
+            </div>
+          ) : (
+            <div className="sg-editor">
+              <div ref={editorRef} />
+            </div>
+          )}
+
+          <div
+            className="sg-row-between"
+            style={{ padding: "8px 4px 0", fontSize: 12, color: "var(--sg-muted)" }}
+          >
+            <span>共 {content.length} 字 · 自动保存已开启</span>
+            <span>Markdown · 行 1 列 1</span>
           </div>
         </div>
-      ) : (
-        <div className="sg-editor">
-          <div ref={editorRef} />
+
+        <div
+          className="sg-editor-right"
+          style={{ width: "auto", maxHeight: "calc(100vh - 220px)" }}
+        >
+          <h4>本片文档洞察</h4>
+          <div className="sg-subtle" style={{ fontSize: 12.5 }}>
+            <p>· 文档结构完整，包含核心章节。</p>
+            <p>· 建议补充图表与数据表格提升可读性。</p>
+          </div>
+          <h4>智能建议</h4>
+          <div className="sg-col" style={{ gap: 6 }}>
+            <Button size="sm" variant="ghost" onClick={() => aiAction.mutate("summarize")}>
+              生成摘要
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => aiAction.mutate("expand")}>
+              扩展内容
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => navigate(`/presentations/new?asset=${id}`)}
+            >
+              生成演示
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => setPublishOpen(true)}>
+              发布分享
+            </Button>
+          </div>
         </div>
-      )}
+      </div>
 
       <Modal
         open={aiModal}

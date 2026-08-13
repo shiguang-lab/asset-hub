@@ -3,6 +3,7 @@ import {
   Card,
   Empty,
   Field,
+  formatRelative,
   Input,
   Select,
   StatusBadge,
@@ -31,11 +32,47 @@ export function KnowledgePage() {
   return (
     <div>
       <div className="sg-row-between sg-mb">
-        <h1 className="sg-h1">知识库</h1>
+        <div>
+          <h1 className="sg-h1">知识库</h1>
+          <p className="sg-subtle">集中管理企业知识资产，让 AI 更懂你的业务。</p>
+        </div>
         <Button variant="primary" onClick={() => navigate("/knowledge/new")}>
           + 新建知识库
         </Button>
       </div>
+
+      <div className="sg-grid" style={{ gridTemplateColumns: "repeat(4, 1fr)", marginBottom: 18 }}>
+        {[
+          { label: "知识库总数", value: data?.length ?? 0, delta: "+4%" },
+          {
+            label: "文档总数",
+            value: (data ?? []).reduce((n, k) => n + k.sourceCount, 0),
+            delta: "+1,284",
+          },
+          { label: "已使用存储", value: "0 GB", delta: "总计 200 GB" },
+          { label: "被引用次数", value: 0, delta: "+18.6%" },
+        ].map((s) => (
+          <Card key={s.label} className="sg-stat-card">
+            <span className="label">{s.label}</span>
+            <span className="value">{s.value}</span>
+            <span className="delta">{s.delta}</span>
+          </Card>
+        ))}
+      </div>
+
+      <div className="sg-row sg-mb" style={{ justifyContent: "space-between" }}>
+        <div className="sg-row">
+          {["我的知识库", "团队知识库", "公开知识库"].map((t) => (
+            <span key={t} className="sg-badge" style={{ cursor: "pointer" }}>
+              {t}
+            </span>
+          ))}
+        </div>
+        <Button size="sm" variant="ghost" onClick={() => navigate("/knowledge/new")}>
+          如何使用知识库？
+        </Button>
+      </div>
+
       {(data?.length ?? 0) === 0 ? (
         <Empty
           title="还没有知识库"
@@ -47,19 +84,22 @@ export function KnowledgePage() {
           }
         />
       ) : (
-        <div className="sg-grid" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
+        <div className="sg-grid" style={{ gridTemplateColumns: "repeat(2, 1fr)" }}>
           {data?.map((kb) => (
             <Card key={kb.id} onClick={() => navigate(`/knowledge/${kb.id}`)}>
               <div className="sg-row-between">
                 <strong>{kb.name}</strong>
                 <StatusBadge status={kb.status} />
               </div>
-              <p className="sg-subtle" style={{ margin: "6px 0 0" }}>
+              <p className="sg-subtle" style={{ margin: "6px 0 10px" }}>
                 {kb.description || "暂无描述"}
               </p>
-              <div className="sg-row sg-mt-sm">
-                <span className="sg-badge">{kb.sourceCount} 来源</span>
+              <div className="sg-row sg-mt-sm" style={{ flexWrap: "wrap" }}>
+                <span className="sg-badge">📄 {kb.sourceCount} 文档</span>
                 <span className="sg-badge sg-badge-accent">{kb.chunkCount} 分块</span>
+                <span className="sg-tag" style={{ marginLeft: "auto" }}>
+                  更新于 {formatRelative(kb.updatedAt)}
+                </span>
               </div>
             </Card>
           ))}

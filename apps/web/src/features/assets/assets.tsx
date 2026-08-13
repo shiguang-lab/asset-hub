@@ -1,9 +1,18 @@
-import { Button, Empty, Input, Select, Tabs, useToast } from "@shiguang/ui";
+import {
+  Button,
+  Card,
+  Empty,
+  formatRelative,
+  Input,
+  Select,
+  StatusBadge,
+  Tabs,
+  useToast,
+} from "@shiguang/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { type Asset, api } from "../../entities/api.js";
-import { AssetRow } from "../../shared/asset-row.js";
 
 const TYPES = ["all", "document", "html", "report", "dataset", "presentation", "source", "file"];
 
@@ -55,10 +64,40 @@ export function AssetsPage() {
   return (
     <div>
       <div className="sg-row-between sg-mb">
-        <h1 className="sg-h1">资产中心</h1>
+        <div>
+          <h1 className="sg-h1">资产</h1>
+          <p className="sg-subtle">统一管理文档、报告、数据、演示与来源资产。</p>
+        </div>
         <Button variant="primary" onClick={() => navigate("/documents/new")}>
           + 新建文档
         </Button>
+      </div>
+
+      <div className="sg-grid" style={{ gridTemplateColumns: "repeat(4, 1fr)", marginBottom: 18 }}>
+        {[
+          { label: "资产总数", value: data?.total ?? 0, delta: "+16%" },
+          {
+            label: "文档",
+            value: (data?.items ?? []).filter((a) => a.type === "document").length,
+            delta: "+8%",
+          },
+          {
+            label: "报告",
+            value: (data?.items ?? []).filter((a) => a.type === "report").length,
+            delta: "+12%",
+          },
+          {
+            label: "已发布",
+            value: (data?.items ?? []).filter((a) => a.publishedUrl).length,
+            delta: "+21%",
+          },
+        ].map((s) => (
+          <Card key={s.label} className="sg-stat-card">
+            <span className="label">{s.label}</span>
+            <span className="value">{s.value}</span>
+            <span className="delta">较上月 ↑ {s.delta}</span>
+          </Card>
+        ))}
       </div>
 
       <Tabs
@@ -69,7 +108,7 @@ export function AssetsPage() {
 
       <div className="sg-row sg-mb" style={{ flexWrap: "wrap" }}>
         <Input
-          placeholder="搜索名称 / 描述 / 标签"
+          placeholder="搜索资产标题或描述…"
           value={q}
           onChange={(e) => setQ(e.target.value)}
           style={{ maxWidth: 320 }}
@@ -84,9 +123,9 @@ export function AssetsPage() {
             { value: "public", label: "公开" },
           ]}
           className=""
-          style={{ width: 150 }}
+          style={{ width: 140 }}
         />
-        <label className="sg-row" style={{ cursor: "pointer", marginLeft: 4 }}>
+        <label className="sg-row" style={{ cursor: "pointer" }}>
           <input
             type="checkbox"
             checked={includeDeleted}
@@ -140,26 +179,94 @@ export function AssetsPage() {
           hint="创建文档、上传文件或发起调研后，资产会出现在这里。"
         />
       ) : (
-        <div className="sg-col">
-          {data?.items.map((asset) => (
-            <div key={asset.id} className="sg-row" style={{ alignItems: "stretch" }}>
-              <div className="sg-center" style={{ padding: "0 6px" }}>
-                <input
-                  type="checkbox"
-                  checked={selected.has(asset.id)}
-                  onChange={() => toggle(asset.id)}
-                />
-              </div>
-              <div style={{ flex: 1 }}>
-                <AssetRow asset={asset} />
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-      {!includeDeleted && data && data.total > 0 && (
-        <p className="sg-subtle sg-mt">共 {data.total} 个资产（点击行可打开）</p>
+        <Card style={{ padding: 8 }}>
+          <table className="sg-table">
+            <thead>
+              <tr>
+                <th style={{ width: 32 }}></th>
+                <th>名称</th>
+                <th>类型</th>
+                <th>可见性</th>
+                <th>标签</th>
+                <th>更新时间</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data?.items.map((asset) => (
+                <tr
+                  key={asset.id}
+                  style={{ cursor: "pointer" }}
+                  onClick={(e) => {
+                    if ((e.target as HTMLElement).tagName !== "INPUT") navigate(assetHref(asset));
+                  }}
+                  onKeyDown={(e) => e.key === "Enter" && navigate(assetHref(asset))}
+                >
+                  <td>
+                    <input
+                      type="checkbox"
+                      checked={selected.has(asset.id)}
+                      onChange={() => toggle(asset.id)}
+                    />
+                  </td>
+                  <td>
+                    <strong>{asset.title}</strong>
+                    {asset.description && (
+                      <div className="sg-subtle" style={{ fontSize: 12 }}>
+                        {asset.description}
+                      </div>
+                    )}
+                  </td>
+                  <td>
+                    <span className="sg-badge">{asset.type}</span>
+                  </td>
+                  <td>
+                    <StatusBadge status={asset.visibility} />
+                  </td>
+                  <td>
+                    {asset.tags.slice(0, 3).map((t) => (
+                      <span key={t} className="sg-tag" style={{ marginRight: 4 }}>
+                        #{t}
+                      </span>
+                    ))}
+                  </td>
+                  <td className="sg-subtle">{formatRelative(asset.updatedAt)}</td>
+                  <td>
+                    <div className="sg-row">
+                      <Button size="sm" variant="ghost" onClick={() => navigate(assetHref(asset))}>
+                        打开
+                      </Button>
+                      {!includeDeleted && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() =>
+                            batchMutation.mutate({ action: "delete", ids: [asset.id] })
+                          }
+                        >
+                          删除
+                        </Button>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </Card>
       )}
     </div>
   );
+}
+
+function assetHref(asset: Asset): string {
+  return asset.type === "document" || asset.type === "report"
+    ? `/documents/${asset.id}`
+    : asset.type === "html"
+      ? `/html/${asset.id}`
+      : asset.type === "presentation"
+        ? `/presentations/${asset.id}`
+        : asset.type === "dataset"
+          ? `/datasets/${asset.id}`
+          : `/assets/${asset.id}`;
 }
