@@ -1,0 +1,29 @@
+{
+  "name": "@shiguang/worker",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx watch src/main.ts",
+    "lint": "biome check src",
+    "start": "node dist/main.js",
+    "test": "vitest run --passWithNoTests",
+    "typecheck": "tsc -p tsconfig.json --noEmit --pretty false"
+  },
+  "dependencies": {
+    "@shiguang/ai-core": "workspace:*",
+    "@shiguang/config": "workspace:*",
+    "@shiguang/contracts": "workspace:*",
+    "@shiguang/content": "workspace:*",
+    "@shiguang/database": "workspace:*",
+    "@shiguang/observability": "workspace:*",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "tsx": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

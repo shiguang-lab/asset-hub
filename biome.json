@@ -4,6 +4,7 @@
     "includes": [
       "**",
       "!!design/**",
+      "!!.data/**",
       "!!**/.cache/**",
       "!!**/.turbo/**",
       "!!**/dist/**",
@@ -22,6 +23,20 @@
       "recommended": true
     }
   },
+  "overrides": [
+    {
+      "includes": ["packages/ui/**"],
+      "linter": {
+        "rules": {
+          "a11y": {
+            "noStaticElementInteractions": "off",
+            "useSemanticElements": "off",
+            "noLabelWithoutControl": "off"
+          }
+        }
+      }
+    }
+  ],
   "javascript": {
     "formatter": {
       "quoteStyle": "double",

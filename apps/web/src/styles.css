@@ -1,37 +1,20 @@
-:root {
-  color: #172033;
-  background: #f7f8fb;
-  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-}
+@import "@shiguang/ui/styles.css";
 
-body {
-  min-width: 320px;
-  min-height: 100vh;
-  margin: 0;
+html {
+  scrollbar-gutter: stable;
 }
-
-main {
-  max-width: 760px;
-  margin: 0 auto;
-  padding: 18vh 24px 64px;
+.cm-editor {
+  background: var(--sg-bg-2);
+  color: var(--sg-fg);
 }
-
-.eyebrow {
-  color: #6d5dfc;
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.16em;
+.cm-editor .cm-gutters {
+  background: var(--sg-bg-3);
+  color: var(--sg-muted);
+  border-right: 1px solid var(--sg-border);
 }
-
-h1 {
-  margin: 12px 0;
-  font-size: clamp(40px, 7vw, 72px);
-  line-height: 1.02;
+.cm-editor .cm-activeLine {
+  background: var(--sg-accent-soft);
 }
-
-main > p:last-child {
-  color: #667085;
-  font-size: 18px;
+.cm-editor .cm-cursor {
+  border-left-color: var(--sg-accent);
 }

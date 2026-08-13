@@ -11,5 +11,6 @@ dist/
 coverage/
 
 *.log
+.data/
 .idea/
 .vscode/

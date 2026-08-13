@@ -11,8 +11,8 @@
   "scripts": {
     "build": "turbo run build",
     "dev": "turbo run dev --parallel",
-    "format": "biome format --write . && gofmt -w apps/content-worker/cmd/content-worker/main.go apps/public-gateway/cmd/public-gateway/main.go",
-    "format:check": "biome format . && test -z \"$(gofmt -l apps/content-worker/cmd/content-worker/main.go apps/public-gateway/cmd/public-gateway/main.go)\"",
+    "format": "biome format --write . && gofmt -w apps/compute-worker apps/public-gateway",
+    "format:check": "biome format . && test -z \"$(gofmt -l apps/compute-worker apps/public-gateway)\"",
     "lint": "turbo run lint",
     "test": "turbo run test",
     "typecheck": "turbo run typecheck",

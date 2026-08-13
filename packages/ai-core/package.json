@@ -17,7 +17,12 @@
     "test": "vitest run --passWithNoTests",
     "typecheck": "tsc -p tsconfig.json --noEmit --pretty false"
   },
+  "dependencies": {
+    "@shiguang/config": "workspace:*",
+    "zod": "catalog:"
+  },
   "devDependencies": {
+    "@types/node": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
   }

@@ -12,9 +12,18 @@
     "typecheck": "tsc -p tsconfig.json --noEmit --pretty false"
   },
   "dependencies": {
+    "@fastify/cors": "^11.1.0",
+    "@fastify/multipart": "^9.3.1",
+    "@modelcontextprotocol/sdk": "^1.20.0",
+    "@shiguang/ai-core": "workspace:*",
+    "@shiguang/content": "workspace:*",
     "@shiguang/config": "workspace:*",
     "@shiguang/contracts": "workspace:*",
-    "fastify": "catalog:"
+    "@shiguang/database": "workspace:*",
+    "@shiguang/observability": "workspace:*",
+    "fastify": "catalog:",
+    "marked": "^15.0.7",
+    "zod": "catalog:"
   },
   "devDependencies": {
     "@types/node": "catalog:",

@@ -1,25 +1,29 @@
+import { ThemeProvider, ToastProvider } from "@shiguang/ui";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import React from "react";
 import { createRoot } from "react-dom/client";
+import { RouterProvider } from "react-router-dom";
+import "@shiguang/ui/styles.css";
 import "./styles.css";
+import { router } from "./app/router.js";
 
-function App() {
-  return (
-    <main>
-      <p className="eyebrow">SHIGUANG LAB</p>
-      <h1>Asset first. AI everywhere.</h1>
-      <p>Monorepo 基础骨架已就绪，产品页面将在这里开始生长。</p>
-    </main>
-  );
-}
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: { retry: 1, refetchOnWindowFocus: false, staleTime: 15_000 },
+  },
+});
 
 const root = document.getElementById("root");
-
-if (!root) {
-  throw new Error("Missing #root element");
-}
+if (!root) throw new Error("Missing #root element");
 
 createRoot(root).render(
   <React.StrictMode>
-    <App />
+    <ThemeProvider>
+      <ToastProvider>
+        <QueryClientProvider client={queryClient}>
+          <RouterProvider router={router} />
+        </QueryClientProvider>
+      </ToastProvider>
+    </ThemeProvider>
   </React.StrictMode>,
 );

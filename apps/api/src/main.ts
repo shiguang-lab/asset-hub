@@ -1,12 +1,19 @@
 import { loadServiceConfig } from "@shiguang/config";
-import { serviceHealthSchema } from "@shiguang/contracts";
-import Fastify from "fastify";
+import { buildApp } from "./bootstrap/app.js";
 
-const config = loadServiceConfig(3001);
-const app = Fastify({ logger: true });
+const config = loadServiceConfig(3001, "api");
+const app = buildApp(config);
 
-app.get("/healthz", async () =>
-  serviceHealthSchema.parse({ service: "api", status: "ok", timestamp: new Date().toISOString() }),
-);
+try {
+  await app.listen({ host: config.host, port: config.port });
+} catch (err) {
+  app.log.error(err);
+  process.exit(1);
+}
 
-await app.listen({ host: config.host, port: config.port });
+const shutdown = async () => {
+  await app.close();
+  process.exit(0);
+};
+process.once("SIGINT", shutdown);
+process.once("SIGTERM", shutdown);

@@ -1,0 +1,12 @@
+{
+  "name": "@shiguang/compute-worker",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "build": "GOCACHE=$PWD/../../.cache/go-build GOMODCACHE=$PWD/../../.cache/go-mod go build -o dist/compute-worker ./cmd/compute-worker",
+    "dev": "GOCACHE=$PWD/../../.cache/go-build GOMODCACHE=$PWD/../../.cache/go-mod go run ./cmd/compute-worker",
+    "lint": "GOCACHE=$PWD/../../.cache/go-build GOMODCACHE=$PWD/../../.cache/go-mod go vet ./...",
+    "test": "GOCACHE=$PWD/../../.cache/go-build GOMODCACHE=$PWD/../../.cache/go-mod go test ./...",
+    "typecheck": "GOCACHE=$PWD/../../.cache/go-build GOMODCACHE=$PWD/../../.cache/go-mod go test ./..."
+  }
+}
