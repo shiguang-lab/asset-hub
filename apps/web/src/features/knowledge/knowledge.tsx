@@ -20,7 +20,7 @@ import {
   type KnowledgeSource,
   uploadFile,
 } from "../../entities/api.js";
-import { RichMarkdown } from "../../shared/markdown.js";
+import { Markdown } from "../../shared/markdown.js";
 
 export function KnowledgePage() {
   const navigate = useNavigate();
@@ -238,7 +238,7 @@ export function KnowledgeDetailPage() {
             </div>
             {askResult && (
               <div className="sg-mt">
-                <RichMarkdown source={askResult.answer} />
+                <Markdown source={askResult.answer} />
                 {askResult.insufficient && (
                   <p className="sg-hint">当前资料不足以回答，建议补充来源。</p>
                 )}

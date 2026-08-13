@@ -226,6 +226,16 @@ export function registerInternalRoutes(app: FastifyInstance): void {
             contentHash: "",
           });
           outputAssetIds.push(datasetAsset.asset.id);
+          const datasetInput = task.inputAssetIds[0];
+          if (datasetInput) {
+            ctx.store.addRelation(
+              task.workspaceId,
+              datasetInput,
+              datasetAsset.asset.id,
+              "derived_from",
+              { taskId: task.id },
+            );
+          }
           continue;
         }
       }
@@ -289,6 +299,18 @@ export function registerInternalRoutes(app: FastifyInstance): void {
         },
       );
       outputAssetIds.push(asset.asset.id);
+      if (output.assetType === "presentation") {
+        const presentationInput = task.inputAssetIds[0];
+        if (presentationInput) {
+          ctx.store.addRelation(
+            task.workspaceId,
+            presentationInput,
+            asset.asset.id,
+            "generated_from",
+            { taskId: task.id },
+          );
+        }
+      }
     }
 
     for (const failure of failures) {

@@ -83,6 +83,7 @@ Q=$(curl_json -X POST "$API/api/v1/datasets/$DSID/query" -d "{\"datasetVersionId
 check "数据集聚合查询返回结果" bash -c "echo '$Q' | grep -q '\"total\"'"
 
 # 6. MCP 工具列表
+curl_json -X PATCH "$API/api/v1/integrations/mcp" -d '{"enabled":true,"scope":"all","writeEnabled":true}' >/dev/null
 TOK=$(curl -s -H "$H" -H "$CT" -X POST "$API/api/v1/integrations/tokens" -d '{"name":"smoke","scopes":["read"]}' | json 'd["secret"]')
 TOOLS=$(curl -s -H "Authorization: Bearer $TOK" -H "$CT" -H "accept: application/json" -X POST "$API/mcp" -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' | json 'd.get("result",{}).get("tools",[]) and "ok" or ""')
 check "MCP tools/list 可用" test "$TOOLS" = "ok"

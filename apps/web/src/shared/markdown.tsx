@@ -19,16 +19,6 @@ const processor = unified()
   .use(rehypeStringify);
 
 export function Markdown({ source, className }: { source: string; className?: string }) {
-  const html = useMemo(() => String(processor.processSync(source)), [source]);
-  return <div className={className ?? "sg-md"} dangerouslySetInnerHTML={{ __html: html }} />;
-}
-
-export function MarkdownPreview({ source }: { source: string }) {
-  return <Markdown source={source} />;
-}
-
-/** Renders mermaid blocks inside a Markdown preview. */
-export function RichMarkdown({ source, className }: { source: string; className?: string }) {
   const [mermaid, setMermaid] = useState<{
     render: (id: string, code: string) => Promise<string>;
   } | null>(null);

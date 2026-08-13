@@ -7,6 +7,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { type Asset, api } from "../../entities/api.js";
+import { SandboxHtmlPreview } from "../../shared/sandbox-preview.js";
 
 export function HtmlEditorPage() {
   const { id } = useParams<{ id: string }>();
@@ -89,8 +90,6 @@ export function HtmlEditorPage() {
       .catch((e: Error) => toast("error", e.message));
   };
 
-  const blobUrl = preview ? URL.createObjectURL(new Blob([source], { type: "text/html" })) : null;
-
   return (
     <div style={{ maxWidth: 1200, margin: "0 auto" }}>
       <div className="sg-row-between" style={{ marginBottom: 10 }}>
@@ -116,18 +115,7 @@ export function HtmlEditorPage() {
         </div>
       </div>
       {preview ? (
-        <iframe
-          sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
-          src={blobUrl ?? undefined}
-          style={{
-            width: "100%",
-            minHeight: "70vh",
-            border: "1px solid var(--sg-border)",
-            borderRadius: 10,
-            background: "#fff",
-          }}
-          title="HTML 预览"
-        />
+        <SandboxHtmlPreview source={source} minHeight={600} />
       ) : (
         <div className="sg-editor">
           <div ref={editorRef} />

@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { type Asset, api } from "../../entities/api.js";
-import { AssetRow } from "../home/home.js";
+import { AssetRow } from "../../shared/asset-row.js";
 
 const TYPES = ["all", "document", "html", "report", "dataset", "presentation", "source", "file"];
 

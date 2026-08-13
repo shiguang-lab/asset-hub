@@ -658,17 +658,20 @@ export class Store {
          ORDER BY r.created_at DESC`,
       )
       .all(assetId) as Row[];
-    return rows.map((r) => ({
-      relation: {
-        id: str(r.id),
-        sourceAssetId: str(r.source_asset_id),
-        targetAssetId: str(r.target_asset_id),
-        relationType: str(r.relation_type) as AssetRelation["relationType"],
-        provenance: parse(r.provenance_json, {}),
-        createdAt: str(r.created_at),
-      },
-      asset: null,
-    }));
+    return rows.map((r) => {
+      const target = this.getAsset(str(r.target_workspace), str(r.target_asset_id));
+      return {
+        relation: {
+          id: str(r.id),
+          sourceAssetId: str(r.source_asset_id),
+          targetAssetId: str(r.target_asset_id),
+          relationType: str(r.relation_type) as AssetRelation["relationType"],
+          provenance: parse(r.provenance_json, {}),
+          createdAt: str(r.created_at),
+        },
+        asset: target,
+      };
+    });
   }
 
   /* ---------------- tasks ---------------- */

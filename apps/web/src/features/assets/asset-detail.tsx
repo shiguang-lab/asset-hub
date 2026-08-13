@@ -16,6 +16,7 @@ import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { type Asset, api, type KnowledgeBase, type Publish } from "../../entities/api.js";
 import { Markdown } from "../../shared/markdown.js";
+import { SandboxHtmlPreview } from "../../shared/sandbox-preview.js";
 import { PublishDialog } from "../publishing/publish-dialog.js";
 
 export function AssetDetailPage() {
@@ -43,6 +44,13 @@ export function AssetDetailPage() {
   >({
     queryKey: ["asset-versions", id],
     queryFn: () => api(`/assets/${id}/versions`),
+    enabled: Boolean(id),
+  });
+  const { data: relations } = useQuery<
+    Array<{ relation: { relationType: string; targetAssetId: string }; asset: Asset | null }>
+  >({
+    queryKey: ["asset-relations", id],
+    queryFn: () => api(`/assets/${id}/relations`),
     enabled: Boolean(id),
   });
   const { data: kbs } = useQuery<KnowledgeBase[]>({
@@ -134,6 +142,7 @@ export function AssetDetailPage() {
           { id: "content", label: "内容" },
           { id: "info", label: "信息" },
           { id: "versions", label: "版本" },
+          { id: "relations", label: "关系" },
         ]}
         active={tab}
         onChange={setTab}
@@ -144,18 +153,7 @@ export function AssetDetailPage() {
           {content?.kind === "markdown" || asset.type === "report" ? (
             <Markdown source={content?.text ?? ""} />
           ) : content?.kind === "html" ? (
-            <iframe
-              title="HTML 内容预览"
-              sandbox="allow-same-origin"
-              srcDoc={content?.text ?? ""}
-              style={{
-                width: "100%",
-                minHeight: 480,
-                border: "1px solid var(--sg-border)",
-                borderRadius: 8,
-                background: "#fff",
-              }}
-            />
+            <SandboxHtmlPreview source={content?.text ?? ""} />
           ) : content?.kind === "manifest" ? (
             <pre style={{ overflow: "auto", fontSize: 12 }}>
               {JSON.stringify(content.manifest, null, 2)}
@@ -248,6 +246,44 @@ export function AssetDetailPage() {
               ))}
             </tbody>
           </Table>
+        </Card>
+      )}
+
+      {tab === "relations" && (
+        <Card>
+          {(relations?.length ?? 0) === 0 ? (
+            <Empty title="暂无关联" hint="由文档生成演示、报告引用来源等操作会在这里建立关系。" />
+          ) : (
+            <div className="sg-col">
+              {relations?.map(({ relation, asset: target }) => (
+                <div key={relation.targetAssetId} className="sg-row-between">
+                  <div className="sg-row">
+                    <span className="sg-badge sg-badge-accent">{relation.relationType}</span>
+                    <strong>{target?.title ?? relation.targetAssetId}</strong>
+                    {target && <span className="sg-subtle">{target.type}</span>}
+                  </div>
+                  {target && (
+                    <Button
+                      size="sm"
+                      onClick={() => {
+                        const href =
+                          target.type === "document" || target.type === "report"
+                            ? `/documents/${target.id}`
+                            : target.type === "dataset"
+                              ? `/datasets/${target.id}`
+                              : target.type === "presentation"
+                                ? `/presentations/${target.id}`
+                                : `/assets/${target.id}`;
+                        navigate(href);
+                      }}
+                    >
+                      打开
+                    </Button>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
         </Card>
       )}
 

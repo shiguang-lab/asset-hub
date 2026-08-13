@@ -15,7 +15,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { type Asset, api } from "../../entities/api.js";
 import { loadDraft, markSynced, saveDraft } from "../../shared/draft.js";
-import { RichMarkdown } from "../../shared/markdown.js";
+import { Markdown } from "../../shared/markdown.js";
 import { PublishDialog } from "../publishing/publish-dialog.js";
 
 type Mode = "edit" | "split" | "preview";
@@ -253,13 +253,13 @@ export function DocumentEditorPage() {
           className="sg-editor sg-preview"
           style={{ border: "1px solid var(--sg-border)", borderRadius: 10 }}
         >
-          <RichMarkdown source={content} />
+          <Markdown source={content} />
         </div>
       ) : mode === "split" ? (
         <div className="sg-editor sg-split">
           <div ref={editorRef} style={{ minHeight: 520 }} />
           <div className="sg-preview" style={{ borderLeft: "1px solid var(--sg-border)" }}>
-            <RichMarkdown source={content} />
+            <Markdown source={content} />
           </div>
         </div>
       ) : (
