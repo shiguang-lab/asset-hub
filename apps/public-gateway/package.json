@@ -1,0 +1,12 @@
+{
+  "name": "@shiguang/public-gateway",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "build": "GOCACHE=$PWD/../../.cache/go-build GOMODCACHE=$PWD/../../.cache/go-mod go build -o dist/public-gateway ./cmd/public-gateway",
+    "dev": "GOCACHE=$PWD/../../.cache/go-build GOMODCACHE=$PWD/../../.cache/go-mod go run ./cmd/public-gateway",
+    "lint": "GOCACHE=$PWD/../../.cache/go-build GOMODCACHE=$PWD/../../.cache/go-mod go vet ./...",
+    "test": "GOCACHE=$PWD/../../.cache/go-build GOMODCACHE=$PWD/../../.cache/go-mod go test ./...",
+    "typecheck": "GOCACHE=$PWD/../../.cache/go-build GOMODCACHE=$PWD/../../.cache/go-mod go test ./..."
+  }
+}
