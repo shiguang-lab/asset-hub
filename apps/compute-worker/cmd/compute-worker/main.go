@@ -87,7 +87,12 @@ func main() {
 			return
 		}
 		started := time.Now()
-		rows, err := data.LoadRows(cfg.ObjectRoot, req.DataKey)
+		contents, err := cfg.FetchObject(req.DataKey)
+		if err != nil {
+			writeError(w, http.StatusBadGateway, "OBJECT_STORE", err.Error())
+			return
+		}
+		rows, err := data.ParseRows(contents)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "INVALID_INPUT", err.Error())
 			return

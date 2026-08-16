@@ -3,6 +3,7 @@ import { hashPassword, randomSalt } from "@shiguang/database";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { badRequest, notFound } from "../platform/errors.js";
+import { requireAssetAccess } from "../platform/authorization.js";
 import { buildReleaseBundle } from "../platform/render.js";
 import type { AppContext } from "../types.js";
 
@@ -23,12 +24,11 @@ export function registerPublishing(app: FastifyInstance): void {
     if (body.visibility === "password" && !body.password) {
       throw badRequest("PASSWORD_REQUIRED", "密码可见性需要设置密码");
     }
-    const asset = ctx.store.getAsset(req.actor.workspaceId, body.assetId);
-    if (!asset) throw notFound("资产");
+    const asset = await requireAssetAccess(ctx, req.actor, body.assetId, "manage");
     if (!["document", "html", "report", "presentation", "file", "dataset"].includes(asset.type)) {
       throw badRequest("NOT_PUBLISHABLE", "该类型资产暂不支持发布");
     }
-    const publish = ctx.store.createPublish(req.actor, {
+    const publish = await ctx.store.createPublish(req.actor, {
       assetId: body.assetId,
       visibility: body.visibility,
       password: body.password ?? null,
@@ -37,10 +37,8 @@ export function registerPublishing(app: FastifyInstance): void {
       allowCopy: body.allowCopy,
     });
     await buildAndAttachRelease(ctx, req.actor.workspaceId, publish.id, asset.id);
-    const updated = ctx.store.getPublish(req.actor.workspaceId, publish.id) as NonNullable<
-      ReturnType<typeof ctx.store.getPublish>
-    >;
-    ctx.store.audit(
+    const updated = (await ctx.store.getPublish(req.actor.workspaceId, publish.id))!;
+    await ctx.store.audit(
       req.actor.workspaceId,
       req.actor.subject,
       "publish.create",
@@ -48,7 +46,7 @@ export function registerPublishing(app: FastifyInstance): void {
       "success",
       { assetId: asset.id, visibility: body.visibility },
     );
-    ctx.bus.emit({
+    await ctx.bus.emit({
       eventId: nextId("evt"),
       eventType: "publish.released",
       schemaVersion: 1,
@@ -67,20 +65,34 @@ export function registerPublishing(app: FastifyInstance): void {
   });
 
   app.get("/api/v1/publishes", async (req) => {
-    const publishes = ctx.store.listPublishes(req.actor.workspaceId);
-    return publishes.map((p) => ({
-      ...p,
-      url: `${ctx.config.publicGatewayBase}/p/${p.slug}`,
-      shortUrl: `${ctx.config.publicGatewayBase}/s/${p.shortSlug}`,
-    }));
+    const publishes = await ctx.store.listPublishes(req.actor.workspaceId);
+    const readable = await Promise.all(
+      publishes.map(async (publish) => {
+        try {
+          await requireAssetAccess(ctx, req.actor, publish.assetId, "read");
+          return publish;
+        } catch {
+          return null;
+        }
+      }),
+    );
+    return readable
+      .filter((publish): publish is NonNullable<typeof publish> => Boolean(publish))
+      .map((p) => ({
+        ...p,
+        url: `${ctx.config.publicGatewayBase}/p/${p.slug}`,
+        shortUrl: `${ctx.config.publicGatewayBase}/s/${p.shortSlug}`,
+      }));
   });
 
   app.get("/api/v1/publishes/:id", async (req, reply) => {
     const { id } = req.params as { id: string };
-    const publish = ctx.store.getPublish(req.actor.workspaceId, id);
+    const publish = await ctx.store.getPublish(req.actor.workspaceId, id);
     if (!publish) return reply.code(404).send({ code: "RESOURCE_NOT_FOUND" });
-    const release = publish.activeReleaseId ? ctx.store.getRelease(publish.activeReleaseId) : null;
-    const stats = ctx.store.getPublishStats(id);
+    const release = publish.activeReleaseId
+      ? await ctx.store.getRelease(publish.activeReleaseId)
+      : null;
+    const stats = await ctx.store.getPublishStats(id);
     return {
       ...publish,
       release,
@@ -101,7 +113,7 @@ export function registerPublishing(app: FastifyInstance): void {
         allowCopy: z.boolean().optional(),
       })
       .parse(req.body);
-    const publish = ctx.store.getPublish(req.actor.workspaceId, id);
+    const publish = await ctx.store.getPublish(req.actor.workspaceId, id);
     if (!publish) throw notFound("发布");
     let passwordHash: string | null | undefined;
     let passwordSalt: string | null | undefined;
@@ -109,25 +121,32 @@ export function registerPublishing(app: FastifyInstance): void {
       passwordSalt = randomSalt();
       passwordHash = hashPassword(body.password, passwordSalt);
     }
-    const updated = ctx.store.updatePublish(req.actor.workspaceId, id, {
+    const updated = await ctx.store.updatePublish(req.actor.workspaceId, id, {
       ...(body.visibility !== undefined ? { visibility: body.visibility } : {}),
       ...(passwordHash !== undefined ? { passwordHash, passwordSalt } : {}),
       ...(body.expiresAt !== undefined ? { expiresAt: body.expiresAt } : {}),
       ...(body.allowDownload !== undefined ? { allowDownload: body.allowDownload } : {}),
       ...(body.allowCopy !== undefined ? { allowCopy: body.allowCopy } : {}),
     });
-    ctx.store.audit(req.actor.workspaceId, req.actor.subject, "publish.update", id, "success", {
-      visibility: body.visibility,
-    });
+    await ctx.store.audit(
+      req.actor.workspaceId,
+      req.actor.subject,
+      "publish.update",
+      id,
+      "success",
+      {
+        visibility: body.visibility,
+      },
+    );
     return updated;
   });
 
   app.post("/api/v1/publishes/:id/revoke", async (req) => {
     const { id } = req.params as { id: string };
-    const publish = ctx.store.getPublish(req.actor.workspaceId, id);
+    const publish = await ctx.store.getPublish(req.actor.workspaceId, id);
     if (!publish) throw notFound("发布");
-    ctx.store.revokePublish(req.actor.workspaceId, id);
-    ctx.bus.emit({
+    await ctx.store.revokePublish(req.actor.workspaceId, id);
+    await ctx.bus.emit({
       eventId: nextId("evt"),
       eventType: "publish.revoked",
       schemaVersion: 1,
@@ -138,17 +157,24 @@ export function registerPublishing(app: FastifyInstance): void {
       trace: {},
       data: { publishId: id, slug: publish.slug },
     });
-    ctx.store.audit(req.actor.workspaceId, req.actor.subject, "publish.revoke", id, "success", {});
+    await ctx.store.audit(
+      req.actor.workspaceId,
+      req.actor.subject,
+      "publish.revoke",
+      id,
+      "success",
+      {},
+    );
     return { ok: true };
   });
 
   app.post("/api/v1/publishes/:id/release", async (req) => {
     const { id } = req.params as { id: string };
-    const publish = ctx.store.getPublish(req.actor.workspaceId, id);
+    const publish = await ctx.store.getPublish(req.actor.workspaceId, id);
     if (!publish) throw notFound("发布");
     await buildAndAttachRelease(ctx, req.actor.workspaceId, id, publish.assetId);
-    const updated = ctx.store.getPublish(req.actor.workspaceId, id);
-    ctx.bus.emit({
+    const updated = await ctx.store.getPublish(req.actor.workspaceId, id);
+    await ctx.bus.emit({
       eventId: nextId("evt"),
       eventType: "publish.released",
       schemaVersion: 1,
@@ -169,9 +195,9 @@ async function buildAndAttachRelease(
   publishId: string,
   assetId: string,
 ): Promise<void> {
-  const publish = ctx.store.getPublish(workspaceId, publishId);
+  const publish = await ctx.store.getPublish(workspaceId, publishId);
   if (!publish) throw notFound("发布");
-  const asset = ctx.store.getAsset(workspaceId, assetId);
+  const asset = await ctx.store.getAsset(workspaceId, assetId);
   if (!asset) throw notFound("资产");
   const content = await ctx.store.readContent(assetId);
   let presentation: z.infer<typeof presentationDocumentSchema> | undefined;
@@ -188,7 +214,7 @@ async function buildAndAttachRelease(
         : {}),
     presentation,
   });
-  const release = ctx.store.createRelease(publishId, {
+  const release = await ctx.store.createRelease(publishId, {
     assetVersionId: asset.currentVersionId ?? "",
     manifest: bundle.manifest,
   });
@@ -200,5 +226,5 @@ async function buildAndAttachRelease(
       file.mediaType,
     );
   }
-  ctx.store.setActiveRelease(workspaceId, publishId, release.id);
+  await ctx.store.setActiveRelease(workspaceId, publishId, release.id);
 }

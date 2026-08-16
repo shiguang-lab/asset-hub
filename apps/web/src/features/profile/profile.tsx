@@ -41,7 +41,7 @@ export function ProfilePage() {
 
   const profile = data?.profile;
   return (
-    <div style={{ maxWidth: 720 }}>
+    <div>
       <h1 className="sg-h1 sg-mb">个人中心</h1>
       <div className="sg-grid" style={{ gridTemplateColumns: "1fr 2fr" }}>
         <Card className="sg-center" style={{ flexDirection: "column", gap: 10 }}>

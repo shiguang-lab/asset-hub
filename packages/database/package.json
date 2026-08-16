@@ -18,11 +18,14 @@
     "typecheck": "tsc -p tsconfig.json --noEmit --pretty false"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "catalog:",
     "@shiguang/config": "workspace:*",
     "@shiguang/contracts": "workspace:*",
+    "pg": "catalog:",
     "zod": "catalog:"
   },
   "devDependencies": {
+    "@types/pg": "catalog:",
     "@types/node": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"

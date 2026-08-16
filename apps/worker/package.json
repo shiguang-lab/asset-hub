@@ -12,11 +12,13 @@
     "typecheck": "tsc -p tsconfig.json --noEmit --pretty false"
   },
   "dependencies": {
+    "@hatchet-dev/typescript-sdk": "1.24.1",
     "@shiguang/ai-core": "workspace:*",
     "@shiguang/config": "workspace:*",
     "@shiguang/contracts": "workspace:*",
     "@shiguang/content": "workspace:*",
     "@shiguang/database": "workspace:*",
+    "@shiguang/event-channel": "workspace:*",
     "@shiguang/observability": "workspace:*",
     "zod": "catalog:"
   },

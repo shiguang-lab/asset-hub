@@ -1,0 +1,173 @@
+name: asset-hub
+
+x-app-env: &app-env
+  - ../../.env
+  - ./runtime.env
+
+x-security: &security
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+
+services:
+  web:
+    <<: *security
+    image: shiguang/asset-hub-web:${IMAGE_TAG:-latest}
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+      target: web
+      args:
+        VITE_UNIFIED_LOGIN_ORIGIN: https://shiguanglab.com
+        VITE_PUBLIC_GATEWAY_BASE: https://doc.shiguanglab.com
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    ports:
+      - "${NAS_BIND_IP:-127.0.0.1}:${WEB_DEBUG_PORT:-3700}:8080"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+    networks:
+      app:
+      auth-edge:
+        aliases:
+          - asset-hub-web
+
+  api:
+    <<: *security
+    image: shiguang/asset-hub-api:${IMAGE_TAG:-latest}
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+      target: api
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=128m,mode=1777
+    env_file: *app-env
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: "3001"
+      DEV_AUTH: "false"
+      SEED_DEMO: "false"
+      DATA_DIR: /var/lib/shiguang/api
+      PUBLIC_API_BASE: https://doc.shiguanglab.com
+      PUBLIC_GATEWAY_BASE: https://doc.shiguanglab.com
+      WEB_BASE: https://doc.shiguanglab.com
+      COMPUTE_URL: http://compute-worker:3002
+      API_INTERNAL_BASE: http://api:3001
+      SG_IDENTITY_ISSUER: https://shiguanglab.com
+      SG_IDENTITY_AUDIENCE: asset-hub-api
+      SG_IDENTITY_ENTITLEMENT: asset-hub:access
+      SG_IDENTITY_JWKS_URL: http://auth-service:8081/.well-known/jwks.json
+    ports:
+      - "${NAS_BIND_IP:-127.0.0.1}:${API_DEBUG_PORT:-3701}:3001"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3001/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+    networks:
+      app:
+      auth-edge:
+        aliases:
+          - asset-hub-api
+
+  worker:
+    <<: *security
+    image: shiguang/asset-hub-worker:${IMAGE_TAG:-latest}
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+      target: worker
+    restart: unless-stopped
+    env_file: *app-env
+    environment:
+      NODE_ENV: production
+      API_INTERNAL_BASE: http://api:3001
+      WORKER_STATE_PATH: /var/lib/shiguang/worker/worker-state.db
+    volumes:
+      - worker-state:/var/lib/shiguang/worker
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - app
+      - egress
+
+  compute-worker:
+    <<: *security
+    image: shiguang/asset-hub-compute-worker:${IMAGE_TAG:-latest}
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+      target: compute-worker
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+    env_file: *app-env
+    environment:
+      COMPUTE_PORT: "3002"
+      API_INTERNAL_BASE: http://api:3001
+    ports:
+      - "${NAS_BIND_IP:-127.0.0.1}:${COMPUTE_DEBUG_PORT:-3702}:3002"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3002/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - app
+      - egress
+
+  public-gateway:
+    <<: *security
+    image: shiguang/asset-hub-public-gateway:${IMAGE_TAG:-latest}
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+      target: public-gateway
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    env_file: *app-env
+    environment:
+      PORT: "3004"
+      API_INTERNAL_BASE: http://api:3001
+    ports:
+      - "${NAS_BIND_IP:-127.0.0.1}:${PUBLIC_GATEWAY_DEBUG_PORT:-3704}:3004"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3004/health/live"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      app:
+      auth-edge:
+        aliases:
+          - asset-hub-public-gateway
+
+volumes:
+  worker-state:
+
+networks:
+  app:
+    internal: true
+  egress:
+  auth-edge:
+    external: true
+    name: shiguang-auth-edge

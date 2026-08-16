@@ -9,8 +9,7 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
-    },
-    "./styles.css": "./src/styles.css"
+    }
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
@@ -19,6 +18,9 @@
     "typecheck": "tsc -p tsconfig.json --noEmit --pretty false"
   },
   "dependencies": {
+    "@ant-design/icons": "^5.6.1",
+    "antd": "^6.6.0",
+    "antd-style": "^3.7.1",
     "react": "catalog:",
     "react-dom": "catalog:"
   },

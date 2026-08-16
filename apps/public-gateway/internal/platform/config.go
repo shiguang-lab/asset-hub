@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -96,6 +97,28 @@ func (c Config) FetchMeta(slug string) (body []byte, status int, err error) {
 		return nil, resp.StatusCode, fmt.Errorf("meta status %d", resp.StatusCode)
 	}
 	return body, http.StatusOK, nil
+}
+
+func (c Config) FetchReleaseFile(publishID, releaseID, path string) (body []byte, status int, err error) {
+	query := url.Values{}
+	query.Set("publishId", publishID)
+	query.Set("releaseId", releaseID)
+	query.Set("path", path)
+	req, err := http.NewRequest(http.MethodGet, c.APIBase+"/internal/v1/release-files?"+query.Encode(), nil)
+	if err != nil {
+		return nil, 0, err
+	}
+	req.Header.Set("X-Internal-Token", c.GatewayToken)
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, resp.StatusCode, nil
+	}
+	body, err = io.ReadAll(io.LimitReader(resp.Body, 64<<20))
+	return body, resp.StatusCode, err
 }
 
 type UnlockResult struct {

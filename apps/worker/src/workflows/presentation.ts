@@ -116,5 +116,5 @@ async function readAssetText(storage: ObjectStore, assetId: string): Promise<str
 }
 
 async function listObjectKeys(_storage: ObjectStore): Promise<string[]> {
-  return _storage.list("assets");
+  return await _storage.list("assets");
 }

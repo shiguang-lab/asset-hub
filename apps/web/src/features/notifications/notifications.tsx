@@ -23,7 +23,7 @@ export function NotificationsPage() {
     },
   });
   return (
-    <div style={{ maxWidth: 720 }}>
+    <div>
       <div className="sg-row-between sg-mb">
         <h1 className="sg-h1">通知中心</h1>
         <Button size="sm" onClick={() => markAll.mutate()}>

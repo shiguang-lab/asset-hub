@@ -30,81 +30,81 @@ export function registerDatasets(app: FastifyInstance): void {
       (nameField && "value" in nameField ? String(nameField.value) : "").trim() ||
       fileName.replace(/\.[^.]+$/, "");
     const description = descField && "value" in descField ? String(descField.value) : "";
-    const dataset = ctx.store.createDataset(req.actor, { name, description });
+    const dataset = await ctx.store.createDataset(req.actor, { name, description });
     const objectKey = `datasets/${req.actor.workspaceId}/${dataset.id}/${Date.now()}-${fileName}`;
     await ctx.storage.put(objectKey, buffer, part.mimetype || "text/csv");
-    const task = ctx.store.createTask(req.actor, {
-      type: "dataset_import",
-      goal: `导入数据集 ${fileName}`,
-      spec: {
-        datasetId: dataset.id,
-        objectKey,
-        fileName,
-        contentHash: hashBuffer(buffer),
-        size: buffer.byteLength,
-      },
-      inputAssetIds: [],
-    });
+    const task = await ctx.store.createTask(req.actor, {
+          type: "dataset_import",
+          goal: `导入数据集 ${fileName}`,
+          spec: {
+            datasetId: dataset.id,
+            objectKey,
+            fileName,
+            contentHash: hashBuffer(buffer),
+            size: buffer.byteLength,
+          },
+          inputAssetIds: [],
+        });
     const estimate = { min: 50, max: 100 };
-    ctx.store.reserveCredits(req.actor.workspaceId, task.id, estimate.max, `op_reserve_${task.id}`);
-    ctx.bus.emit({
-      eventId: nextId("evt"),
-      eventType: "task.created",
-      schemaVersion: 1,
-      occurredAt: nowIso(),
-      producer: "api",
-      tenantId: req.actor.workspaceId,
-      aggregate: { type: "task", id: task.id, version: 1 },
-      trace: {},
-      data: {
-        taskId: task.id,
-        taskType: "dataset_import",
-        spec: {
-          datasetId: dataset.id,
-          objectKey,
-          fileName,
-          contentHash: hashBuffer(buffer),
-        },
-      },
-    });
-    ctx.store.audit(
-      req.actor.workspaceId,
-      req.actor.subject,
-      "dataset.import",
-      dataset.id,
-      "success",
-      { fileName },
-    );
+    await ctx.store.reserveCredits(req.actor.workspaceId, task.id, estimate.max, `op_reserve_${task.id}`);
+    await ctx.bus.emit({
+            eventId: nextId("evt"),
+            eventType: "task.created",
+            schemaVersion: 1,
+            occurredAt: nowIso(),
+            producer: "api",
+            tenantId: req.actor.workspaceId,
+            aggregate: { type: "task", id: task.id, version: 1 },
+            trace: {},
+            data: {
+              taskId: task.id,
+              taskType: "dataset_import",
+              spec: {
+                datasetId: dataset.id,
+                objectKey,
+                fileName,
+                contentHash: hashBuffer(buffer),
+              },
+            },
+          });
+    await ctx.store.audit(
+            req.actor.workspaceId,
+            req.actor.subject,
+            "dataset.import",
+            dataset.id,
+            "success",
+            { fileName },
+          );
     return reply.code(202).send({ dataset, task });
   });
 
-  app.get("/api/v1/datasets", async (req) => ctx.store.listDatasets(req.actor.workspaceId));
+  app.get("/api/v1/datasets", async (req) => await ctx.store.listDatasets(req.actor.workspaceId));
 
   app.get("/api/v1/datasets/:id", async (req, reply) => {
     const { id } = req.params as { id: string };
-    const dataset = ctx.store.getDataset(req.actor.workspaceId, id);
+    const dataset = await ctx.store.getDataset(req.actor.workspaceId, id);
     if (!dataset) return reply.code(404).send({ code: "RESOURCE_NOT_FOUND" });
     const version = dataset.currentVersionId
-      ? ctx.store.getDatasetVersion(id, dataset.currentVersionId)
+      ? await ctx.store.getDatasetVersion(id, dataset.currentVersionId)
       : null;
-    const views = ctx.store.listSavedViews(id);
-    const charts = ctx.store.listChartSpecs(id);
+    const views = await ctx.store.listSavedViews(id);
+    const charts = await ctx.store.listChartSpecs(id);
     return { ...dataset, currentVersion: version, views, charts };
   });
 
   app.get("/api/v1/datasets/:id/versions", async (req) => {
     const { id } = req.params as { id: string };
-    const dataset = ctx.store.getDataset(req.actor.workspaceId, id);
+    const dataset = await ctx.store.getDataset(req.actor.workspaceId, id);
     if (!dataset) throw notFound("数据集");
-    return ctx.store.listDatasetVersions(id);
+    return await ctx.store.listDatasetVersions(id);
   });
 
   app.post("/api/v1/datasets/:id/query", async (req) => {
     const { id } = req.params as { id: string };
     const query = datasetQuerySchema.parse(req.body);
-    const dataset = ctx.store.getDataset(req.actor.workspaceId, id);
+    const dataset = await ctx.store.getDataset(req.actor.workspaceId, id);
     if (!dataset) throw notFound("数据集");
-    const version = ctx.store.getDatasetVersion(id, query.datasetVersionId);
+    const version = await ctx.store.getDatasetVersion(id, query.datasetVersionId);
     if (version?.status !== "ready") throw badRequest("DATASET_NOT_READY", "数据集版本未就绪");
     const computeResult = await queryComputeWorker(
       ctx,
@@ -124,12 +124,12 @@ export function registerDatasets(app: FastifyInstance): void {
     const body = z
       .object({ name: z.string().min(1).max(80), query: datasetQuerySchema })
       .parse(req.body);
-    return ctx.store.createSavedView(req.actor, id, body);
+    return await ctx.store.createSavedView(req.actor, id, body);
   });
 
   app.get("/api/v1/datasets/:id/views", async (req) => {
     const { id } = req.params as { id: string };
-    return ctx.store.listSavedViews(id);
+    return await ctx.store.listSavedViews(id);
   });
 
   app.post("/api/v1/datasets/:id/charts", async (req) => {
@@ -144,27 +144,27 @@ export function registerDatasets(app: FastifyInstance): void {
         aggregation: z.enum(["sum", "avg", "count", "min", "max", "none"]).default("sum"),
       })
       .parse(req.body);
-    return ctx.store.createChartSpec(req.actor, id, {
-      name: body.name,
-      chartType: body.chartType,
-      x: body.x ?? null,
-      y: body.y ?? null,
-      groupBy: body.groupBy ?? null,
-      aggregation: body.aggregation,
-    });
+    return await ctx.store.createChartSpec(req.actor, id, {
+          name: body.name,
+          chartType: body.chartType,
+          x: body.x ?? null,
+          y: body.y ?? null,
+          groupBy: body.groupBy ?? null,
+          aggregation: body.aggregation,
+        });
   });
 
   app.get("/api/v1/datasets/:id/charts", async (req) => {
     const { id } = req.params as { id: string };
-    return ctx.store.listChartSpecs(id);
+    return await ctx.store.listChartSpecs(id);
   });
 
   app.post("/api/v1/datasets/:id/ai-insights", async (req) => {
     const { id } = req.params as { id: string };
-    const dataset = ctx.store.getDataset(req.actor.workspaceId, id);
+    const dataset = await ctx.store.getDataset(req.actor.workspaceId, id);
     if (!dataset) throw notFound("数据集");
     const version = dataset.currentVersionId
-      ? ctx.store.getDatasetVersion(id, dataset.currentVersionId)
+      ? await ctx.store.getDatasetVersion(id, dataset.currentVersionId)
       : null;
     if (!version) throw badRequest("DATASET_NOT_READY", "数据集没有可用版本");
     const res = await ctx.ai.completeJson<{ insights: string[] }>(

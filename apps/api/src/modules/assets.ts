@@ -8,15 +8,19 @@ import {
 } from "@shiguang/contracts";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
+import { requireAssetAccess } from "../platform/authorization.js";
 import { badRequest, notFound } from "../platform/errors.js";
 import type { AppContext } from "../types.js";
 
 export function registerAssets(app: FastifyInstance): void {
   const ctx: AppContext = app.ctx;
 
+  const safeFileName = (name: string): string =>
+    name.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "file";
+
   app.get("/api/v1/assets", async (req) => {
     const query = listAssetsQuerySchema.parse(req.query);
-    const page = ctx.store.listAssets(req.actor.workspaceId, {
+    const page = await ctx.store.listAssets(req.actor.workspaceId, {
       type: query.type,
       q: query.q,
       tag: query.tag,
@@ -25,6 +29,8 @@ export function registerAssets(app: FastifyInstance): void {
       includeDeleted: query.includeDeleted,
       limit: query.limit,
       after: query.cursor,
+      subject: req.actor.subject,
+      workspaceRole: req.actor.workspaceRole,
     });
     return page;
   });
@@ -32,12 +38,12 @@ export function registerAssets(app: FastifyInstance): void {
   app.post("/api/v1/assets", async (req) => {
     const input = createAssetInputSchema.parse(req.body);
     if (req.idempotencyKey) {
-      return ctx.store.idempotent(
+      return await ctx.store.idempotent(
         `create-asset:${req.idempotencyKey}`,
         req.actor.workspaceId,
         async () => {
           const content = contentFromInput(input.type, input.content);
-          const asset = ctx.store.createAsset(req.actor, {
+          const asset = await ctx.store.createAsset(req.actor, {
             type: input.type,
             title: input.title,
             ...(input.description !== undefined ? { description: input.description } : {}),
@@ -45,7 +51,7 @@ export function registerAssets(app: FastifyInstance): void {
             ...(input.visibility !== undefined ? { visibility: input.visibility } : {}),
             content,
           });
-          ctx.bus.emit({
+          await ctx.bus.emit({
             eventId: nextId("evt"),
             eventType: "asset.created",
             schemaVersion: 1,
@@ -69,7 +75,7 @@ export function registerAssets(app: FastifyInstance): void {
       );
     }
     const content = contentFromInput(input.type, input.content);
-    const asset = ctx.store.createAsset(req.actor, {
+    const asset = await ctx.store.createAsset(req.actor, {
       type: input.type,
       title: input.title,
       ...(input.description !== undefined ? { description: input.description } : {}),
@@ -77,7 +83,7 @@ export function registerAssets(app: FastifyInstance): void {
       ...(input.visibility !== undefined ? { visibility: input.visibility } : {}),
       content,
     });
-    ctx.bus.emit({
+    await ctx.bus.emit({
       eventId: nextId("evt"),
       eventType: "asset.created",
       schemaVersion: 1,
@@ -88,18 +94,131 @@ export function registerAssets(app: FastifyInstance): void {
       trace: {},
       data: { assetId: asset.id, assetType: asset.type },
     });
-    ctx.store.audit(req.actor.workspaceId, req.actor.subject, "asset.create", asset.id, "success", {
-      type: asset.type,
-    });
+    await ctx.store.audit(
+      req.actor.workspaceId,
+      req.actor.subject,
+      "asset.create",
+      asset.id,
+      "success",
+      {
+        type: asset.type,
+      },
+    );
     return asset;
+  });
+
+  app.post("/api/v1/assets/files", async (req, reply) => {
+    if (!req.isMultipart()) throw badRequest("FILE_REQUIRED", "请上传文件");
+    const part = await req.file();
+    if (!part) throw badRequest("FILE_REQUIRED", "请上传文件");
+    const buffer = Buffer.from(await part.toBuffer());
+    if (buffer.byteLength > 200 * 1024 * 1024) {
+      throw badRequest("FILE_TOO_LARGE", "文件不能超过 200MB");
+    }
+    const fileName = part.filename || "file";
+    const mediaType = part.mimetype || "application/octet-stream";
+    const objectKey = `assets/${req.actor.workspaceId}/files/${Date.now()}-${safeFileName(fileName)}`;
+    const stored = await ctx.storage.put(objectKey, buffer, mediaType);
+    const asset = await ctx.store.createAsset(req.actor, {
+      type: "file",
+      title: fileName,
+      sourceType: "upload",
+      content: {
+        kind: "blob",
+        text: null,
+        manifest: null,
+        refs: [
+          {
+            role: "content",
+            objectKey: stored.key,
+            contentHash: stored.hash,
+            size: stored.size,
+            mediaType,
+          },
+        ],
+      },
+    });
+    return reply.code(201).send({
+      ...asset,
+      content: {
+        kind: "blob",
+        text: null,
+        manifest: null,
+        refs: [
+          {
+            role: "content",
+            objectKey: stored.key,
+            contentHash: stored.hash,
+            size: stored.size,
+            mediaType,
+          },
+        ],
+      },
+      downloadPath: `/api/v1/assets/${asset.id}/download`,
+    });
+  });
+
+  app.post("/api/v1/assets/documents/import", async (req, reply) => {
+    if (!req.isMultipart()) throw badRequest("FILE_REQUIRED", "请选择要导入的文档");
+    const part = await req.file();
+    if (!part) throw badRequest("FILE_REQUIRED", "请选择要导入的文档");
+    const buffer = Buffer.from(await part.toBuffer());
+    const imported = parseImportedDocumentFile(part.filename || "document.md", buffer);
+    const asset = await ctx.store.createAsset(req.actor, {
+      type: "document",
+      title: imported.title,
+      sourceType: "upload",
+      content: {
+        kind: "markdown",
+        text: imported.markdown,
+        manifest: null,
+        refs: [],
+      },
+    });
+    await ctx.bus.emit({
+      eventId: nextId("evt"),
+      eventType: "asset.created",
+      schemaVersion: 1,
+      occurredAt: nowIso(),
+      producer: "api",
+      tenantId: req.actor.workspaceId,
+      aggregate: { type: "asset", id: asset.id, version: 1 },
+      trace: {},
+      data: { assetId: asset.id, assetType: asset.type, sourceType: "upload" },
+    });
+    await ctx.store.audit(
+      req.actor.workspaceId,
+      req.actor.subject,
+      "asset.document_import",
+      asset.id,
+      "success",
+      { fileName: part.filename, size: buffer.byteLength },
+    );
+    return reply.code(201).send(asset);
   });
 
   app.get("/api/v1/assets/:id", async (req, reply) => {
     const { id } = req.params as { id: string };
-    const asset = ctx.store.getAsset(req.actor.workspaceId, id);
+    const asset = await ctx.store.getAsset(req.actor.workspaceId, id);
     if (!asset) return reply.code(404).send({ code: "RESOURCE_NOT_FOUND", detail: "资产不存在" });
     const content = await ctx.store.readContent(id);
     return { ...asset, content };
+  });
+
+  app.get("/api/v1/assets/:id/download", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const asset = await ctx.store.getAsset(req.actor.workspaceId, id);
+    if (!asset) throw notFound("资产");
+    const blob = await ctx.store.getAssetBlob(req.actor.workspaceId, id);
+    if (!blob) throw notFound("文件内容");
+    const data = await ctx.storage.get(blob.objectKey);
+    if (!data) throw notFound("文件内容");
+    const fileName = encodeURIComponent(asset.title || "download");
+    return reply
+      .type(blob.mediaType)
+      .header("content-length", String(data.byteLength))
+      .header("content-disposition", `attachment; filename*=UTF-8''${fileName}`)
+      .send(data);
   });
 
   app.patch("/api/v1/assets/:id", async (req, _reply) => {
@@ -114,17 +233,17 @@ export function registerAssets(app: FastifyInstance): void {
       })
       .parse(req.body);
     const expectedVersion = ifMatchVersion(req.headers);
-    const asset = ctx.store.getAsset(req.actor.workspaceId, id);
+    const asset = await ctx.store.getAsset(req.actor.workspaceId, id);
     if (!asset) throw notFound("资产");
     if (body.content) {
       const content = contentFromInput(asset.type, body.content);
       if (!content) throw badRequest("CONTENT_INVALID", "内容格式不合法");
-      const saved = ctx.store.saveContent(req.actor, id, content, {
+      const saved = await ctx.store.saveContent(req.actor, id, content, {
         changeKind: "edit",
         title: body.title,
         expectedLockVersion: expectedVersion,
       });
-      ctx.bus.emit({
+      await ctx.bus.emit({
         eventId: nextId("evt"),
         eventType: "asset.version.created",
         schemaVersion: 1,
@@ -137,16 +256,16 @@ export function registerAssets(app: FastifyInstance): void {
       });
       return saved.asset;
     }
-    const updated = ctx.store.updateAssetMeta(req.actor, id, body, expectedVersion);
+    const updated = await ctx.store.updateAssetMeta(req.actor, id, body, expectedVersion);
     return updated ?? asset;
   });
 
   app.delete("/api/v1/assets/:id", async (req, reply) => {
     const { id } = req.params as { id: string };
-    const asset = ctx.store.getAsset(req.actor.workspaceId, id);
+    const asset = await ctx.store.getAsset(req.actor.workspaceId, id);
     if (!asset) throw notFound("资产");
-    ctx.store.softDelete(req.actor, id);
-    ctx.bus.emit({
+    await ctx.store.softDelete(req.actor, id);
+    await ctx.bus.emit({
       eventId: nextId("evt"),
       eventType: "asset.deleted",
       schemaVersion: 1,
@@ -157,16 +276,23 @@ export function registerAssets(app: FastifyInstance): void {
       trace: {},
       data: { assetId: id, deletedAt: nowIso() },
     });
-    ctx.store.audit(req.actor.workspaceId, req.actor.subject, "asset.delete", id, "success", {});
+    await ctx.store.audit(
+      req.actor.workspaceId,
+      req.actor.subject,
+      "asset.delete",
+      id,
+      "success",
+      {},
+    );
     return reply.code(204).send();
   });
 
   app.post("/api/v1/assets/:id/restore", async (req, _reply) => {
     const { id } = req.params as { id: string };
-    const asset = ctx.store.getAsset(req.actor.workspaceId, id);
+    const asset = await ctx.store.getAsset(req.actor.workspaceId, id);
     if (!asset) throw notFound("资产");
-    ctx.store.restore(req.actor, id);
-    ctx.bus.emit({
+    await ctx.store.restore(req.actor, id);
+    await ctx.bus.emit({
       eventId: nextId("evt"),
       eventType: "asset.restored",
       schemaVersion: 1,
@@ -182,10 +308,12 @@ export function registerAssets(app: FastifyInstance): void {
 
   app.post("/api/v1/assets/:id/permanent", async (req, reply) => {
     const { id } = req.params as { id: string };
-    const asset = ctx.store.getAsset(req.actor.workspaceId, id);
+    const asset = await ctx.store.getAsset(req.actor.workspaceId, id);
     if (!asset) throw notFound("资产");
-    ctx.store.permanentDelete(req.actor, id);
-    ctx.store.audit(
+    const objectKeys = await ctx.store.listAssetBlobKeys(req.actor.workspaceId, id);
+    await ctx.store.permanentDelete(req.actor, id);
+    await Promise.all(objectKeys.map((key) => ctx.storage.delete(key)));
+    await ctx.store.audit(
       req.actor.workspaceId,
       req.actor.subject,
       "asset.permanent_delete",
@@ -198,19 +326,19 @@ export function registerAssets(app: FastifyInstance): void {
 
   app.get("/api/v1/assets/:id/versions", async (req) => {
     const { id } = req.params as { id: string };
-    const asset = ctx.store.getAsset(req.actor.workspaceId, id);
+    const asset = await ctx.store.getAsset(req.actor.workspaceId, id);
     if (!asset) throw notFound("资产");
-    return ctx.store.listVersions(id);
+    return await ctx.store.listVersions(id);
   });
 
   app.post("/api/v1/assets/:id/versions/:versionId/restore", async (req) => {
     const { id, versionId } = req.params as { id: string; versionId: string };
-    const asset = ctx.store.getAsset(req.actor.workspaceId, id);
+    const asset = await ctx.store.getAsset(req.actor.workspaceId, id);
     if (!asset) throw notFound("资产");
     const content = await ctx.store.readContent(id, versionId);
     if (!content) throw notFound("版本内容");
-    const saved = ctx.store.saveContent(req.actor, id, content, { changeKind: "restore" });
-    ctx.bus.emit({
+    const saved = await ctx.store.saveContent(req.actor, id, content, { changeKind: "restore" });
+    await ctx.bus.emit({
       eventId: nextId("evt"),
       eventType: "asset.version.created",
       schemaVersion: 1,
@@ -226,9 +354,9 @@ export function registerAssets(app: FastifyInstance): void {
 
   app.get("/api/v1/assets/:id/relations", async (req) => {
     const { id } = req.params as { id: string };
-    const asset = ctx.store.getAsset(req.actor.workspaceId, id);
+    const asset = await ctx.store.getAsset(req.actor.workspaceId, id);
     if (!asset) throw notFound("资产");
-    return ctx.store.listRelations(id);
+    return await ctx.store.listRelations(id);
   });
 
   app.post("/api/v1/assets/:id/relations", async (req) => {
@@ -246,7 +374,8 @@ export function registerAssets(app: FastifyInstance): void {
         ]),
       })
       .parse(req.body);
-    const relation = ctx.store.addRelation(
+    await requireAssetAccess(ctx, req.actor, body.targetAssetId, "read");
+    const relation = await ctx.store.addRelation(
       req.actor.workspaceId,
       id,
       body.targetAssetId,
@@ -263,13 +392,16 @@ export function registerAssets(app: FastifyInstance): void {
         limit: z.coerce.number().min(1).max(50).default(10),
       })
       .parse(req.query);
-    const assets = ctx.store.searchAssets(req.actor.workspaceId, query.q, query.limit);
-    const tasks = ctx.store
-      .listTasks(req.actor.workspaceId, { limit: query.limit })
-      .items.filter((t) => t.goal.toLowerCase().includes(query.q.toLowerCase()));
-    const knowledgeBases = ctx.store
-      .listKnowledgeBases(req.actor.workspaceId)
-      .filter((kb) => kb.name.toLowerCase().includes(query.q.toLowerCase()));
+    const assets = await ctx.store.searchAssets(req.actor.workspaceId, query.q, query.limit, {
+      subject: req.actor.subject,
+      workspaceRole: req.actor.workspaceRole,
+    });
+    const tasks = (
+      await ctx.store.listTasks(req.actor.workspaceId, { limit: query.limit })
+    ).items.filter((t) => t.goal.toLowerCase().includes(query.q.toLowerCase()));
+    const knowledgeBases = (await ctx.store.listKnowledgeBases(req.actor.workspaceId)).filter(
+      (kb) => kb.name.toLowerCase().includes(query.q.toLowerCase()),
+    );
     return { assets, tasks, knowledgeBases };
   });
 
@@ -281,8 +413,13 @@ export function registerAssets(app: FastifyInstance): void {
         tags: z.array(z.string()).optional(),
       })
       .parse(req.body);
-    const changed = ctx.store.batchUpdateAssets(req.actor, body.ids, body.action, body.tags);
-    ctx.store.audit(
+    await Promise.all(
+      body.ids.map((id) =>
+        requireAssetAccess(ctx, req.actor, id, body.action === "tag" ? "write" : "delete"),
+      ),
+    );
+    const changed = await ctx.store.batchUpdateAssets(req.actor, body.ids, body.action, body.tags);
+    await ctx.store.audit(
       req.actor.workspaceId,
       req.actor.subject,
       `asset.batch.${body.action}`,
@@ -298,7 +435,7 @@ export function registerAssets(app: FastifyInstance): void {
   app.post("/api/v1/assets/:id/ai-action", async (req) => {
     const { id } = req.params as { id: string };
     const input = aiDocumentActionSchema.parse(req.body);
-    const asset = ctx.store.getAsset(req.actor.workspaceId, id);
+    const asset = await ctx.store.getAsset(req.actor.workspaceId, id);
     if (!asset) throw notFound("资产");
     const content = await ctx.store.readContent(id);
     const baseVersionId = content ? (asset.currentVersionId as string) : "";
@@ -316,24 +453,31 @@ export function registerAssets(app: FastifyInstance): void {
       ],
       quality: "economy",
     });
-    const patchId = ctx.store.createProposedPatch({
+    const patchId = await ctx.store.createProposedPatch({
       assetId: id,
       baseVersionId,
       selection: input.selection,
       action: input.action,
       proposed: res.text,
     });
-    ctx.store.audit(req.actor.workspaceId, req.actor.subject, "asset.ai_action", id, "success", {
-      action: input.action,
-    });
+    await ctx.store.audit(
+      req.actor.workspaceId,
+      req.actor.subject,
+      "asset.ai_action",
+      id,
+      "success",
+      {
+        action: input.action,
+      },
+    );
     return { patchId, proposed: res.text, baseVersionId, usage: res.usage, provider: res.provider };
   });
 
   app.post("/api/v1/assets/:id/patches/:patchId/apply", async (req) => {
     const { id, patchId } = req.params as { id: string; patchId: string };
-    const patch = ctx.store.getProposedPatch(id, patchId);
+    const patch = await ctx.store.getProposedPatch(id, patchId);
     if (!patch) throw notFound("AI 补丁");
-    const proposed = ctx.store.applyProposedPatch(id, patchId);
+    const proposed = await ctx.store.applyProposedPatch(id, patchId);
     if (proposed === null) throw badRequest("PATCH_ALREADY_APPLIED", "该补丁已应用");
     const content = await ctx.store.readContent(id);
     const current = content?.text ?? "";
@@ -341,13 +485,13 @@ export function registerAssets(app: FastifyInstance): void {
     const replaced = current.includes(selection)
       ? current.replace(selection, proposed)
       : `${current}\n\n${proposed}`;
-    const saved = ctx.store.saveContent(
+    const saved = await ctx.store.saveContent(
       req.actor,
       id,
       { kind: "markdown", text: replaced, manifest: null, refs: [] },
       { changeKind: "ai_patch" },
     );
-    ctx.bus.emit({
+    await ctx.bus.emit({
       eventId: nextId("evt"),
       eventType: "asset.version.created",
       schemaVersion: 1,
@@ -387,6 +531,31 @@ function contentFromInput(
     return { kind: "manifest", text: null, manifest: content, refs: [] };
   }
   return undefined;
+}
+
+const MAX_IMPORTED_DOCUMENT_SIZE = 5 * 1024 * 1024;
+const IMPORTED_DOCUMENT_EXTENSIONS = new Set(["md", "markdown", "txt"]);
+
+export function parseImportedDocumentFile(
+  fileName: string,
+  buffer: Buffer,
+): { title: string; markdown: string } {
+  if (buffer.byteLength > MAX_IMPORTED_DOCUMENT_SIZE) {
+    throw badRequest("DOCUMENT_TOO_LARGE", "导入文档不能超过 5MB");
+  }
+  const extension = fileName.split(".").at(-1)?.toLowerCase() ?? "";
+  if (!IMPORTED_DOCUMENT_EXTENSIONS.has(extension)) {
+    throw badRequest("DOCUMENT_FORMAT_UNSUPPORTED", "仅支持 Markdown 和纯文本文档");
+  }
+  if (buffer.includes(0)) {
+    throw badRequest("DOCUMENT_CONTENT_INVALID", "文档不是有效的文本内容");
+  }
+  const title = fileName.replace(/\.(?:md|markdown|txt)$/i, "").trim() || "未命名文档";
+  const markdown = buffer
+    .toString("utf8")
+    .replace(/^\uFEFF/, "")
+    .replace(/\r\n?/g, "\n");
+  return { title, markdown };
 }
 
 function ifMatchVersion(

@@ -49,7 +49,7 @@ export function loadServiceConfig(defaultPort: number, name = "service"): Servic
 }
 
 export interface DatabaseConfig {
-  path: string;
+  url: string;
   seedDemo: boolean;
   demoSubject: string;
   demoWorkspaceName: string;
@@ -57,7 +57,7 @@ export interface DatabaseConfig {
 
 export function loadDatabaseConfig(): DatabaseConfig {
   return {
-    path: process.env.DATABASE_PATH ?? `${process.cwd()}/.data/shiguang.db`,
+    url: process.env.DATABASE_URL ?? "postgres://asset_hub:asset_hub@localhost:5433/asset_hub",
     seedDemo: (process.env.SEED_DEMO ?? "true") === "true",
     demoSubject: process.env.DEMO_SUBJECT ?? "dev-user",
     demoWorkspaceName: process.env.DEMO_WORKSPACE_NAME ?? "个人空间",
@@ -158,6 +158,45 @@ export function loadPublicGatewayConfig(): PublicGatewayConfig {
     gatewayToken: process.env.PUBLIC_GATEWAY_TOKEN ?? "dev-gateway-token",
     objectRoot: process.env.OBJECT_STORE_DIR ?? `${process.cwd()}/.data/objects`,
     allowInsecure: (process.env.PUBLIC_GATEWAY_INSECURE ?? "true") === "true",
+  };
+}
+
+export interface HatchetConfig {
+  enabled: boolean;
+  clientToken: string | null;
+  tlsStrategy: "none" | "tls" | "mtls";
+  hostPort: string | null;
+  apiUrl: string | null;
+  workerName: string;
+  workerLabels: Record<string, string | number>;
+  workflowPrefix: string;
+}
+
+export function loadHatchetConfig(): HatchetConfig {
+  const workerLabels: Record<string, string | number> = { product: "asset-hub" };
+  const rawLabels = process.env.HATCHET_WORKER_LABELS;
+  if (rawLabels) {
+    try {
+      const parsed = JSON.parse(rawLabels) as Record<string, unknown>;
+      for (const [key, value] of Object.entries(parsed)) {
+        if (typeof value === "string" || typeof value === "number") {
+          workerLabels[key] = value;
+        }
+      }
+    } catch {
+      // Keep defaults if labels are malformed.
+    }
+  }
+
+  return {
+    enabled: process.env.HATCHET_ENABLED !== "false",
+    clientToken: process.env.HATCHET_CLIENT_TOKEN ?? null,
+    tlsStrategy: (process.env.HATCHET_CLIENT_TLS_STRATEGY as "none" | "tls" | "mtls") ?? "none",
+    hostPort: process.env.HATCHET_CLIENT_HOST_PORT ?? null,
+    apiUrl: process.env.HATCHET_CLIENT_API_URL ?? null,
+    workerName: process.env.HATCHET_WORKER_NAME ?? "asset-hub-worker",
+    workerLabels,
+    workflowPrefix: process.env.HATCHET_WORKFLOW_PREFIX ?? "asset-hub",
   };
 }
 

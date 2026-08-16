@@ -20,6 +20,7 @@
     "@shiguang/config": "workspace:*",
     "@shiguang/contracts": "workspace:*",
     "@shiguang/database": "workspace:*",
+    "@shiguang/event-channel": "workspace:*",
     "@shiguang/observability": "workspace:*",
     "fastify": "catalog:",
     "marked": "^15.0.7",

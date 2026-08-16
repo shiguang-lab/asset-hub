@@ -2,11 +2,8 @@ import type { ObjectStore } from "@shiguang/database";
 import type { Logger } from "@shiguang/observability";
 import type { ApiClient } from "./api-client.js";
 import type { WorkerState } from "./state.js";
-import { runDatasetImportWorkflow } from "./workflows/dataset-import.js";
-import { runGitSyncWorkflow } from "./workflows/git-sync.js";
+import { runTaskWorkflow } from "./workflows/dispatch.js";
 import { runKnowledgeWorkflow } from "./workflows/knowledge.js";
-import { runPresentationWorkflow } from "./workflows/presentation.js";
-import { runResearchWorkflow } from "./workflows/research.js";
 
 interface OutboxEvent {
   id: string;
@@ -63,7 +60,7 @@ export class Executor {
         logger: this.logger,
       };
       if (event.eventType === "task.created") {
-        await this.runTaskWorkflow(ctx, event.data);
+        await runTaskWorkflow(ctx, event.data, this.storage);
       } else if (event.eventType === "knowledge.source.added") {
         await runKnowledgeWorkflow(ctx, event.data, this.storage);
       } else {
@@ -90,53 +87,6 @@ export class Executor {
       await this.api.nackOutbox(event.id).catch(() => undefined);
     } finally {
       this.active.delete(runId);
-    }
-  }
-
-  private async runTaskWorkflow(
-    ctx: {
-      taskId: string;
-      runId: string;
-      sequence: number;
-      api: ApiClient;
-      logger: Logger;
-    },
-    data: Record<string, unknown>,
-  ): Promise<void> {
-    const taskType = String(data.taskType ?? "");
-    const spec = (data.spec ?? {}) as Record<string, unknown>;
-    this.logger.info({ taskId: ctx.taskId, taskType }, "task workflow started");
-    switch (taskType) {
-      case "research":
-        await runResearchWorkflow(ctx, spec);
-        break;
-      case "presentation_generate":
-        await runPresentationWorkflow(ctx, spec, this.storage);
-        break;
-      case "dataset_import":
-        await runDatasetImportWorkflow(ctx, spec, this.storage);
-        break;
-      case "git_sync":
-        await runGitSyncWorkflow(ctx, spec);
-        break;
-      case "knowledge_index":
-      case "publish_bundle":
-      case "export":
-      case "file_process":
-      case "dataset_query":
-        this.logger.info({ taskType }, "task type handled by sync path, acking");
-        await this.api.projectResult({
-          resultSchema: "noop/v1",
-          taskId: ctx.taskId,
-          runId: ctx.runId,
-          attempt: 1,
-          outputs: [],
-          usage: { creditUnits: 0 },
-          failures: [],
-        });
-        break;
-      default:
-        throw new Error(`unknown task type: ${taskType}`);
     }
   }
 

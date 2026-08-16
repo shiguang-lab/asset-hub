@@ -2,6 +2,7 @@
 .env
 .env.*
 !.env.example
+infra/compose/runtime.env
 
 node_modules/
 .pnpm-store/

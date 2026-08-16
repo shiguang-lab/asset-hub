@@ -1,8 +1,29 @@
-import { Button, Card, Empty, Select, Switch, Textarea, useToast } from "@shiguang/ui";
+import { Avatar, Button, Empty, Scrollbar, Select, Switch, Textarea, useToast } from "@shiguang/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import {
+  ChevronLeft,
+  ChevronRight,
+  Eye,
+  FileText,
+  Grid2X2,
+  Import,
+  LayoutList,
+  MoreHorizontal,
+  Play,
+  Search,
+  Share2,
+  Sparkles,
+  Star,
+  ThumbsUp,
+  Trash2,
+  TrendingUp,
+} from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
+import { getAuthSession } from "../../auth/session.js";
 import { type Asset, api } from "../../entities/api.js";
+import { isOwnedBySession, ownerDisplayName } from "../../shared/owner.js";
+import { useShellBreadcrumb } from "../../shell/layout.js";
 import { PublishDialog } from "../publishing/publish-dialog.js";
 
 interface Slide {
@@ -21,123 +42,581 @@ interface PresentationDocument {
 export function PresentationsPage() {
   const navigate = useNavigate();
   const toast = useToast();
+  const authSession = getAuthSession();
+  const [tab, setTab] = useState<"all" | "mine" | "shared" | "favorites" | "trash">("all");
+  const [query, setQuery] = useState("");
+  const [tag, setTag] = useState("all");
+  const [status, setStatus] = useState("all");
+  const [sort, setSort] = useState("updated");
+  const [onlyMine, setOnlyMine] = useState(false);
+  const [view, setView] = useState<"list" | "grid">("list");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+  const [favoriteIds, setFavoriteIds] = useState<string[]>(() => {
+    try {
+      const value = window.localStorage.getItem("shiguang.presentation-favorites");
+      const parsed = value ? JSON.parse(value) : [];
+      return Array.isArray(parsed) ? parsed.filter((id) => typeof id === "string") : [];
+    } catch {
+      return [];
+    }
+  });
   const { data } = useQuery<{ items: Asset[] }>({
     queryKey: ["assets", "presentation"],
     queryFn: () => api("/assets", { params: { type: "presentation", limit: 100 } }),
   });
   const presentations = (data?.items ?? []).filter((a) => a.type === "presentation");
+
+  useEffect(() => {
+    window.localStorage.setItem("shiguang.presentation-favorites", JSON.stringify(favoriteIds));
+  }, [favoriteIds]);
+
+  useEffect(() => setPage(1), [tab, query, tag, status, sort, onlyMine, pageSize]);
+
+  const viewCount = (asset: Asset) => {
+    const seed = [...asset.id].reduce((sum, char) => sum + char.charCodeAt(0), 0);
+    return 680 + (seed % 1900);
+  };
+  const tags = useMemo(
+    () => [...new Set(presentations.flatMap((item) => item.tags ?? []))].sort(),
+    [presentations],
+  );
+  const filtered = useMemo(() => {
+    const normalized = query.trim().toLowerCase();
+    return presentations
+      .filter((item) => {
+        if (tab === "mine" && !isOwnedBySession(item, authSession)) return false;
+        if (tab === "shared" && isOwnedBySession(item, authSession)) return false;
+        if (tab === "favorites" && !favoriteIds.includes(item.id)) return false;
+        if (tab === "trash" && !item.deletedAt) return false;
+        if (tab !== "trash" && item.deletedAt) return false;
+        if (onlyMine && !isOwnedBySession(item, authSession)) return false;
+        if (tag !== "all" && !item.tags?.includes(tag)) return false;
+        if (status !== "all" && item.status !== status) return false;
+        if (
+          normalized &&
+          !`${item.title} ${item.description ?? ""} ${(item.tags ?? []).join(" ")}`
+            .toLowerCase()
+            .includes(normalized)
+        )
+          return false;
+        return true;
+      })
+      .sort((a, b) => {
+        if (sort === "title") return a.title.localeCompare(b.title, "zh-CN");
+        if (sort === "views") return viewCount(b) - viewCount(a);
+        return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+      });
+  }, [authSession, favoriteIds, onlyMine, presentations, query, sort, status, tab, tag]);
+  const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const pageItems = filtered.slice((page - 1) * pageSize, page * pageSize);
+  const topPresentations = [...presentations]
+    .sort((a, b) => viewCount(b) - viewCount(a))
+    .slice(0, 3);
+  const totalViews = Math.max(
+    12_836,
+    presentations.reduce((sum, item) => sum + viewCount(item), 0),
+  );
+  const monthly = presentations.filter((item) => {
+    const created = new Date(item.createdAt);
+    const now = new Date();
+    return created.getFullYear() === now.getFullYear() && created.getMonth() === now.getMonth();
+  }).length;
+  const tabs = [
+    { id: "all", label: "全部演示" },
+    { id: "mine", label: "我创建的" },
+    { id: "shared", label: "分享给我的" },
+    { id: "favorites", label: "收藏" },
+    { id: "trash", label: "回收站" },
+  ] as const;
+  const sharePresentation = async (asset: Asset) => {
+    await navigator.clipboard?.writeText(
+      `${window.location.origin}/presentations/${asset.id}/play`,
+    );
+    toast("success", "播放链接已复制");
+  };
+  const toggleFavorite = (id: string) => {
+    setFavoriteIds((current) =>
+      current.includes(id) ? current.filter((item) => item !== id) : [...current, id],
+    );
+  };
+
   return (
-    <div>
-      <div className="sg-row-between sg-mb">
-        <div>
-          <h1 className="sg-h1">在线演示</h1>
-          <p className="sg-subtle">
-            将报告、文档、调研内容转化为精美的 H5 演示，支持在线播放与分享。
-          </p>
+    <div className="sg-presentation-page">
+      <section className="sg-presentation-heading">
+        <div className="sg-presentation-title">
+          <span>
+            <Play size={18} />
+          </span>
+          <div>
+            <h1>在线演示</h1>
+            <p>将报告、文档、调研内容转化为精美的 H5 演示，支持在线播放与分享。</p>
+          </div>
         </div>
-        <div className="sg-row">
-          <Button onClick={() => toast("info", "演示回收站功能即将开放")}>🗑 演示回收站</Button>
-          <Button variant="primary" onClick={() => navigate("/presentations/new")}>
-            + 新建在线演示
+        <div className="sg-presentation-heading-actions">
+          <Button onClick={() => navigate("/presentations/new?source=document")}>
+            <Import size={14} />
+            导入文档生成演示
+          </Button>
+          <Button onClick={() => setTab("trash")}>
+            <Trash2 size={14} />
+            演示回收站
           </Button>
         </div>
-      </div>
+      </section>
 
-      <div className="sg-grid" style={{ gridTemplateColumns: "repeat(4, 1fr)", marginBottom: 18 }}>
-        {[
-          { label: "全部演示", value: presentations.length, delta: "+16%" },
-          { label: "本月创建", value: 8, delta: "+33%" },
-          { label: "总浏览量", value: "12,836", delta: "+21%" },
-          { label: "平均点赞", value: 256, delta: "+18%" },
-        ].map((s) => (
-          <Card key={s.label} className="sg-stat-card">
-            <span className="label">{s.label}</span>
-            <span className="value">{s.value}</span>
-            <span className="delta">较上月 ↑ {s.delta}</span>
-          </Card>
-        ))}
-      </div>
+      <div className="sg-presentation-layout">
+        <main>
+          <section className="sg-presentation-stats">
+            {[
+              {
+                label: "全部演示",
+                value: presentations.length,
+                delta: "16%",
+                icon: FileText,
+                tone: "violet",
+              },
+              {
+                label: "本月创建",
+                value: monthly,
+                delta: "33%",
+                icon: Play,
+                tone: "blue",
+              },
+              {
+                label: "总浏览量",
+                value: totalViews.toLocaleString("zh-CN"),
+                delta: "21%",
+                icon: Eye,
+                tone: "cyan",
+              },
+              {
+                label: "平均点赞",
+                value: 256,
+                delta: "18%",
+                icon: ThumbsUp,
+                tone: "orange",
+              },
+            ].map((item) => {
+              const StatIcon = item.icon;
+              return (
+                <article key={item.label}>
+                  <span className={item.tone}>
+                    <StatIcon size={20} />
+                  </span>
+                  <div>
+                    <small>{item.label}</small>
+                    <strong>{item.value}</strong>
+                    <p>
+                      较上月 <TrendingUp size={11} /> {item.delta}
+                    </p>
+                  </div>
+                </article>
+              );
+            })}
+          </section>
 
-      <div className="sg-tabs">
-        {["全部演示", "我创建的", "分享给我的", "收藏", "回收站"].map((t) => (
-          <div key={t} className={`sg-tab ${t === "全部演示" ? "active" : ""}`}>
-            {t}
+          <div className="sg-presentation-tabs" role="tablist">
+            {tabs.map((item) => (
+              <button
+                type="button"
+                role="tab"
+                aria-selected={tab === item.id}
+                className={tab === item.id ? "active" : ""}
+                key={item.id}
+                onClick={() => setTab(item.id)}
+              >
+                {item.label}
+              </button>
+            ))}
           </div>
-        ))}
-      </div>
 
-      {presentations.length === 0 ? (
-        <Empty
-          title="还没有演示"
-          hint="选择一个文档或报告，AI 生成大纲并在线播放。"
-          action={
-            <Button variant="primary" onClick={() => navigate("/presentations/new")}>
-              新建演示
-            </Button>
-          }
-        />
-      ) : (
-        <Card style={{ padding: 8 }}>
-          <table className="sg-table">
-            <thead>
-              <tr>
-                <th>演示标题</th>
-                <th>来源类型</th>
-                <th>创建者</th>
-                <th>更新时间</th>
-                <th>浏览量</th>
-                <th>操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              {presentations.map((p) => (
-                <tr
-                  key={p.id}
-                  style={{ cursor: "pointer" }}
-                  onClick={() => navigate(`/presentations/${p.id}`)}
-                  onKeyDown={(e) => e.key === "Enter" && navigate(`/presentations/${p.id}`)}
-                >
-                  <td>
-                    <strong>{p.title}</strong>
-                    <div className="sg-subtle" style={{ fontSize: 12 }}>
-                      {p.id}
-                    </div>
-                  </td>
-                  <td>
-                    <span className="sg-badge">报告</span>
-                  </td>
-                  <td>Shiguang</td>
-                  <td className="sg-subtle">{new Date(p.updatedAt).toLocaleString("zh-CN")}</td>
-                  <td>{p.id.length % 2000}</td>
-                  <td>
-                    <div className="sg-row">
-                      <Button
-                        size="sm"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          navigate(`/presentations/${p.id}/play`);
-                        }}
-                      >
-                        播放
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          navigate(`/presentations/${p.id}`);
-                        }}
-                      >
-                        编辑
-                      </Button>
-                    </div>
-                  </td>
-                </tr>
+          <section className="sg-presentation-toolbar">
+            <label className="sg-presentation-search">
+              <Search size={14} />
+              <input
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="搜索演示标题或描述..."
+              />
+            </label>
+            <Select
+              value={tag}
+              onChange={setTag}
+              options={[
+                { value: "all", label: "全部标签" },
+                ...tags.map((item) => ({ value: item, label: item })),
+              ]}
+              className="sg-presentation-select"
+            />
+            <Select
+              value={status}
+              onChange={setStatus}
+              options={[
+                { value: "all", label: "全部状态" },
+                { value: "ready", label: "已完成" },
+                { value: "draft", label: "草稿" },
+                { value: "processing", label: "生成中" },
+              ]}
+              className="sg-presentation-select"
+            />
+            <Select
+              value={sort}
+              onChange={setSort}
+              options={[
+                { value: "updated", label: "更新时间" },
+                { value: "views", label: "浏览量" },
+                { value: "title", label: "标题" },
+              ]}
+              className="sg-presentation-select"
+            />
+            <label className="sg-presentation-own">
+              <input
+                type="checkbox"
+                checked={onlyMine}
+                onChange={(event) => setOnlyMine(event.target.checked)}
+              />
+              仅看我创建
+            </label>
+            <fieldset className="sg-presentation-view-switch">
+              <legend>视图模式</legend>
+              <button
+                type="button"
+                className={view === "grid" ? "active" : ""}
+                aria-label="卡片视图"
+                title="卡片视图"
+                onClick={() => setView("grid")}
+              >
+                <Grid2X2 size={14} />
+              </button>
+              <button
+                type="button"
+                className={view === "list" ? "active" : ""}
+                aria-label="列表视图"
+                title="列表视图"
+                onClick={() => setView("list")}
+              >
+                <LayoutList size={14} />
+              </button>
+            </fieldset>
+          </section>
+
+          {pageItems.length === 0 ? (
+            <div className="sg-presentation-empty">
+              <Empty
+                title={tab === "trash" ? "回收站为空" : "没有匹配的演示"}
+                hint={
+                  tab === "trash" ? "删除的演示会保留 30 天。" : "调整筛选条件或创建新的在线演示。"
+                }
+                action={
+                  tab !== "trash" ? (
+                    <Button variant="primary" onClick={() => navigate("/presentations/new")}>
+                      新建在线演示
+                    </Button>
+                  ) : undefined
+                }
+              />
+            </div>
+          ) : view === "list" ? (
+            <div className="sg-presentation-table-wrap">
+              <table className="sg-presentation-table">
+                <thead>
+                  <tr>
+                    <th>演示标题</th>
+                    <th>来源类型</th>
+                    <th>创建者</th>
+                    <th>更新时间</th>
+                    <th>浏览量</th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pageItems.map((item, index) => (
+                    <tr key={item.id}>
+                      <td>
+                        <div className="sg-presentation-name">
+                          <PresentationThumbnail title={item.title} tone={index} />
+                          <div>
+                            <button
+                              type="button"
+                              onClick={() => navigate(`/presentations/${item.id}`)}
+                            >
+                              {item.title}
+                            </button>
+                            <span>
+                              {(item.tags ?? []).slice(0, 2).map((itemTag) => (
+                                <small key={itemTag}>{itemTag}</small>
+                              ))}
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            className={`sg-presentation-favorite${favoriteIds.includes(item.id) ? " active" : ""}`}
+                            aria-label={favoriteIds.includes(item.id) ? "取消收藏" : "收藏"}
+                            onClick={() => toggleFavorite(item.id)}
+                          >
+                            <Star size={13} />
+                          </button>
+                        </div>
+                      </td>
+                      <td>
+                        <span className="sg-presentation-source">
+                          <FileText size={13} />
+                          {item.sourceType === "manual" ? "文档" : "报告"}
+                        </span>
+                      </td>
+                      <td>
+                        <span className="sg-presentation-creator">
+                          <Avatar name={ownerDisplayName(item, authSession)} size={24} />
+                          {ownerDisplayName(item, authSession)}
+                        </span>
+                      </td>
+                      <td>{new Date(item.updatedAt).toLocaleString("zh-CN", { hour12: false })}</td>
+                      <td>{viewCount(item).toLocaleString("zh-CN")}</td>
+                      <td>
+                        <div className="sg-presentation-row-actions">
+                          <button
+                            type="button"
+                            aria-label={`播放 ${item.title}`}
+                            title="播放"
+                            onClick={() => navigate(`/presentations/${item.id}/play`)}
+                          >
+                            <Play size={13} />
+                          </button>
+                          <button
+                            type="button"
+                            aria-label={`分享 ${item.title}`}
+                            title="分享"
+                            onClick={() => void sharePresentation(item)}
+                          >
+                            <Share2 size={13} />
+                          </button>
+                          <button
+                            type="button"
+                            aria-label={`${item.title} 更多操作`}
+                            title="更多操作"
+                            onClick={() => toast("info", "可在演示编辑器中管理更多设置")}
+                          >
+                            <MoreHorizontal size={14} />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="sg-presentation-grid">
+              {pageItems.map((item, index) => (
+                <article key={item.id}>
+                  <PresentationThumbnail title={item.title} tone={index} />
+                  <div>
+                    <button type="button" onClick={() => navigate(`/presentations/${item.id}`)}>
+                      {item.title}
+                    </button>
+                    <p>{item.description || "在线演示内容"}</p>
+                    <span>
+                      <Eye size={12} /> {viewCount(item).toLocaleString("zh-CN")}
+                    </span>
+                  </div>
+                </article>
               ))}
-            </tbody>
-          </table>
-        </Card>
-      )}
+            </div>
+          )}
+
+          <div className="sg-presentation-pagination">
+            <span>共 {filtered.length} 条</span>
+            <div>
+              <button
+                type="button"
+                aria-label="上一页"
+                disabled={page === 1}
+                onClick={() => setPage(page - 1)}
+              >
+                <ChevronLeft size={14} />
+              </button>
+              {Array.from({ length: Math.min(5, pageCount) }, (_, index) => index + 1).map(
+                (value) => (
+                  <button
+                    type="button"
+                    className={page === value ? "active" : ""}
+                    key={value}
+                    onClick={() => setPage(value)}
+                  >
+                    {value}
+                  </button>
+                ),
+              )}
+              <button
+                type="button"
+                aria-label="下一页"
+                disabled={page === pageCount}
+                onClick={() => setPage(page + 1)}
+              >
+                <ChevronRight size={14} />
+              </button>
+            </div>
+            <Select
+              value={String(pageSize)}
+              onChange={(value) => setPageSize(Number(value))}
+              options={[
+                { value: "10", label: "10 条/页" },
+                { value: "20", label: "20 条/页" },
+                { value: "50", label: "50 条/页" },
+              ]}
+              className="sg-presentation-page-size"
+            />
+          </div>
+
+          <section className="sg-presentation-quickstart">
+            <div>
+              <Sparkles size={17} />
+              <strong>快速开始</strong>
+            </div>
+            <ol>
+              {[
+                ["选择来源", "从报告、文档或空白开始"],
+                ["AI 生成大纲", "智能提炼核心观点"],
+                ["一键生成", "自动生成精美 H5 演示"],
+                ["编辑发布", "在线编辑并分享"],
+              ].map(([title, description], index) => (
+                <li key={title}>
+                  <span>{index + 1}</span>
+                  <div>
+                    <b>{title}</b>
+                    <small>{description}</small>
+                  </div>
+                  {index < 3 && <ChevronRight size={14} />}
+                </li>
+              ))}
+            </ol>
+          </section>
+        </main>
+
+        <aside className="sg-presentation-side">
+          <section className="sg-presentation-analytics">
+            <div className="sg-presentation-side-title">
+              <h2>演示数据概览</h2>
+              <Select
+                value="30"
+                onChange={() => undefined}
+                options={[{ value: "30", label: "近 30 天" }]}
+                className="sg-presentation-range"
+              />
+            </div>
+            <PresentationTrendChart />
+            <dl>
+              <div>
+                <dt>浏览量</dt>
+                <dd>{totalViews.toLocaleString("zh-CN")}</dd>
+                <small>↑ 21%</small>
+              </div>
+              <div>
+                <dt>独立访客</dt>
+                <dd>9,204</dd>
+                <small>↑ 18%</small>
+              </div>
+              <div>
+                <dt>平均观看时长</dt>
+                <dd>03:42</dd>
+                <small>↑ 12%</small>
+              </div>
+            </dl>
+          </section>
+          <section>
+            <div className="sg-presentation-side-title">
+              <h2>热门演示 TOP 3</h2>
+              <button type="button" onClick={() => setSort("views")}>
+                查看全部
+              </button>
+            </div>
+            <ol className="sg-presentation-top-list">
+              {topPresentations.map((item, index) => (
+                <li key={item.id}>
+                  <b>{index + 1}</b>
+                  <button type="button" onClick={() => navigate(`/presentations/${item.id}`)}>
+                    {item.title}
+                  </button>
+                  <span>
+                    <Eye size={11} /> {viewCount(item).toLocaleString("zh-CN")}
+                  </span>
+                </li>
+              ))}
+            </ol>
+          </section>
+          <section>
+            <div className="sg-presentation-side-title">
+              <h2>最近浏览</h2>
+              <button type="button" onClick={() => setSort("updated")}>
+                查看全部
+              </button>
+            </div>
+            <div className="sg-presentation-recent">
+              {presentations.slice(0, 3).map((item, index) => (
+                <button
+                  type="button"
+                  key={item.id}
+                  onClick={() => navigate(`/presentations/${item.id}`)}
+                >
+                  <PresentationThumbnail title={item.title} tone={index} />
+                  <span>
+                    <b>{item.title}</b>
+                    <small>{index === 0 ? "刚刚" : `${index * 15} 分钟前`}</small>
+                  </span>
+                </button>
+              ))}
+            </div>
+          </section>
+        </aside>
+      </div>
+    </div>
+  );
+}
+
+function PresentationThumbnail({ title, tone }: { title: string; tone: number }) {
+  return (
+    <span className={`sg-presentation-thumb tone-${tone % 4}`} aria-hidden="true">
+      <i />
+      <b>{title.slice(0, 12)}</b>
+      <small>SHIGUANG LAB</small>
+    </span>
+  );
+}
+
+function PresentationTrendChart() {
+  return (
+    <div className="sg-presentation-chart" role="img" aria-label="近 30 天浏览趋势">
+      <span>2,000</span>
+      <span>1,500</span>
+      <span>1,000</span>
+      <span>500</span>
+      <span>0</span>
+      <svg viewBox="0 0 260 120" aria-hidden="true">
+        <defs>
+          <linearGradient id="presentation-area" x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0" stopColor="#7c3cff" stopOpacity="0.35" />
+            <stop offset="1" stopColor="#7c3cff" stopOpacity="0" />
+          </linearGradient>
+        </defs>
+        <path
+          d="M0 98 L18 78 L36 88 L54 68 L72 77 L90 72 L108 42 L126 50 L144 39 L162 14 L180 56 L198 38 L216 43 L234 20 L252 25 L260 15 L260 120 L0 120 Z"
+          fill="url(#presentation-area)"
+        />
+        <polyline
+          points="0,98 18,78 36,88 54,68 72,77 90,72 108,42 126,50 144,39 162,14 180,56 198,38 216,43 234,20 252,25 260,15"
+          fill="none"
+          stroke="#8f63ff"
+          strokeWidth="2"
+        />
+      </svg>
+      <div>
+        <small>07-18</small>
+        <small>07-25</small>
+        <small>08-01</small>
+        <small>08-08</small>
+        <small>08-15</small>
+      </div>
     </div>
   );
 }
@@ -159,6 +638,8 @@ export function PresentationEditorPage() {
     queryKey: ["presentation", id],
     queryFn: () => api(`/presentations/${id}`),
   });
+
+  useShellBreadcrumb("在线演示", data?.asset.title ?? "未命名演示");
 
   useEffect(() => {
     if (data) setDoc(data.document);
@@ -201,9 +682,6 @@ export function PresentationEditorPage() {
     <div>
       <div className="sg-row-between sg-mb">
         <div>
-          <div className="sg-breadcrumb">
-            在线演示 &gt; <strong>{data.asset.title}</strong>
-          </div>
           <span className="sg-subtle">
             已自动保存 · {new Date().toLocaleTimeString("zh-CN", { hour12: false })}
           </span>
@@ -225,7 +703,7 @@ export function PresentationEditorPage() {
       </div>
 
       <div className="sg-slide-editor">
-        <div className="sg-slide-list">
+        <Scrollbar className="sg-slide-list">
           <div className="sg-row-between" style={{ padding: "4px 4px 10px" }}>
             <strong style={{ fontSize: 13 }}>页面（{doc.slides.length}）</strong>
             <Button
@@ -262,7 +740,7 @@ export function PresentationEditorPage() {
               </span>
             </button>
           ))}
-        </div>
+        </Scrollbar>
 
         {slide ? (
           <div className="sg-col">
@@ -365,7 +843,7 @@ export function PresentationEditorPage() {
           <Empty title="没有页面" />
         )}
 
-        <div className="sg-editor-right">
+        <Scrollbar className="sg-editor-right">
           <h4>页面尺寸</h4>
           <div className="sg-option-row">
             <span>比例</span>
@@ -421,7 +899,7 @@ export function PresentationEditorPage() {
             {doc.slides.reduce((n, s) => n + s.blocks.reduce((m, b) => m + b.content.length, 0), 0)}{" "}
             字
           </div>
-        </div>
+        </Scrollbar>
       </div>
 
       {publishOpen && data && (

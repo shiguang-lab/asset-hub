@@ -18,12 +18,6 @@ export class SseHub {
   ) {}
 
   subscribe(workspaceId: string, reply: FastifyReply): void {
-    reply.raw.setHeader("content-type", "text/event-stream");
-    reply.raw.setHeader("cache-control", "no-cache, no-transform");
-    reply.raw.setHeader("connection", "keep-alive");
-    reply.raw.setHeader("x-accel-buffering", "no");
-    reply.raw.flushHeaders?.();
-
     const key = `${workspaceId}:${Date.now()}:${Math.random().toString(36).slice(2)}`;
     const subscriber: Subscriber = { workspaceId, reply, lastEventId: "", closed: false };
     this.subscribers.set(key, subscriber);

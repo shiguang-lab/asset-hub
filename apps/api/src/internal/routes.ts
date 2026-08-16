@@ -10,17 +10,22 @@ import { z } from "zod";
 import { unauthorized } from "../platform/errors.js";
 import { signHmac } from "../platform/identity.js";
 
-const internalTokens = (): string[] =>
-  [
+const internalTokens = (): string[] => {
+  const configured = [
     process.env.INTERNAL_TOKEN,
     process.env.WORKER_TOKEN,
     process.env.COMPUTE_TOKEN,
     process.env.PUBLIC_GATEWAY_TOKEN,
+  ].filter((t): t is string => Boolean(t));
+  if (process.env.NODE_ENV === "production") return configured;
+  return [
+    ...configured,
     "dev-internal-token",
     "dev-worker-token",
     "dev-compute-token",
     "dev-gateway-token",
-  ].filter((t): t is string => Boolean(t));
+  ];
+};
 
 function internalActor(req: {
   headers: Record<string, string | string[] | undefined>;
@@ -34,6 +39,8 @@ function internalActor(req: {
   return {
     subject: "internal",
     workspaceId: "wsp_internal",
+    workspaceType: "team",
+    workspaceRole: "admin",
     requestId: nextId("req"),
     isService: true,
     tokenScopes: ["read", "write"],
@@ -60,27 +67,36 @@ export function registerInternalRoutes(app: FastifyInstance): void {
 
   app.post("/internal/v1/outbox/claim", async (req) => {
     const body = z.object({ limit: z.number().min(1).max(50).default(10) }).parse(req.body ?? {});
-    const events = ctx.store.claimOutbox(body.limit);
+    const events = await ctx.store.claimOutbox(body.limit);
     return { events };
   });
 
   app.post("/internal/v1/outbox/:id/ack", async (req) => {
     const { id } = req.params as { id: string };
-    ctx.store.markOutboxDispatched(id);
+    await ctx.store.markOutboxDispatched(id);
     return { ok: true };
   });
 
   app.post("/internal/v1/outbox/:id/nack", async (req) => {
     const { id } = req.params as { id: string };
-    ctx.store.markOutboxFailed(id);
+    await ctx.store.markOutboxFailed(id);
     return { ok: true };
+  });
+
+  app.get("/internal/v1/objects", async (req, reply) => {
+    const { key } = z.object({ key: z.string().min(1).max(2048) }).parse(req.query);
+    const contents = await ctx.storage.get(key);
+    if (!contents) {
+      return reply.status(404).send({ code: "NOT_FOUND", detail: "对象不存在" });
+    }
+    return reply.type("application/octet-stream").send(contents);
   });
 
   /* ---------------- task progress ---------------- */
 
   app.post("/internal/v1/progress", async (req) => {
     const event = progressEventSchema.parse(req.body);
-    const task = ctx.store.getTaskAny(event.taskId);
+    const task = await ctx.store.getTaskAny(event.taskId);
     if (!task) return { ok: false, reason: "task_not_found" };
     const patch: {
       status?: typeof task.status;
@@ -90,14 +106,14 @@ export function registerInternalRoutes(app: FastifyInstance): void {
     if (event.status) patch.status = event.status;
     if (event.progress !== undefined) patch.progress = event.progress;
     if (event.detail) patch.currentStep = event.detail;
-    const updated = ctx.store.updateTask(task.workspaceId, task.id, patch);
+    const updated = await ctx.store.updateTask(task.workspaceId, task.id, patch);
     if (event.stepId) {
-      const step = ctx.store
+      const step = (await ctx.store
         .getDb()
         .prepare("SELECT * FROM task_steps WHERE id = ?")
-        .get(event.stepId) as Record<string, unknown> | undefined;
+        .get(event.stepId)) as Record<string, unknown> | undefined;
       if (step) {
-        ctx.store.upsertStep({
+        await ctx.store.upsertStep({
           id: event.stepId,
           taskId: task.id,
           type: String(step.type),
@@ -137,17 +153,17 @@ export function registerInternalRoutes(app: FastifyInstance): void {
 
   app.post("/internal/v1/task-results:project", async (req) => {
     const result = resultProjectionSchema.parse(req.body);
-    const task = ctx.store.getTaskAny(result.taskId);
+    const task = await ctx.store.getTaskAny(result.taskId);
     if (!task) return { ok: false, reason: "task_not_found" };
     const inboxKey = `result:${result.runId}:${result.attempt}`;
-    if (ctx.store.hasInbox(inboxKey, "task-results")) {
+    if (await ctx.store.hasInbox(inboxKey, "task-results")) {
       return { ok: true, replayed: true };
     }
 
     const outputAssetIds: string[] = [];
     const failures = result.failures ?? [];
     for (const evidence of result.evidence ?? []) {
-      ctx.store.createEvidence(task.workspaceId, task.id, {
+      await ctx.store.createEvidence(task.workspaceId, task.id, {
         claim: evidence.claim,
         sourceTitle: evidence.sourceTitle,
         sourceUrl: evidence.sourceUrl ?? null,
@@ -173,14 +189,16 @@ export function registerInternalRoutes(app: FastifyInstance): void {
             }
           | undefined;
         if (manifest) {
-          const datasetRecord = ctx.store.createDatasetRecord(
+          const datasetRecord = await ctx.store.createDatasetRecord(
             task.workspaceId,
             output.title ?? manifest.name ?? "数据集",
           );
-          const datasetAsset = ctx.store.createAssetWithVersion(
+          const datasetAsset = await ctx.store.createAssetWithVersion(
             {
               subject: task.ownerSubject,
               workspaceId: task.workspaceId,
+              workspaceType: "team",
+              workspaceRole: "admin",
               requestId: "internal",
               isService: true,
               tokenScopes: ["read", "write"],
@@ -203,7 +221,7 @@ export function registerInternalRoutes(app: FastifyInstance): void {
             Buffer.from(JSON.stringify(manifest.rows ?? []), "utf8"),
             "application/json",
           );
-          const _version = ctx.store.addDatasetVersion(task.workspaceId, datasetRecord.id, {
+          const _version = await ctx.store.addDatasetVersion(task.workspaceId, datasetRecord.id, {
             fileName: manifest.fileName ?? "data.json",
             format: (manifest.format ?? "json") as "csv" | "json" | "tsv" | "xlsx",
             rowCount: manifest.rows?.length ?? 0,
@@ -228,7 +246,7 @@ export function registerInternalRoutes(app: FastifyInstance): void {
           outputAssetIds.push(datasetAsset.asset.id);
           const datasetInput = task.inputAssetIds[0];
           if (datasetInput) {
-            ctx.store.addRelation(
+            await ctx.store.addRelation(
               task.workspaceId,
               datasetInput,
               datasetAsset.asset.id,
@@ -240,10 +258,16 @@ export function registerInternalRoutes(app: FastifyInstance): void {
         }
       }
       let content: {
-        kind: "markdown" | "html" | "manifest";
+        kind: "markdown" | "html" | "manifest" | "blob";
         text?: string;
         manifest?: Record<string, unknown>;
-        refs?: unknown[];
+        refs?: Array<{
+          role: string;
+          objectKey: string;
+          contentHash: string;
+          size: number;
+          mediaType: string;
+        }>;
       } | null = null;
       if (output.content) {
         const kind =
@@ -262,59 +286,64 @@ export function registerInternalRoutes(app: FastifyInstance): void {
               }
             : { kind, text: String(output.content.text ?? output.content.source ?? "") };
       } else if (output.blob) {
-        const data = await ctx.storage.get(output.blob.objectKey);
-        if (data) {
-          const kind =
-            output.blob.mediaType === "text/html"
-              ? "html"
-              : output.assetType === "presentation" || output.assetType === "dataset"
-                ? "manifest"
-                : "markdown";
-          content =
-            kind === "manifest"
-              ? { kind, manifest: JSON.parse(data.toString("utf8")) as Record<string, unknown> }
-              : { kind, text: data.toString("utf8") };
+        const isText = ["text/markdown", "text/plain", "text/html"].includes(output.blob.mediaType);
+        const isManifest = output.assetType === "presentation" || output.assetType === "dataset";
+        if (!isText && !isManifest) {
+          content = {
+            kind: "blob",
+            refs: [{ role: "content", ...output.blob }],
+          };
+        } else {
+          const data = await ctx.storage.get(output.blob.objectKey);
+          if (data) {
+            const kind =
+              output.blob.mediaType === "text/html" ? "html" : isManifest ? "manifest" : "markdown";
+            content =
+              kind === "manifest"
+                ? { kind, manifest: JSON.parse(data.toString("utf8")) as Record<string, unknown> }
+                : { kind, text: data.toString("utf8") };
+          }
         }
       }
-      const asset = ctx.store.createAssetWithVersion(
+      const asset = await ctx.store.createAssetWithVersion(
         {
           subject: task.ownerSubject,
           workspaceId: task.workspaceId,
+          workspaceType: "team",
+          workspaceRole: "admin",
           requestId: "internal",
           isService: true,
           tokenScopes: ["read", "write"],
         },
         {
           type: output.assetType ?? (output.kind === "report-draft" ? "report" : "file"),
-          title: output.title ?? task.goal,
+          title: output.title ?? output.blob?.objectKey.split("/").at(-1) ?? task.goal,
           sourceType: "research",
           content: content
             ? {
                 kind: content.kind,
                 text: content.text ?? null,
                 manifest: content.manifest ?? null,
-                refs: [],
+                refs: content.refs ?? [],
               }
             : undefined,
         },
       );
       outputAssetIds.push(asset.asset.id);
-      if (output.assetType === "presentation") {
-        const presentationInput = task.inputAssetIds[0];
-        if (presentationInput) {
-          ctx.store.addRelation(
-            task.workspaceId,
-            presentationInput,
-            asset.asset.id,
-            "generated_from",
-            { taskId: task.id },
-          );
-        }
+      const inputAssetId = task.inputAssetIds[0];
+      if (inputAssetId) {
+        await ctx.store.addRelation(
+          task.workspaceId,
+          inputAssetId,
+          asset.asset.id,
+          output.assetType === "presentation" ? "generated_from" : "derived_from",
+          { taskId: task.id },
+        );
       }
     }
 
     for (const failure of failures) {
-      ctx.store.createNotification({
+      await ctx.store.createNotification({
         workspaceId: task.workspaceId,
         subject: task.ownerSubject,
         type: "task_partial",
@@ -331,7 +360,7 @@ export function registerInternalRoutes(app: FastifyInstance): void {
           ? "failed"
           : "completed";
     const creditsUsed = result.usage?.creditUnits ?? 0;
-    ctx.store.updateTask(task.workspaceId, task.id, {
+    await ctx.store.updateTask(task.workspaceId, task.id, {
       status,
       progress: status === "completed" ? 100 : 85,
       currentStep: status === "failed" ? "任务失败" : "任务完成",
@@ -339,16 +368,16 @@ export function registerInternalRoutes(app: FastifyInstance): void {
       creditsUsed,
     });
     for (const assetId of outputAssetIds) {
-      ctx.store.addOutput(task.workspaceId, task.id, assetId);
+      await ctx.store.addOutput(task.workspaceId, task.id, assetId);
     }
-    ctx.store.settleCredits(
+    await ctx.store.settleCredits(
       task.workspaceId,
       task.id,
       creditsUsed,
       `op_settle_${task.id}_${result.runId}`,
     );
-    ctx.store.insertInbox(inboxKey, "task-results");
-    ctx.store.audit(
+    await ctx.store.insertInbox(inboxKey, "task-results");
+    await ctx.store.audit(
       task.workspaceId,
       task.ownerSubject,
       "task.result.project",
@@ -361,7 +390,7 @@ export function registerInternalRoutes(app: FastifyInstance): void {
       },
     );
 
-    ctx.bus.emit({
+    await ctx.bus.emit({
       eventId: nextId("evt"),
       eventType:
         status === "completed"
@@ -382,7 +411,7 @@ export function registerInternalRoutes(app: FastifyInstance): void {
         error: status === "failed" ? failures.map((f) => f.reason).join("; ") : undefined,
       },
     });
-    ctx.bus.notify(task.workspaceId, task.ownerSubject, {
+    await ctx.bus.notify(task.workspaceId, task.ownerSubject, {
       type:
         status === "completed"
           ? "task_completed"
@@ -418,7 +447,7 @@ export function registerInternalRoutes(app: FastifyInstance): void {
       })
       .parse(req.body);
     const inboxKey = `compute:${body.kind}:${body.runId}`;
-    if (ctx.store.hasInbox(inboxKey, "compute-results")) return { ok: true, replayed: true };
+    if (await ctx.store.hasInbox(inboxKey, "compute-results")) return { ok: true, replayed: true };
 
     if (body.kind === "dataset_import") {
       const d = z
@@ -442,9 +471,9 @@ export function registerInternalRoutes(app: FastifyInstance): void {
           contentHash: z.string(),
         })
         .parse(body.data);
-      const dataset = ctx.store.getDatasetAny(d.datasetId);
+      const dataset = await ctx.store.getDatasetAny(d.datasetId);
       if (!dataset) return { ok: false, reason: "dataset_not_found" };
-      const version = ctx.store.addDatasetVersion(dataset.workspaceId, d.datasetId, {
+      const version = await ctx.store.addDatasetVersion(dataset.workspaceId, d.datasetId, {
         fileName: d.fileName,
         format: d.format,
         rowCount: d.rowCount,
@@ -460,8 +489,8 @@ export function registerInternalRoutes(app: FastifyInstance): void {
         objectKey: d.objectKey,
         contentHash: d.contentHash,
       });
-      ctx.store.insertInbox(inboxKey, "compute-results");
-      ctx.store.audit(
+      await ctx.store.insertInbox(inboxKey, "compute-results");
+      await ctx.store.audit(
         dataset.workspaceId,
         "internal",
         "dataset.version.ready",
@@ -469,7 +498,7 @@ export function registerInternalRoutes(app: FastifyInstance): void {
         "success",
         { version: version.version },
       );
-      ctx.bus.emit({
+      await ctx.bus.emit({
         eventId: nextId("evt"),
         eventType: "dataset.version.ready",
         schemaVersion: 1,
@@ -499,11 +528,11 @@ export function registerInternalRoutes(app: FastifyInstance): void {
           ),
         })
         .parse(body.data);
-      const source = ctx.store.getKnowledgeSource(d.kbId, d.sourceId);
+      const source = await ctx.store.getKnowledgeSource(d.kbId, d.sourceId);
       if (!source) return { ok: false, reason: "source_not_found" };
-      ctx.store.replaceChunks(d.kbId, d.sourceId, d.chunks);
-      ctx.store.insertInbox(inboxKey, "compute-results");
-      ctx.bus.emit({
+      await ctx.store.replaceChunks(d.kbId, d.sourceId, d.chunks);
+      await ctx.store.insertInbox(inboxKey, "compute-results");
+      await ctx.bus.emit({
         eventId: nextId("evt"),
         eventType: "knowledge.source.ready",
         schemaVersion: 1,
@@ -514,8 +543,9 @@ export function registerInternalRoutes(app: FastifyInstance): void {
         trace: {},
         data: { sourceId: d.sourceId, kbId: d.kbId, chunkCount: d.chunks.length },
       });
-      const ownerSubject = ctx.store.getWorkspaceOwnerSubject(source.workspaceId) ?? "dev-user";
-      ctx.bus.notify(source.workspaceId, ownerSubject, {
+      const ownerSubject =
+        (await ctx.store.getWorkspaceOwnerSubject(source.workspaceId)) ?? "dev-user";
+      await ctx.bus.notify(source.workspaceId, ownerSubject, {
         type: "knowledge_indexed",
         title: `知识库来源已索引：${source.title}`,
         body: `共 ${d.chunks.length} 个分块，可开始搜索与 Ask。`,
@@ -532,9 +562,10 @@ export function registerInternalRoutes(app: FastifyInstance): void {
 
   app.get("/internal/v1/git/:id", async (req, reply) => {
     const { id } = req.params as { id: string };
-    const row = ctx.store.getDb().prepare("SELECT * FROM git_connections WHERE id = ?").get(id) as
-      | Record<string, unknown>
-      | undefined;
+    const row = (await ctx.store
+      .getDb()
+      .prepare("SELECT * FROM git_connections WHERE id = ?")
+      .get(id)) as Record<string, unknown> | undefined;
     if (!row) return reply.status(404).send({ code: "NOT_FOUND" });
     return row;
   });
@@ -565,7 +596,7 @@ export function registerInternalRoutes(app: FastifyInstance): void {
   });
 
   app.get("/internal/v1/schedules/due", async () => ({
-    schedules: ctx.store.getDueSchedules().map((s) => ({
+    schedules: (await ctx.store.getDueSchedules()).map((s) => ({
       id: s.id,
       workspaceId: s.workspace_id,
       name: s.name,
@@ -576,7 +607,7 @@ export function registerInternalRoutes(app: FastifyInstance): void {
 
   app.post("/internal/v1/schedules/:id/run", async (req) => {
     const { id } = req.params as { id: string };
-    ctx.store.markScheduleRun(id);
+    await ctx.store.markScheduleRun(id);
     return { ok: true };
   });
 
@@ -589,22 +620,24 @@ export function registerInternalRoutes(app: FastifyInstance): void {
         spec: z.record(z.string(), z.unknown()).default({}),
       })
       .parse(req.body);
-    const owner = ctx.store.getWorkspaceOwnerSubject(body.workspaceId);
+    const owner = await ctx.store.getWorkspaceOwnerSubject(body.workspaceId);
     if (!owner) return { ok: false, reason: "workspace_not_found" };
     const actor = {
       subject: owner,
       workspaceId: body.workspaceId,
+      workspaceType: "team" as const,
+      workspaceRole: "admin" as const,
       requestId: `req_${crypto.randomUUID().replaceAll("-", "").slice(0, 16)}`,
       isService: true,
       tokenScopes: ["read", "write"] as Array<"read" | "write">,
     };
-    const task = ctx.store.createTask(actor, {
+    const task = await ctx.store.createTask(actor, {
       type: body.type as "research",
       goal: body.goal,
       spec: body.spec,
     });
-    ctx.store.reserveCredits(body.workspaceId, task.id, 400, `op_reserve_${task.id}`);
-    ctx.bus.emit({
+    await ctx.store.reserveCredits(body.workspaceId, task.id, 400, `op_reserve_${task.id}`);
+    await ctx.bus.emit({
       eventId: nextId("evt"),
       eventType: "task.created",
       schemaVersion: 1,
@@ -621,14 +654,14 @@ export function registerInternalRoutes(app: FastifyInstance): void {
   app.get("/internal/v1/domains/resolve", async (req, reply) => {
     const query = z.object({ host: z.string() }).parse(req.query);
     const host = query.host.toLowerCase();
-    const domain = ctx.store.getCustomDomainByDomain(host);
+    const domain = await ctx.store.getCustomDomainByDomain(host);
     if (!domain || String(domain.status) !== "verified" || !domain.publish_id) {
       return reply.status(404).send({ code: "DOMAIN_NOT_FOUND" });
     }
-    const publish = ctx.store
+    const publish = (await ctx.store
       .getDb()
       .prepare("SELECT * FROM publishes WHERE id = ?")
-      .get(String(domain.publish_id)) as Record<string, unknown> | undefined;
+      .get(String(domain.publish_id))) as Record<string, unknown> | undefined;
     if (!publish) return reply.status(404).send({ code: "PUBLISH_NOT_FOUND" });
     const slug = (publish as { slug?: string }).slug ?? String(domain.publish_id);
     return { publishId: domain.publish_id, slug };
@@ -636,7 +669,8 @@ export function registerInternalRoutes(app: FastifyInstance): void {
 
   app.get("/internal/v1/publishes/:slug", async (req, reply) => {
     const { slug } = req.params as { slug: string };
-    const publish = ctx.store.getPublishBySlug(slug) ?? ctx.store.getPublishByShortSlug(slug);
+    const publish =
+      (await ctx.store.getPublishBySlug(slug)) ?? (await ctx.store.getPublishByShortSlug(slug));
     if (!publish || publish.status === "revoked" || publish.status === "deleted") {
       return reply.status(404).send({ code: "NOT_FOUND" });
     }
@@ -644,11 +678,13 @@ export function registerInternalRoutes(app: FastifyInstance): void {
       publish.status === "expired" ||
       (publish.expiresAt && new Date(publish.expiresAt).getTime() < Date.now())
     ) {
-      ctx.store.updatePublish(publish.workspaceId, publish.id, { status: "expired" });
+      await ctx.store.updatePublish(publish.workspaceId, publish.id, { status: "expired" });
       return reply.status(410).send({ code: "EXPIRED", expiresAt: publish.expiresAt });
     }
-    const release = publish.activeReleaseId ? ctx.store.getRelease(publish.activeReleaseId) : null;
-    const asset = ctx.store.getAssetAny(publish.assetId);
+    const release = publish.activeReleaseId
+      ? await ctx.store.getRelease(publish.activeReleaseId)
+      : null;
+    const asset = await ctx.store.getAssetAny(publish.assetId);
     return {
       publish: {
         id: publish.id,
@@ -672,22 +708,59 @@ export function registerInternalRoutes(app: FastifyInstance): void {
     };
   });
 
+  app.get("/internal/v1/release-files", async (req, reply) => {
+    const query = z
+      .object({ publishId: z.string(), releaseId: z.string(), path: z.string() })
+      .parse(req.query);
+    const relativePath = normalizeReleasePath(query.path);
+    if (!relativePath) {
+      return reply.status(400).send({ code: "INVALID_RELEASE_PATH" });
+    }
+    const release = (await ctx.store
+      .getDb()
+      .prepare("SELECT id FROM publish_releases WHERE id = ? AND publish_id = ?")
+      .get(query.releaseId, query.publishId)) as Record<string, unknown> | undefined;
+    if (!release) return reply.status(404).send({ code: "RELEASE_NOT_FOUND" });
+    const objectKey = `publishes/${query.publishId}/releases/${query.releaseId}/${relativePath}`;
+    const data = await ctx.storage.get(objectKey);
+    if (!data) return reply.status(404).send({ code: "RELEASE_FILE_NOT_FOUND" });
+    return reply
+      .type(releaseMediaType(relativePath))
+      .header("content-length", String(data.byteLength))
+      .send(data);
+  });
+
   app.post("/internal/v1/publishes/:slug/unlock", async (req, reply) => {
     const { slug } = req.params as { slug: string };
     const body = z.object({ password: z.string() }).parse(req.body);
-    const publish = ctx.store.getPublishBySlug(slug) ?? ctx.store.getPublishByShortSlug(slug);
+    const publish =
+      (await ctx.store.getPublishBySlug(slug)) ?? (await ctx.store.getPublishByShortSlug(slug));
     if (publish?.status !== "active") {
       return reply.status(404).send({ code: "NOT_FOUND" });
     }
-    if (!ctx.store.verifyPassword(publish, body.password)) {
-      ctx.store.audit(publish.workspaceId, "anonymous", "publish.unlock", publish.id, "denied", {});
+    if (!(await ctx.store.verifyPassword(publish, body.password))) {
+      await ctx.store.audit(
+        publish.workspaceId,
+        "anonymous",
+        "publish.unlock",
+        publish.id,
+        "denied",
+        {},
+      );
       return reply.status(401).send({ code: "INVALID_PASSWORD" });
     }
     const secret = process.env.PUBLISH_HMAC_SECRET ?? "dev-publish-secret";
     const exp = Date.now() + 12 * 3600 * 1000;
     const payload = JSON.stringify({ publishId: publish.id, exp });
     const token = `${Buffer.from(payload).toString("base64url")}.${signHmac(payload, secret)}`;
-    ctx.store.audit(publish.workspaceId, "anonymous", "publish.unlock", publish.id, "success", {});
+    await ctx.store.audit(
+      publish.workspaceId,
+      "anonymous",
+      "publish.unlock",
+      publish.id,
+      "success",
+      {},
+    );
     return { token, expiresAt: new Date(exp).toISOString() };
   });
 
@@ -703,9 +776,30 @@ export function registerInternalRoutes(app: FastifyInstance): void {
         statusCode: z.number().optional(),
       })
       .parse(req.body);
-    ctx.store.recordAccessEvent(body);
+    await ctx.store.recordAccessEvent(body);
     return { ok: true };
   });
+}
+
+export function normalizeReleasePath(path: string): string | null {
+  const normalized = path.replace(/\\/g, "/").replace(/^\/+/, "");
+  if (!normalized || normalized.split("/").some((part) => !part || part === "." || part === "..")) {
+    return null;
+  }
+  return normalized;
+}
+
+function releaseMediaType(path: string): string {
+  if (path.endsWith(".html")) return "text/html; charset=utf-8";
+  if (path.endsWith(".md")) return "text/markdown; charset=utf-8";
+  if (path.endsWith(".json")) return "application/json";
+  if (path.endsWith(".css")) return "text/css; charset=utf-8";
+  if (path.endsWith(".js")) return "application/javascript; charset=utf-8";
+  if (path.endsWith(".svg")) return "image/svg+xml";
+  if (path.endsWith(".png")) return "image/png";
+  if (path.endsWith(".jpg") || path.endsWith(".jpeg")) return "image/jpeg";
+  if (path.endsWith(".pdf")) return "application/pdf";
+  return "application/octet-stream";
 }
 
 function parseJson(value: unknown): Record<string, unknown> {

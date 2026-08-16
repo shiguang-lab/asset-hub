@@ -96,7 +96,7 @@ export function PresentationNewPage() {
   };
 
   return (
-    <div style={{ maxWidth: 1080, margin: "0 auto" }}>
+    <div className="sg-workflow-page">
       <h1 className="sg-h1 sg-mb">新建在线演示</h1>
       <div className="sg-stepper">
         {[

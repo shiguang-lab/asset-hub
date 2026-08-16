@@ -1,5 +1,32 @@
 # `web` 应用技术设计
 
+## 本地生产账号 Broker
+
+需要用 localhost 调用本地 API、同时复用生产身份时，启用服务端 Broker：
+
+```dotenv
+ASSET_HUB_LOCAL_BROKER_ENABLED=true
+ASSET_HUB_LOCAL_AUTH_USERNAME=<测试账号>
+ASSET_HUB_LOCAL_AUTH_PASSWORD=<测试密码>
+ASSET_HUB_AUTH_TARGET=https://shiguanglab.com
+ASSET_HUB_LOCAL_API_TARGET=http://localhost:3001
+DEV_AUTH=false
+```
+
+Vite 启动时用账号密码调用生产 `auth-service` 的 `/api/auth/local-broker`，只在
+Node 进程内保存 opaque Broker，并定期刷新 `asset-hub-api` audience 的 1 分钟
+身份断言。代理在转发 `/api/v1/*`、SSE、上传、下载和 `/mcp` 前删除浏览器提供的
+`Cookie`、`Authorization`、`X-SG-Identity`，再注入线上签发的断言。
+
+约束：
+
+- 账号密码不得使用 `VITE_*` 前缀，不得进入浏览器 bundle、localStorage 或日志；
+- Broker 模式只允许 Vite dev server，并强制监听 `127.0.0.1`；
+- 修改账号只改根目录 `.env` 并重启 Web，不提供前端切换账号入口；
+- 生产 Web 构建发现 Broker 开关会直接失败；
+- Broker 仅支持服务端配置好的 `asset-hub / asset-hub-api / asset-hub:access`，
+  不能传入 subject、audience 或 entitlement。
+
 ## 1. 定位
 
 `apps/web` 是 Web ToC 主应用和移动 Web 适配层，负责 UI、编辑体验、本地草稿和实时状态呈现。它不是安全边界：所有权限、状态转换、Credits 和发布裁决必须由服务端完成。
@@ -55,6 +82,39 @@ feature 之间不得直接 import 内部组件；跨 feature 只通过 `entities
 - Publish：可见性、密码、有效期、短链、二维码、分析；
 - Settings：MCP/API/Git/通知/Credits。
 
+## 3.1 主题颜色规范（锁定）
+
+Web 工作台默认使用近黑色暗黑主题，禁止将页面背景改为蓝色或藏青色。所有页面必须复用以下 token，不得在页面样式中重新定义一套蓝色背景：
+
+| Token | 固定值 | 用途 |
+| --- | --- | --- |
+| `--sg-bg` | `#0B0A0F` | 页面主背景 |
+| `--sg-bg-2` | `#121116` | 卡片、面板背景 |
+| `--sg-bg-3` | `#1A181F` | 输入框、悬浮层背景 |
+| `--sg-border` | `#2A2731` | 边框与分隔线 |
+| `--sg-fg` | `#F4F3FB` | 主文字 |
+| `--sg-fg-2` | `#B8B5C9` | 次级文字 |
+| `--sg-muted` | `#777489` | 辅助文字 |
+| `--sg-accent` | `#7C3CFF` | 主操作与选中态 |
+
+主题锁定实现位于 `apps/web/src/styles/theme-lock.ts`。后续 UI 调整只能修改布局、间距和组件状态，不得改变上述颜色 token 或引入蓝色/藏青色页面背景。
+
+## 3.2 Header 面包屑规范（锁定）
+
+- 所有路由的面包屑统一渲染在全局 Header 左侧，位于搜索框之前；页面内容区不得重复渲染面包屑。
+- 面包屑格式为“模块 > 当前页面名称”，模块和当前内容使用统一的 Header 样式；详情页通过 `useShellBreadcrumb` 提供动态名称，加载前使用明确的占位名称。
+- 搜索、通知和新建操作统一位于 Header 右侧，不能挤占或改变面包屑的左侧定位。
+- 只有首页显示聚合式“新建”入口；文档、HTML、知识库、调研、在线演示等具体页面必须显示对应的单一新建动作，不得重复展示入口聚合弹窗。
+- 移动端仍保留面包屑，通过截断显示适配窄屏，不得恢复为内容区面包屑。
+
+## 3.3 样式实现规范（锁定）
+
+- Web 应用与 `@shiguang/ui` 的项目自有样式统一使用 `antd-style`，禁止新增业务 `.css` 文件或在页面入口导入项目自有 CSS。
+- 组件内聚样式优先使用 `createStyles`；跨组件基础样式、第三方组件覆盖和需要保留稳定类名的兼容层使用 `createGlobalStyle`。
+- 全局样式必须按业务模块拆分并由 `ThemeProvider` 统一挂载，禁止重新建立单体 `styles.css`。
+- 颜色、间距、圆角和组件状态优先引用 Ant Design token 与项目主题 token，不得在业务页面重新定义主题。
+- KaTeX 等第三方依赖自带的样式可由构建工具直接导入，但不得把第三方 CSS 复制进项目样式模块。
+
 ## 4. 数据获取
 
 ### 4.1 Query key
@@ -74,6 +134,12 @@ Mutation 成功只更新明确返回的实体并 invalidate 关联 key；禁止�
 - 自动附加 `X-Request-ID` 和 `Idempotency-Key`；
 - 409/412 转为领域冲突，不作为普通 toast；
 - 401 交给统一登录回流，403 显示资源权限恢复动作；
+- 登录与 OPC Web 保持一致：启动先请求同源 `/api/auth/session`，无会话或业务请求返回 401 时跳转统一 `/login?return_to=...`；退出先 POST `/api/auth/logout`。浏览器只携带 HttpOnly session Cookie，禁止构造或持久化 `X-SG-Identity`。
+- 登录用户入口固定在 Header 最右侧；侧栏底部只放设置入口和真实 Credits 消耗进度，不再展示硬编码用户信息。
+- 空间切换器固定在 Header 用户头像左侧，显示“个人空间”或当前 Group 名称；下拉内容来自
+  `/api/account/orgs`，切换调用 `/api/auth/context` 并整页刷新。搜索模式不得移动或隐藏空间切换器。
+- 本地 Broker 模式只读显示由环境配置决定的当前空间，不提供下拉切换；Group 成员管理只在
+  正常 OAuth 会话中调用 auth-service，禁止回退到 Asset Hub 本地成员表。
 - 429 展示 retry-after/额度，而不是无限自动重试。
 
 ## 5. 编辑与本地恢复
@@ -142,4 +208,3 @@ IndexedDB key 含 user subject + workspace + asset，退出登录必须清理或
 ## 11. 暂不实现
 
 MVP 不做实时多人 CRDT、自由 Canvas、浏览器端大数据分析、复杂 Workflow Editor。UI 图中的评论/版本/团队协作若超出 PRD P0，保留信息架构入口但按阶段开关交付。
-

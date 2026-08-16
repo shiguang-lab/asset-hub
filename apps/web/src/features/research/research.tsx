@@ -133,7 +133,7 @@ export function ResearchNewPage() {
   };
 
   return (
-    <div style={{ maxWidth: 760, margin: "0 auto" }}>
+    <div className="sg-workflow-page sg-research-workflow">
       <h1 className="sg-h1 sg-mb">新建深度调研</h1>
       <Card>
         <Field label="研究目标" hint="用自然语言描述你想研究的问题，例如：帮我分析越南消费金融市场">

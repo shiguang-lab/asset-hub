@@ -6,11 +6,11 @@ export function registerBilling(app: FastifyInstance): void {
   const ctx: AppContext = app.ctx;
 
   app.get("/api/v1/credits", async (req) => {
-    const account = ctx.store.getCreditAccount(req.actor.workspaceId);
+    const account = await ctx.store.getCreditAccount(req.actor.workspaceId);
     return {
       account,
-      ledger: ctx.store.ledger(req.actor.workspaceId),
-      usage: ctx.store.usageRecords(req.actor.workspaceId),
+      ledger: await ctx.store.ledger(req.actor.workspaceId),
+      usage: await ctx.store.usageRecords(req.actor.workspaceId),
     };
   });
 

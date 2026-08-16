@@ -1,10 +1,11 @@
 import type { EventEnvelope, OutboxEvent } from "@shiguang/contracts";
 import type { Store } from "@shiguang/database";
+import { eventSubject, type NatsChannel } from "@shiguang/event-channel";
 import type { Logger } from "@shiguang/observability";
 import type { SseHub } from "./sse.js";
 
 export interface EventBus {
-  emit(envelope: EventEnvelope): OutboxEvent;
+  emit(envelope: EventEnvelope): Promise<OutboxEvent>;
   notify(
     workspaceId: string,
     subject: string,
@@ -23,13 +24,18 @@ export interface EventBus {
       body?: string | undefined;
       link?: string | null | undefined;
     },
-  ): void;
+  ): Promise<void>;
 }
 
-export function createEventBus(store: Store, sse: SseHub, logger: Logger): EventBus {
+export function createEventBus(
+  store: Store,
+  sse: SseHub,
+  logger: Logger,
+  nats?: NatsChannel,
+): EventBus {
   return {
-    emit(envelope: EventEnvelope): OutboxEvent {
-      const event = store.appendOutbox({
+    async emit(envelope: EventEnvelope): Promise<OutboxEvent> {
+      const event = await store.appendOutbox({
         eventType: envelope.eventType,
         aggregateType: envelope.aggregate.type,
         aggregateId: envelope.aggregate.id,
@@ -45,11 +51,21 @@ export function createEventBus(store: Store, sse: SseHub, logger: Logger): Event
           data: { ...envelope.data, aggregateId: envelope.aggregate.id },
         });
       }
+      if (nats?.connected) {
+        nats.publish(eventSubject(envelope.eventType), {
+          eventId: event.id,
+          eventType: envelope.eventType,
+          aggregate: envelope.aggregate,
+          tenantId: envelope.tenantId,
+          occurredAt: envelope.occurredAt,
+          data: envelope.data,
+        });
+      }
       logger.debug({ eventType: envelope.eventType, eventId: event.id }, "event emitted");
       return event;
     },
-    notify(workspaceId, subject, input) {
-      const notification = store.createNotification({
+    async notify(workspaceId, subject, input): Promise<void> {
+      const notification = await store.createNotification({
         workspaceId,
         subject,
         type: input.type,
@@ -66,6 +82,15 @@ export function createEventBus(store: Store, sse: SseHub, logger: Logger): Event
           link: notification.link,
         },
       });
+      if (nats?.connected) {
+        nats.publish(eventSubject("notification.created"), {
+          notificationId: notification.id,
+          workspaceId,
+          subject,
+          type: input.type,
+          title: input.title,
+        });
+      }
     },
   };
 }

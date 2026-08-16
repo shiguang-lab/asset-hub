@@ -28,16 +28,51 @@ flowchart LR
 
 ## 3. 授权模型
 
-角色：
+### 3.1 空间与身份权威
 
-- Workspace：Owner、Admin、Member、Guest；
-- Asset：Owner、Editor、Viewer；
-- Knowledge Base：Manage、AddSource、Ask、Read；
-- Task：Owner、Collaborator、Viewer；
-- Token：Scope + action (`read`, `write`, `task:create`, `publish`)；
-- Publish：Private、Unlisted、Public、Password、MemberOnly。
+- 用户始终拥有一个个人空间；每个 ZITADEL Group 对应一个独立的 Group 空间。
+- `auth-service`/ZITADEL 是 Group、成员和成员角色的唯一权威。Asset Hub 只保存
+  `external_id -> workspace_id` 业务映射，不提供第二套成员邀请或角色真相源。
+- 浏览器通过同源 `/api/account/orgs` 获取可用 Group，通过 `/api/auth/context`
+  切换上下文；切换后必须整页刷新，使所有 TanStack Query、SSE 和页面状态重新绑定空间。
+- 本地 Broker 的账号和空间由服务端环境变量决定，Web 只读展示，不开放浏览器切换入口。
+- 所有业务表继续以本地 `workspace_id` 作为第一隔离键。个人空间与 Group 空间不能共享
+  数据、缓存 key、SSE channel、Credits 账户或 API Token。
+
+### 3.2 空间角色矩阵
+
+| 身份来源 | Asset Hub 角色 | 读取 | 创建/编辑 | 成员管理与 ACL 管理 |
+| --- | --- | --- | --- | --- |
+| 个人上下文 | `owner` | 是 | 是 | 是 |
+| `org:admin` | `admin` | 是 | 是 | 是 |
+| `org:member` | `editor` | 是 | 是 | 否 |
+| `org:viewer` | `viewer` | 是 | 否 | 否 |
+
+Group viewer 的只读限制必须在 API 边界统一执行，不能依赖前端隐藏按钮。成员管理直接调用
+auth-service 的 `/api/account/orgs/{id}/members` 接口；Asset Hub 本地成员映射只用于当前请求
+的业务空间解析和审计，不可用于提升统一身份角色。
+旧的 `/api/v1/workspace/members*` 写接口已退役并返回拒绝，防止出现绕过统一成员服务的第二条
+授权路径。
+
+### 3.3 资源授权
 
 授权顺序：租户 → 资源状态 → membership → ACL → action policy → 高风险二次确认。默认拒绝。公开发布是显式 release，不改变原 Asset 的私有 ACL。
+
+| 资源 | Owner / Admin | Asset Owner | ACL Editor | ACL Viewer | Group Editor / Viewer |
+| --- | --- | --- | --- | --- | --- |
+| Asset（文档、文件、报告、演示） | 全部操作 | 全部操作 | 读、编辑 | 读 | 仅在 `member_only`、`link`、`public`、`unlisted` 可读；`private` 默认不可见 |
+| 删除、恢复、永久删除、分享 ACL、发布 | 是 | 是 | 否 | 否 | 否 |
+| Task | 全部操作 | 创建者可取消、重试、暂停、恢复 | 所有 Group 成员可读 | 所有 Group 成员可读 | 所有 Group 成员可读，非创建者不能控制 |
+| Knowledge Base、Dataset、Template | 管理/协作 | 不适用 | Group 共享协作 | Group 只读 | Editor 可创建及维护，Viewer 可列表、查看、检索、查询 |
+| API Token、MCP、Git、发布域、定时任务、审计日志 | 仅 Owner / Admin | - | 否 | 否 | 否 |
+
+“Group 共享协作”资源当前不维护第二层个人 ACL；创建后属于当前 Group 工作空间。需要对其做私密协作时，先将材料保存为 Asset 并使用 Asset ACL。个人空间只有 Owner，因此不产生跨用户可见性。
+
+API 在路由入口强制上述策略：不能以页面隐藏、请求方法或客户端路由作为授权依据。少数使用 `POST` 承载结构化查询的只读接口（知识库检索/问答、数据集查询）对 Viewer 保持可用；其余持久化或控制类请求必须具备 `write` scope。每个 API Token 是独立 service principal，不能与同空间的其他 Token 共享资产或任务所有权。MCP 使用同一套资产与 Token scope 校验，不能绕过 HTTP API 的资产 ACL。
+
+生产环境只接受经 JWKS 验证的短时 `X-SG-Identity`。JSON 形式的未签名断言仅允许在
+`DEV_AUTH=true` 下使用，验证失败后不得在生产环境回退解析。API Token 继承其创建空间的
+真实类型，并按 token scope 收敛为 Editor 或 Viewer。
 
 ## 4. HTML 与 Presentation 安全
 

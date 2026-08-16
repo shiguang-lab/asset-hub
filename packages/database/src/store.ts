@@ -1,5 +1,4 @@
 import { createHash } from "node:crypto";
-import type { DatabaseSync, SQLInputValue } from "node:sqlite";
 import {
   type ActorContext,
   type ApiToken,
@@ -39,6 +38,7 @@ import {
   type UserProfile,
   type Workspace,
 } from "@shiguang/contracts";
+import type { Db } from "./db.js";
 import type { ObjectStore } from "./storage.js";
 import { hashBuffer } from "./storage.js";
 
@@ -62,10 +62,12 @@ const num = (v: unknown, fallback = 0): number => (typeof v === "number" ? v : f
 const bool = (v: unknown): boolean => v === 1 || v === true;
 
 function mapAsset(r: Row): Asset {
+  const ownerDisplayName = str(r.owner_display_name).trim();
   return {
     id: str(r.id),
     workspaceId: str(r.workspace_id),
     ownerSubject: str(r.owner_subject),
+    ...(ownerDisplayName ? { ownerDisplayName } : {}),
     type: str(r.type) as AssetType,
     title: str(r.title),
     description: str(r.description),
@@ -94,6 +96,27 @@ function mapVersion(r: Row): AssetVersion {
     metadata: parse<Record<string, unknown>>(r.metadata_json, {}),
     createdAt: str(r.created_at),
   };
+}
+
+function contentVersionInfo(content: AssetContent | undefined): {
+  hash: string;
+  size: number;
+  mediaType: string;
+} {
+  if (content?.text !== null && content?.text !== undefined) {
+    const data = Buffer.from(content.text, "utf8");
+    return {
+      hash: hashBuffer(data),
+      size: data.byteLength,
+      mediaType: content.kind === "html" ? "text/html" : "text/markdown",
+    };
+  }
+  const ref = content?.refs?.find((item) => item.role === "content") ?? content?.refs?.[0];
+  if (content?.kind === "blob" && ref) {
+    return { hash: ref.contentHash, size: ref.size, mediaType: ref.mediaType };
+  }
+  const data = Buffer.from(json(content?.manifest ?? {}), "utf8");
+  return { hash: hashBuffer(data), size: data.byteLength, mediaType: "application/json" };
 }
 
 function mapTask(r: Row): Task {
@@ -143,18 +166,20 @@ export interface CursorPage {
   after?: string;
 }
 
+export type WorkspaceRole = "owner" | "admin" | "editor" | "viewer";
+
 export class Store {
   constructor(
-    private readonly db: DatabaseSync,
+    private readonly db: Db,
     private readonly storage: ObjectStore,
   ) {}
 
   /* ---------------- workspaces & users ---------------- */
 
-  getWorkspaceBySubject(subject: string): Workspace | null {
-    const row = this.db
-      .prepare("SELECT * FROM workspaces WHERE owner_subject = ? LIMIT 1")
-      .get(subject) as Row | undefined;
+  async getWorkspaceBySubject(subject: string): Promise<Workspace | null> {
+    const row = (await this.db
+      .prepare("SELECT * FROM workspaces WHERE owner_subject = ? AND type = 'personal' LIMIT 1")
+      .get(subject)) as Row | undefined;
     if (!row) return null;
     return {
       id: str(row.id),
@@ -165,19 +190,129 @@ export class Store {
     };
   }
 
-  getWorkspaceOwnerSubject(workspaceId: string): string | null {
-    const row = this.db
+  async ensurePersonalWorkspace(subject: string): Promise<Workspace> {
+    const existing = await this.getWorkspaceBySubject(subject);
+    if (existing) {
+      await this.db
+        .prepare("UPDATE workspaces SET external_id = COALESCE(external_id, ?) WHERE id = ?")
+        .run(`user:${subject}`, existing.id);
+      return existing;
+    }
+    const id = `wsp_${createHash("sha256").update(`user:${subject}`).digest("hex").slice(0, 24)}`;
+    const now = nowIso();
+    await this.db
+      .prepare(
+        `INSERT INTO workspaces (id, type, external_id, owner_subject, name, created_at)
+         VALUES (?, 'personal', ?, ?, '个人空间', ?)
+         ON CONFLICT (id) DO NOTHING`,
+      )
+      .run(id, `user:${subject}`, subject, now);
+    await this.ensureWorkspaceCreditAccount(id);
+    return (await this.getWorkspaceBySubject(subject)) as Workspace;
+  }
+
+  async ensureTeamWorkspace(input: {
+    externalId: string;
+    subject: string;
+    role: Exclude<WorkspaceRole, "owner">;
+    name?: string;
+  }): Promise<Workspace> {
+    const externalId = `org:${input.externalId}`;
+    const id = `wsp_${createHash("sha256").update(externalId).digest("hex").slice(0, 24)}`;
+    const now = nowIso();
+    await this.db
+      .prepare(
+        `INSERT INTO workspaces (id, type, external_id, owner_subject, name, created_at)
+         VALUES (?, 'team', ?, ?, ?, ?)
+         ON CONFLICT (id) DO UPDATE SET name = CASE
+           WHEN excluded.name = '' THEN workspaces.name ELSE excluded.name END`,
+      )
+      .run(id, externalId, externalId, input.name?.trim() || "Group 空间", now);
+    await this.db
+      .prepare(
+        `INSERT INTO workspace_members (id, workspace_id, subject, role, status, invited_by, created_at)
+         VALUES (?, ?, ?, ?, 'active', 'identity-provider', ?)
+         ON CONFLICT(workspace_id, subject) DO UPDATE SET role = excluded.role, status = 'active'`,
+      )
+      .run(nextId("mem"), id, input.subject, input.role, now);
+    await this.ensureWorkspaceCreditAccount(id);
+    return (await this.getWorkspace(id)) as Workspace;
+  }
+
+  async getWorkspace(workspaceId: string): Promise<Workspace | null> {
+    const row = (await this.db.prepare("SELECT * FROM workspaces WHERE id = ?").get(workspaceId)) as
+      | Row
+      | undefined;
+    if (!row) return null;
+    return {
+      id: str(row.id),
+      type: str(row.type) as Workspace["type"],
+      ownerSubject: str(row.owner_subject),
+      name: str(row.name),
+      createdAt: str(row.created_at),
+    };
+  }
+
+  async getWorkspaceRole(workspaceId: string, subject: string): Promise<WorkspaceRole | null> {
+    const workspace = await this.getWorkspace(workspaceId);
+    if (!workspace) return null;
+    if (workspace.type === "personal") {
+      return workspace.ownerSubject === subject ? "owner" : null;
+    }
+    const member = (await this.db
+      .prepare(
+        "SELECT role FROM workspace_members WHERE workspace_id = ? AND subject = ? AND status = 'active'",
+      )
+      .get(workspaceId, subject)) as { role: string } | undefined;
+    return member && ["admin", "editor", "viewer"].includes(member.role)
+      ? (member.role as WorkspaceRole)
+      : null;
+  }
+
+  private async ensureWorkspaceCreditAccount(workspaceId: string): Promise<void> {
+    await this.db
+      .prepare(
+        `INSERT INTO credit_accounts (id, workspace_id, balance, total_granted, total_used, updated_at)
+         VALUES (?, ?, 0, 0, 0, ?)
+         ON CONFLICT (workspace_id) DO NOTHING`,
+      )
+      .run(nextId("acc"), workspaceId, nowIso());
+  }
+
+  async getWorkspaceOwnerSubject(workspaceId: string): Promise<string | null> {
+    const row = (await this.db
       .prepare("SELECT owner_subject FROM workspaces WHERE id = ?")
-      .get(workspaceId) as { owner_subject: string } | undefined;
+      .get(workspaceId)) as { owner_subject: string } | undefined;
     return row?.owner_subject ?? null;
   }
 
-  ensureUser(actor: { subject: string; workspaceId: string }): UserProfile {
+  async ensureUser(actor: {
+    subject: string;
+    workspaceId: string;
+    displayName?: string;
+    email?: string;
+  }): Promise<UserProfile> {
     const now = nowIso();
-    const existing = this.db.prepare("SELECT * FROM users WHERE subject = ?").get(actor.subject) as
-      | Row
-      | undefined;
+    const displayName = actor.displayName?.trim();
+    const email = actor.email?.trim();
+    const existing = (await this.db
+      .prepare("SELECT * FROM users WHERE subject = ?")
+      .get(actor.subject)) as Row | undefined;
     if (existing) {
+      if (
+        (displayName && displayName !== str(existing.name)) ||
+        (email && email !== str(existing.email))
+      ) {
+        await this.db
+          .prepare(
+            `UPDATE users
+             SET name = COALESCE(NULLIF(?, ''), name),
+                 email = COALESCE(NULLIF(?, ''), email)
+             WHERE subject = ?`,
+          )
+          .run(displayName ?? "", email ?? "", actor.subject);
+        return (await this.getUserProfile(actor.subject)) as UserProfile;
+      }
       return {
         subject: str(existing.subject),
         name: str(existing.name),
@@ -190,15 +325,17 @@ export class Store {
         createdAt: str(existing.created_at),
       };
     }
-    this.db
-      .prepare("INSERT INTO users (subject, workspace_id, name, created_at) VALUES (?, ?, ?, ?)")
-      .run(actor.subject, actor.workspaceId, "新用户", now);
-    const profile = this.ensureUser(actor);
+    await this.db
+      .prepare(
+        "INSERT INTO users (subject, workspace_id, name, email, created_at) VALUES (?, ?, ?, ?, ?)",
+      )
+      .run(actor.subject, actor.workspaceId, displayName || "新用户", email || null, now);
+    const profile = await this.ensureUser(actor);
     return profile;
   }
 
-  getUserProfile(subject: string): UserProfile | null {
-    const row = this.db.prepare("SELECT * FROM users WHERE subject = ?").get(subject) as
+  async getUserProfile(subject: string): Promise<UserProfile | null> {
+    const row = (await this.db.prepare("SELECT * FROM users WHERE subject = ?").get(subject)) as
       | Row
       | undefined;
     if (!row) return null;
@@ -215,15 +352,15 @@ export class Store {
     };
   }
 
-  updateUserProfile(
+  async updateUserProfile(
     subject: string,
     patch: Partial<
       Pick<UserProfile, "name" | "defaultQuality" | "defaultLanguage" | "notifyEmail" | "avatarUrl">
     >,
-  ): UserProfile {
-    const current = this.getUserProfile(subject);
+  ): Promise<UserProfile> {
+    const current = await this.getUserProfile(subject);
     if (!current) throw new Error("user not found");
-    this.db
+    await this.db
       .prepare(
         "UPDATE users SET name = ?, default_quality = ?, default_language = ?, notify_email = ? WHERE subject = ?",
       )
@@ -234,12 +371,12 @@ export class Store {
         (patch.notifyEmail ?? current.notifyEmail) ? 1 : 0,
         subject,
       );
-    return this.getUserProfile(subject) as UserProfile;
+    return (await this.getUserProfile(subject)) as UserProfile;
   }
 
   /* ---------------- assets ---------------- */
 
-  listAssets(
+  async listAssets(
     workspaceId: string,
     opts: {
       type?: AssetType;
@@ -250,10 +387,26 @@ export class Store {
       includeDeleted?: boolean;
       limit: number;
       after?: string;
+      subject?: string;
+      workspaceRole?: WorkspaceRole;
     },
-  ): Paginated<Asset> {
+  ): Promise<Paginated<Asset>> {
     const clauses = ["a.workspace_id = ?"];
     const params: unknown[] = [workspaceId];
+    if (
+      opts.subject &&
+      opts.workspaceRole &&
+      opts.workspaceRole !== "owner" &&
+      opts.workspaceRole !== "admin"
+    ) {
+      clauses.push(
+        `(a.owner_subject = ? OR a.visibility IN ('member_only', 'link', 'public', 'unlisted') OR EXISTS (
+          SELECT 1 FROM asset_acl acl
+          WHERE acl.asset_id = a.id AND acl.principal_type = 'user' AND acl.principal_id = ?
+        ))`,
+      );
+      params.push(opts.subject, opts.subject);
+    }
     if (opts.includeDeleted) {
       clauses.push("a.deleted_at IS NOT NULL");
     } else {
@@ -286,14 +439,18 @@ export class Store {
       params.push(afterAt, afterAt, afterId);
     }
     const where = clauses.join(" AND ");
-    const totalRow = this.db
+    const totalRow = (await this.db
       .prepare(`SELECT COUNT(*) AS n FROM assets a WHERE ${where}`)
-      .get(...(params as SQLInputValue[])) as { n: number };
-    const rows = this.db
+      .get(...(params as unknown[]))) as { n: number };
+    const rows = (await this.db
       .prepare(
-        `SELECT a.* FROM assets a WHERE ${where} ORDER BY a.updated_at DESC, a.id DESC LIMIT ?`,
+        `SELECT a.*, owner_user.name AS owner_display_name
+         FROM assets a
+         LEFT JOIN users owner_user ON owner_user.subject = a.owner_subject
+         WHERE ${where}
+         ORDER BY a.updated_at DESC, a.id DESC LIMIT ?`,
       )
-      .all(...(params as SQLInputValue[]), opts.limit + 1) as Row[];
+      .all(...(params as unknown[]), opts.limit + 1)) as Row[];
     const hasMore = rows.length > opts.limit;
     const items = rows.slice(0, opts.limit).map(mapAsset);
     const last = items.at(-1);
@@ -304,33 +461,102 @@ export class Store {
     };
   }
 
-  getAsset(workspaceId: string, assetId: string): Asset | null {
-    const row = this.db
-      .prepare("SELECT * FROM assets WHERE id = ? AND workspace_id = ?")
-      .get(assetId, workspaceId) as Row | undefined;
-    return row ? mapAsset(row) : null;
-  }
-
-  getAssetAny(assetId: string): Asset | null {
-    const row = this.db.prepare("SELECT * FROM assets WHERE id = ?").get(assetId) as
-      | Row
-      | undefined;
-    return row ? mapAsset(row) : null;
-  }
-
-  searchAssets(workspaceId: string, query: string, limit = 20): Asset[] {
-    const rows = this.db
+  async getAsset(workspaceId: string, assetId: string): Promise<Asset | null> {
+    const row = (await this.db
       .prepare(
-        `SELECT a.* FROM assets a
+        `SELECT a.*, owner_user.name AS owner_display_name
+         FROM assets a
+         LEFT JOIN users owner_user ON owner_user.subject = a.owner_subject
+         WHERE a.id = ? AND a.workspace_id = ?`,
+      )
+      .get(assetId, workspaceId)) as Row | undefined;
+    return row ? mapAsset(row) : null;
+  }
+
+  async getAssetAny(assetId: string): Promise<Asset | null> {
+    const row = (await this.db
+      .prepare(
+        `SELECT a.*, owner_user.name AS owner_display_name
+         FROM assets a
+         LEFT JOIN users owner_user ON owner_user.subject = a.owner_subject
+         WHERE a.id = ?`,
+      )
+      .get(assetId)) as Row | undefined;
+    return row ? mapAsset(row) : null;
+  }
+
+  async getAssetBlob(
+    workspaceId: string,
+    assetId: string,
+    versionId?: string,
+  ): Promise<{
+    objectKey: string;
+    contentHash: string;
+    size: number;
+    mediaType: string;
+  } | null> {
+    const asset = await this.getAsset(workspaceId, assetId);
+    if (!asset) return null;
+    const currentVersionId = versionId ?? asset.currentVersionId;
+    if (!currentVersionId) return null;
+    const row = (await this.db
+      .prepare(
+        "SELECT object_key, content_hash, size, media_type FROM asset_blobs WHERE version_id = ? AND role = 'content' LIMIT 1",
+      )
+      .get(currentVersionId)) as Row | undefined;
+    if (!row) return null;
+    return {
+      objectKey: str(row.object_key),
+      contentHash: str(row.content_hash),
+      size: num(row.size),
+      mediaType: str(row.media_type, "application/octet-stream"),
+    };
+  }
+
+  async listAssetBlobKeys(workspaceId: string, assetId: string): Promise<string[]> {
+    const asset = await this.getAsset(workspaceId, assetId);
+    if (!asset) return [];
+    const rows = (await this.db
+      .prepare(
+        `SELECT b.object_key
+         FROM asset_blobs b
+         JOIN asset_versions v ON v.id = b.version_id
+         WHERE v.asset_id = ?`,
+      )
+      .all(assetId)) as Row[];
+    return rows.map((row) => str(row.object_key)).filter(Boolean);
+  }
+
+  async searchAssets(
+    workspaceId: string,
+    query: string,
+    limit = 20,
+    access?: { subject: string; workspaceRole: WorkspaceRole },
+  ): Promise<Asset[]> {
+    const accessClause =
+      access && access.workspaceRole !== "owner" && access.workspaceRole !== "admin"
+        ? ` AND (a.owner_subject = ? OR a.visibility IN ('member_only', 'link', 'public', 'unlisted') OR EXISTS (
+             SELECT 1 FROM asset_acl acl
+             WHERE acl.asset_id = a.id AND acl.principal_type = 'user' AND acl.principal_id = ?
+           ))`
+        : "";
+    const params: unknown[] = [workspaceId];
+    if (access && accessClause) params.push(access.subject, access.subject);
+    params.push(`%${query}%`, `%${query}%`, `%${query}%`, limit);
+    const rows = (await this.db
+      .prepare(
+        `SELECT a.*, owner_user.name AS owner_display_name FROM assets a
+         LEFT JOIN users owner_user ON owner_user.subject = a.owner_subject
          WHERE a.workspace_id = ? AND a.deleted_at IS NULL
+           ${accessClause}
            AND (a.title LIKE ? OR a.description LIKE ? OR a.tags_json LIKE ?)
          ORDER BY a.updated_at DESC LIMIT ?`,
       )
-      .all(workspaceId, `%${query}%`, `%${query}%`, `%${query}%`, limit) as Row[];
+      .all(...params)) as Row[];
     return rows.map(mapAsset);
   }
 
-  createAsset(
+  async createAsset(
     actor: ActorContext,
     input: {
       type: AssetType;
@@ -342,11 +568,12 @@ export class Store {
       content?: AssetContent;
       metadata?: Record<string, unknown>;
     },
-  ): Asset {
+  ): Promise<Asset> {
     const now = nowIso();
     const id = nextId("ast");
     const versionId = nextId("av");
-    this.db
+    const info = contentVersionInfo(input.content);
+    await this.db
       .prepare(
         `INSERT INTO assets (id, workspace_id, owner_subject, type, title, description, visibility, status, tags_json, source_type, current_version_id, lock_version, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, 'normal', ?, ?, ?, 1, ?, ?)`,
@@ -365,27 +592,19 @@ export class Store {
         now,
         now,
       );
-    this.db
+    await this.db
       .prepare(
         `INSERT INTO asset_versions (id, asset_id, sequence, change_kind, content_hash, size, media_type, metadata_json, created_at)
          VALUES (?, ?, 1, 'create', ?, ?, ?, ?, ?)`,
       )
-      .run(
-        versionId,
-        id,
-        input.content?.text ? hashBuffer(Buffer.from(input.content.text)) : "sha256:empty",
-        input.content?.text ? Buffer.byteLength(input.content.text, "utf8") : 0,
-        input.content?.text ? "text/markdown" : "application/json",
-        json(input.metadata ?? {}),
-        now,
-      );
+      .run(versionId, id, info.hash, info.size, info.mediaType, json(input.metadata ?? {}), now);
     if (input.content) {
-      this.persistContent(id, versionId, input.content);
+      await this.persistContent(id, versionId, input.content);
     }
-    return this.getAsset(actor.workspaceId, id) as Asset;
+    return (await this.getAsset(actor.workspaceId, id)) as Asset;
   }
 
-  createAssetWithVersion(
+  async createAssetWithVersion(
     actor: ActorContext,
     input: {
       type: AssetType;
@@ -398,10 +617,10 @@ export class Store {
       metadata?: Record<string, unknown>;
       relation?: { sourceAssetId: string; relationType: string };
     },
-  ): { asset: Asset; versionId: string } {
-    const asset = this.createAsset(actor, input);
+  ): Promise<{ asset: Asset; versionId: string }> {
+    const asset = await this.createAsset(actor, input);
     if (input.relation) {
-      this.addRelation(
+      await this.addRelation(
         actor.workspaceId,
         input.relation.sourceAssetId,
         asset.id,
@@ -412,7 +631,7 @@ export class Store {
     return { asset, versionId: asset.currentVersionId ?? "" };
   }
 
-  saveContent(
+  async saveContent(
     actor: ActorContext,
     assetId: string,
     content: AssetContent,
@@ -422,8 +641,8 @@ export class Store {
       title?: string;
       expectedLockVersion?: number;
     } = {},
-  ): { asset: Asset; version: AssetVersion } {
-    const asset = this.getAsset(actor.workspaceId, assetId);
+  ): Promise<{ asset: Asset; version: AssetVersion }> {
+    const asset = await this.getAsset(actor.workspaceId, assetId);
     if (!asset) throw new Error("asset not found");
     if (opts.expectedLockVersion !== undefined && asset.lockVersion !== opts.expectedLockVersion) {
       const err = new Error("版本冲突：文档已被其他会话修改") as Error & { code?: string };
@@ -432,10 +651,9 @@ export class Store {
     }
     const now = nowIso();
     const versionId = nextId("av");
-    const sequence = this.nextVersionSequence(assetId);
-    const text = content.text ?? "";
-    const contentHash = text ? hashBuffer(Buffer.from(text, "utf8")) : "sha256:empty";
-    this.db
+    const sequence = await this.nextVersionSequence(assetId);
+    const info = contentVersionInfo(content);
+    await this.db
       .prepare(
         `INSERT INTO asset_versions (id, asset_id, sequence, change_kind, content_hash, size, media_type, metadata_json, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -445,36 +663,30 @@ export class Store {
         assetId,
         sequence,
         opts.changeKind ?? "edit",
-        contentHash,
-        text ? Buffer.byteLength(text, "utf8") : 0,
-        content.text
-          ? content.kind === "html"
-            ? "text/html"
-            : content.kind === "markdown"
-              ? "text/markdown"
-              : "application/json"
-          : "application/json",
+        info.hash,
+        info.size,
+        info.mediaType,
         json(opts.metadata ?? {}),
         now,
       );
-    this.persistContent(assetId, versionId, content);
-    this.db
+    await this.persistContent(assetId, versionId, content);
+    await this.db
       .prepare(
         `UPDATE assets SET current_version_id = ?, lock_version = lock_version + 1, updated_at = ?, title = ?, status = CASE WHEN status = 'error' THEN 'normal' ELSE status END WHERE id = ?`,
       )
       .run(versionId, now, opts.title ?? asset.title, assetId);
-    const updated = this.getAsset(actor.workspaceId, assetId) as Asset;
-    const version = this.getVersion(versionId) as AssetVersion;
+    const updated = (await this.getAsset(actor.workspaceId, assetId)) as Asset;
+    const version = (await this.getVersion(versionId)) as AssetVersion;
     return { asset: updated, version };
   }
 
-  updateAssetMeta(
+  async updateAssetMeta(
     actor: ActorContext,
     assetId: string,
     patch: Partial<Pick<Asset, "title" | "description" | "tags" | "visibility" | "status">>,
     expectedLockVersion?: number,
-  ): Asset | null {
-    const asset = this.getAsset(actor.workspaceId, assetId);
+  ): Promise<Asset | null> {
+    const asset = await this.getAsset(actor.workspaceId, assetId);
     if (!asset) return null;
     if (expectedLockVersion !== undefined && asset.lockVersion !== expectedLockVersion) {
       const err = new Error("版本冲突：资源已被其他会话修改") as Error & { code?: string };
@@ -482,7 +694,7 @@ export class Store {
       throw err;
     }
     const now = nowIso();
-    this.db
+    await this.db
       .prepare(
         `UPDATE assets SET title = ?, description = ?, tags_json = ?, visibility = ?, status = ?, lock_version = lock_version + 1, updated_at = ? WHERE id = ?`,
       )
@@ -495,24 +707,24 @@ export class Store {
         now,
         assetId,
       );
-    return this.getAsset(actor.workspaceId, assetId);
+    return await this.getAsset(actor.workspaceId, assetId);
   }
 
-  batchUpdateAssets(
+  async batchUpdateAssets(
     actor: ActorContext,
     ids: string[],
     action: "delete" | "restore" | "tag",
     tags?: string[],
-  ): number {
+  ): Promise<number> {
     const now = nowIso();
     let changed = 0;
     for (const id of ids) {
-      const asset = this.getAsset(actor.workspaceId, id);
+      const asset = await this.getAsset(actor.workspaceId, id);
       if (!asset) continue;
-      if (action === "delete") this.softDelete(actor, id);
-      if (action === "restore") this.restore(actor, id);
+      if (action === "delete") await this.softDelete(actor, id);
+      if (action === "restore") await this.restore(actor, id);
       if (action === "tag") {
-        this.db
+        await this.db
           .prepare("UPDATE assets SET tags_json = ?, updated_at = ? WHERE id = ?")
           .run(json(Array.from(new Set([...(tags ?? []), ...asset.tags]))), now, id);
       }
@@ -521,25 +733,39 @@ export class Store {
     return changed;
   }
 
-  private nextVersionSequence(assetId: string): number {
-    const row = this.db
+  private async nextVersionSequence(assetId: string): Promise<number> {
+    const row = (await this.db
       .prepare("SELECT COALESCE(MAX(sequence), 0) + 1 AS n FROM asset_versions WHERE asset_id = ?")
-      .get(assetId) as { n: number };
+      .get(assetId)) as { n: number };
     return row.n;
   }
 
-  private persistContent(assetId: string, versionId: string, content: AssetContent): void {
+  private async persistContent(
+    assetId: string,
+    versionId: string,
+    content: AssetContent,
+  ): Promise<void> {
+    const ref = content.refs.find((item) => item.role === "content") ?? content.refs[0];
+    if (content.kind === "blob" && ref) {
+      await this.db
+        .prepare(
+          `INSERT INTO asset_blobs (id, version_id, role, object_key, content_hash, size, media_type)
+           VALUES (?, ?, 'content', ?, ?, ?, ?)`,
+        )
+        .run(nextId("blob"), versionId, ref.objectKey, ref.contentHash, ref.size, ref.mediaType);
+      return;
+    }
     const objectKey = `assets/${assetId}/versions/${versionId}/content`;
     const data = content.text
       ? Buffer.from(content.text, "utf8")
       : Buffer.from(json(content.manifest ?? {}), "utf8");
-    this.storage.put(objectKey, data, content.text ? "text/plain" : "application/json");
+    await this.storage.put(objectKey, data, content.text ? "text/plain" : "application/json");
     const mediaType = content.text
       ? content.kind === "html"
         ? "text/html"
         : "text/markdown"
       : "application/json";
-    this.db
+    await this.db
       .prepare(
         `INSERT INTO asset_blobs (id, version_id, role, object_key, content_hash, size, media_type)
          VALUES (?, ?, 'content', ?, ?, ?, ?)`,
@@ -547,37 +773,54 @@ export class Store {
       .run(nextId("blob"), versionId, objectKey, hashBuffer(data), data.byteLength, mediaType);
   }
 
-  getVersion(versionId: string): AssetVersion | null {
-    const row = this.db.prepare("SELECT * FROM asset_versions WHERE id = ?").get(versionId) as
-      | Row
-      | undefined;
+  async getVersion(versionId: string): Promise<AssetVersion | null> {
+    const row = (await this.db
+      .prepare("SELECT * FROM asset_versions WHERE id = ?")
+      .get(versionId)) as Row | undefined;
     return row ? mapVersion(row) : null;
   }
 
-  listVersions(assetId: string): AssetVersion[] {
-    const rows = this.db
+  async listVersions(assetId: string): Promise<AssetVersion[]> {
+    const rows = (await this.db
       .prepare("SELECT * FROM asset_versions WHERE asset_id = ? ORDER BY sequence DESC")
-      .all(assetId) as Row[];
+      .all(assetId)) as Row[];
     return rows.map(mapVersion);
   }
 
   async readContent(assetId: string, versionId?: string): Promise<AssetContent | null> {
-    const asset = this.getAssetAny(assetId);
+    const asset = await this.getAssetAny(assetId);
     if (!asset) return null;
     const vid = versionId ?? asset.currentVersionId;
     if (!vid) return null;
-    const row = this.db
+    const row = (await this.db
       .prepare("SELECT * FROM asset_blobs WHERE version_id = ? AND role = 'content' LIMIT 1")
-      .get(vid) as Row | undefined;
+      .get(vid)) as Row | undefined;
     if (!row) return null;
+    const mediaType = str(row.media_type, "application/octet-stream");
+    if (
+      mediaType !== "text/markdown" &&
+      mediaType !== "text/html" &&
+      mediaType !== "application/json"
+    ) {
+      return {
+        kind: "blob",
+        text: null,
+        manifest: null,
+        refs: [
+          {
+            role: str(row.role, "content"),
+            objectKey: str(row.object_key),
+            contentHash: str(row.content_hash),
+            size: num(row.size),
+            mediaType,
+          },
+        ],
+      };
+    }
     const data = await this.storage.get(str(row.object_key));
     if (!data) return null;
     const kind =
-      str(row.media_type) === "text/markdown"
-        ? "markdown"
-        : str(row.media_type) === "text/html"
-          ? "html"
-          : "manifest";
+      mediaType === "text/markdown" ? "markdown" : mediaType === "text/html" ? "html" : "manifest";
     if (kind === "manifest") {
       return {
         kind,
@@ -589,46 +832,51 @@ export class Store {
     return { kind, text: data.toString("utf8"), manifest: null, refs: [] };
   }
 
-  softDelete(actor: ActorContext, assetId: string): void {
+  async softDelete(actor: ActorContext, assetId: string): Promise<void> {
     const now = nowIso();
-    this.db
+    await this.db
       .prepare(
         "UPDATE assets SET status = 'deleted', deleted_at = ?, updated_at = ? WHERE id = ? AND workspace_id = ?",
       )
       .run(now, now, assetId, actor.workspaceId);
   }
 
-  restore(actor: ActorContext, assetId: string): void {
+  async restore(actor: ActorContext, assetId: string): Promise<void> {
     const now = nowIso();
-    this.db
+    await this.db
       .prepare(
         "UPDATE assets SET status = 'normal', deleted_at = NULL, updated_at = ? WHERE id = ? AND workspace_id = ?",
       )
       .run(now, assetId, actor.workspaceId);
   }
 
-  permanentDelete(actor: ActorContext, assetId: string): void {
-    this.db
+  async permanentDelete(actor: ActorContext, assetId: string): Promise<void> {
+    await this.db
       .prepare("DELETE FROM asset_relations WHERE source_asset_id = ? OR target_asset_id = ?")
       .run(assetId, assetId);
-    this.db.prepare("DELETE FROM asset_versions WHERE asset_id = ?").run(assetId);
-    this.db
+    await this.db
+      .prepare(
+        "DELETE FROM asset_blobs WHERE version_id IN (SELECT id FROM asset_versions WHERE asset_id = ?)",
+      )
+      .run(assetId);
+    await this.db.prepare("DELETE FROM asset_versions WHERE asset_id = ?").run(assetId);
+    await this.db
       .prepare("DELETE FROM assets WHERE id = ? AND workspace_id = ?")
       .run(assetId, actor.workspaceId);
   }
 
-  addRelation(
+  async addRelation(
     _workspaceId: string,
     sourceAssetId: string,
     targetAssetId: string,
     relationType: AssetRelation["relationType"],
     provenance: Record<string, unknown>,
-  ): AssetRelation | null {
-    const existing = this.db
+  ): Promise<AssetRelation | null> {
+    const existing = (await this.db
       .prepare(
         "SELECT * FROM asset_relations WHERE source_asset_id = ? AND target_asset_id = ? AND relation_type = ?",
       )
-      .get(sourceAssetId, targetAssetId, relationType) as Row | undefined;
+      .get(sourceAssetId, targetAssetId, relationType)) as Row | undefined;
     if (existing) {
       return {
         id: str(existing.id),
@@ -640,7 +888,7 @@ export class Store {
       };
     }
     const id = nextId("rel");
-    this.db
+    await this.db
       .prepare(
         "INSERT INTO asset_relations (id, source_asset_id, target_asset_id, relation_type, provenance_json, created_at) VALUES (?, ?, ?, ?, ?, ?)",
       )
@@ -648,10 +896,10 @@ export class Store {
     return { id, sourceAssetId, targetAssetId, relationType, provenance, createdAt: nowIso() };
   }
 
-  listRelations(
+  async listRelations(
     assetId: string,
-  ): Array<{ relation: AssetRelation; asset: Asset | null; direction: "in" | "out" }> {
-    const rows = this.db
+  ): Promise<Array<{ relation: AssetRelation; asset: Asset | null; direction: "in" | "out" }>> {
+    const rows = (await this.db
       .prepare(
         `SELECT r.*, a.title AS target_title, a.type AS target_type, a.workspace_id AS target_workspace
          FROM asset_relations r
@@ -659,29 +907,31 @@ export class Store {
          WHERE r.source_asset_id = ? OR r.target_asset_id = ?
          ORDER BY r.created_at DESC`,
       )
-      .all(assetId, assetId) as Row[];
-    return rows.map((r) => {
-      const outgoing = str(r.source_asset_id) === assetId;
-      const otherId = outgoing ? str(r.target_asset_id) : str(r.source_asset_id);
-      const other = this.getAssetAny(otherId);
-      return {
-        relation: {
-          id: str(r.id),
-          sourceAssetId: str(r.source_asset_id),
-          targetAssetId: str(r.target_asset_id),
-          relationType: str(r.relation_type) as AssetRelation["relationType"],
-          provenance: parse(r.provenance_json, {}),
-          createdAt: str(r.created_at),
-        },
-        direction: outgoing ? ("out" as const) : ("in" as const),
-        asset: other,
-      };
-    });
+      .all(assetId, assetId)) as Row[];
+    return await Promise.all(
+      rows.map(async (r) => {
+        const outgoing = str(r.source_asset_id) === assetId;
+        const otherId = outgoing ? str(r.target_asset_id) : str(r.source_asset_id);
+        const other = await this.getAssetAny(otherId);
+        return {
+          relation: {
+            id: str(r.id),
+            sourceAssetId: str(r.source_asset_id),
+            targetAssetId: str(r.target_asset_id),
+            relationType: str(r.relation_type) as AssetRelation["relationType"],
+            provenance: parse(r.provenance_json, {}),
+            createdAt: str(r.created_at),
+          },
+          direction: outgoing ? ("out" as const) : ("in" as const),
+          asset: other,
+        };
+      }),
+    );
   }
 
   /* ---------------- tasks ---------------- */
 
-  createTask(
+  async createTask(
     actor: ActorContext,
     input: {
       type: Task["type"];
@@ -689,10 +939,10 @@ export class Store {
       spec: Record<string, unknown>;
       inputAssetIds?: string[] | undefined;
     },
-  ): Task {
+  ): Promise<Task> {
     const now = nowIso();
     const id = nextId("tsk");
-    this.db
+    await this.db
       .prepare(
         `INSERT INTO tasks (id, workspace_id, owner_subject, type, goal, status, spec_json, input_asset_ids, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, 'created', ?, ?, ?, ?)`,
@@ -708,13 +958,13 @@ export class Store {
         now,
         now,
       );
-    return this.getTask(actor.workspaceId, id) as Task;
+    return (await this.getTask(actor.workspaceId, id)) as Task;
   }
 
-  listTasks(
+  async listTasks(
     workspaceId: string,
     opts: { status?: string; limit: number; after?: string },
-  ): Paginated<Task> {
+  ): Promise<Paginated<Task>> {
     const clauses = ["workspace_id = ?"];
     const params: unknown[] = [workspaceId];
     if (opts.status && opts.status !== "all") {
@@ -727,12 +977,12 @@ export class Store {
       params.push(afterAt, afterAt, afterId);
     }
     const where = clauses.join(" AND ");
-    const total = this.db
+    const total = (await this.db
       .prepare(`SELECT COUNT(*) n FROM tasks WHERE ${where}`)
-      .get(...(params as SQLInputValue[])) as { n: number };
-    const rows = this.db
+      .get(...(params as unknown[]))) as { n: number };
+    const rows = (await this.db
       .prepare(`SELECT * FROM tasks WHERE ${where} ORDER BY created_at DESC, id DESC LIMIT ?`)
-      .all(...(params as SQLInputValue[]), opts.limit + 1) as Row[];
+      .all(...(params as unknown[]), opts.limit + 1)) as Row[];
     const hasMore = rows.length > opts.limit;
     const items = rows.slice(0, opts.limit).map(mapTask);
     const last = items.at(-1);
@@ -743,19 +993,21 @@ export class Store {
     };
   }
 
-  getTask(workspaceId: string, taskId: string): Task | null {
-    const row = this.db
+  async getTask(workspaceId: string, taskId: string): Promise<Task | null> {
+    const row = (await this.db
       .prepare("SELECT * FROM tasks WHERE id = ? AND workspace_id = ?")
-      .get(taskId, workspaceId) as Row | undefined;
+      .get(taskId, workspaceId)) as Row | undefined;
     return row ? mapTask(row) : null;
   }
 
-  getTaskAny(taskId: string): Task | null {
-    const row = this.db.prepare("SELECT * FROM tasks WHERE id = ?").get(taskId) as Row | undefined;
+  async getTaskAny(taskId: string): Promise<Task | null> {
+    const row = (await this.db.prepare("SELECT * FROM tasks WHERE id = ?").get(taskId)) as
+      | Row
+      | undefined;
     return row ? mapTask(row) : null;
   }
 
-  updateTask(
+  async updateTask(
     workspaceId: string,
     taskId: string,
     patch: Partial<
@@ -771,8 +1023,8 @@ export class Store {
         | "cancelRequested"
       >
     >,
-  ): Task | null {
-    const current = this.getTask(workspaceId, taskId);
+  ): Promise<Task | null> {
+    const current = await this.getTask(workspaceId, taskId);
     if (!current) return null;
     const now = nowIso();
     const completedAt =
@@ -780,7 +1032,7 @@ export class Store {
       ["completed", "partial_completed", "failed", "cancelled"].includes(patch.status)
         ? (current.completedAt ?? now)
         : current.completedAt;
-    this.db
+    await this.db
       .prepare(
         `UPDATE tasks SET status = ?, progress = ?, current_step = ?, plan_json = ?, checkpoint_json = ?, error = ?, credits_used = ?, completed_at = ?, updated_at = ? WHERE id = ?`,
       )
@@ -801,49 +1053,53 @@ export class Store {
         taskId,
       );
     if (patch.cancelRequested !== undefined) {
-      this.db
+      await this.db
         .prepare("UPDATE tasks SET cancel_requested = ?, updated_at = ? WHERE id = ?")
         .run(patch.cancelRequested ? 1 : 0, nowIso(), taskId);
     }
-    return this.getTask(workspaceId, taskId);
+    return await this.getTask(workspaceId, taskId);
   }
 
-  markTaskStarted(workspaceId: string, taskId: string): Task | null {
+  async markTaskStarted(workspaceId: string, taskId: string): Promise<Task | null> {
     const now = nowIso();
-    this.db
+    await this.db
       .prepare(
         "UPDATE tasks SET status = 'running', started_at = ?, updated_at = ? WHERE id = ? AND workspace_id = ?",
       )
       .run(now, now, taskId, workspaceId);
-    return this.getTask(workspaceId, taskId);
+    return await this.getTask(workspaceId, taskId);
   }
 
-  requestCancel(workspaceId: string, taskId: string): Task | null {
+  async requestCancel(workspaceId: string, taskId: string): Promise<Task | null> {
     const now = nowIso();
-    this.db
+    await this.db
       .prepare(
         "UPDATE tasks SET cancel_requested = 1, updated_at = ? WHERE id = ? AND workspace_id = ?",
       )
       .run(now, taskId, workspaceId);
-    return this.getTask(workspaceId, taskId);
+    return await this.getTask(workspaceId, taskId);
   }
 
-  addOutput(workspaceId: string, taskId: string, assetId: string): void {
-    const task = this.getTask(workspaceId, taskId);
+  async addOutput(workspaceId: string, taskId: string, assetId: string): Promise<void> {
+    const task = await this.getTask(workspaceId, taskId);
     if (!task) return;
     const outputs = [...task.outputAssetIds];
     if (!outputs.includes(assetId)) outputs.push(assetId);
-    this.db
+    await this.db
       .prepare("UPDATE tasks SET output_asset_ids = ?, updated_at = ? WHERE id = ?")
       .run(json(outputs), nowIso(), taskId);
   }
 
-  upsertStep(step: Omit<TaskStep, "id" | "taskId"> & { id?: string; taskId: string }): TaskStep {
+  async upsertStep(
+    step: Omit<TaskStep, "id" | "taskId"> & { id?: string; taskId: string },
+  ): Promise<TaskStep> {
     const existing = step.id
-      ? (this.db.prepare("SELECT * FROM task_steps WHERE id = ?").get(step.id) as Row | undefined)
+      ? ((await this.db.prepare("SELECT * FROM task_steps WHERE id = ?").get(step.id)) as
+          | Row
+          | undefined)
       : undefined;
     if (existing) {
-      this.db
+      await this.db
         .prepare(
           `UPDATE task_steps SET status = ?, progress = ?, detail = ?, error = ?, attempt = ?, outputs_json = ?, started_at = ?, completed_at = ? WHERE id = ?`,
         )
@@ -858,13 +1114,13 @@ export class Store {
           step.completedAt ?? null,
           step.id ?? "",
         );
-      const row = this.db
+      const row = (await this.db
         .prepare("SELECT * FROM task_steps WHERE id = ?")
-        .get(step.id ?? "") as Row;
+        .get(step.id ?? "")) as Row;
       return mapStep(row);
     }
     const id = step.id ?? nextId("tst");
-    this.db
+    await this.db
       .prepare(
         `INSERT INTO task_steps (id, task_id, type, status, progress, detail, error, attempt, outputs_json, started_at, completed_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -885,20 +1141,20 @@ export class Store {
     return { ...step, id, taskId: step.taskId, outputs: step.outputs };
   }
 
-  listSteps(taskId: string): TaskStep[] {
-    const rows = this.db
+  async listSteps(taskId: string): Promise<TaskStep[]> {
+    const rows = (await this.db
       .prepare("SELECT * FROM task_steps WHERE task_id = ? ORDER BY started_at, id")
-      .all(taskId) as Row[];
+      .all(taskId)) as Row[];
     return rows.map(mapStep);
   }
 
-  createEvidence(
+  async createEvidence(
     _workspaceId: string,
     taskId: string,
     input: Omit<import("@shiguang/contracts").EvidenceItem, "id" | "taskId" | "retrievedAt">,
-  ): void {
+  ): Promise<void> {
     const now = nowIso();
-    this.db
+    await this.db
       .prepare(
         `INSERT INTO evidence_items (id, task_id, claim, source_title, source_url, source_asset_version_id, locator, excerpt_hash, excerpt, retrieved_at, confidence, verification_status)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -919,42 +1175,42 @@ export class Store {
       );
   }
 
-  listEvidence(taskId: string): Array<Record<string, unknown>> {
-    return this.db
+  async listEvidence(taskId: string): Promise<Array<Record<string, unknown>>> {
+    return (await this.db
       .prepare("SELECT * FROM evidence_items WHERE task_id = ? ORDER BY retrieved_at")
-      .all(taskId) as Array<Record<string, unknown>>;
+      .all(taskId)) as Array<Record<string, unknown>>;
   }
 
   /* ---------------- knowledge ---------------- */
 
-  createKnowledgeBase(
+  async createKnowledgeBase(
     actor: ActorContext,
     input: { name: string; description?: string },
-  ): KnowledgeBase {
+  ): Promise<KnowledgeBase> {
     const now = nowIso();
     const id = nextId("kb");
-    this.db
+    await this.db
       .prepare(
         "INSERT INTO knowledge_bases (id, workspace_id, name, description, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
       )
       .run(id, actor.workspaceId, input.name, input.description ?? "", now, now);
-    return this.getKnowledgeBase(actor.workspaceId, id) as KnowledgeBase;
+    return (await this.getKnowledgeBase(actor.workspaceId, id)) as KnowledgeBase;
   }
 
-  listKnowledgeBases(workspaceId: string): KnowledgeBase[] {
-    const rows = this.db
+  async listKnowledgeBases(workspaceId: string): Promise<KnowledgeBase[]> {
+    const rows = (await this.db
       .prepare(
         "SELECT * FROM knowledge_bases WHERE workspace_id = ? AND status = 'active' ORDER BY updated_at DESC",
       )
-      .all(workspaceId) as Row[];
+      .all(workspaceId)) as Row[];
     return rows.map((r) => this.mapKb(r));
   }
 
-  getKnowledgeBase(workspaceId: string, kbId: string): KnowledgeBase | null {
-    const row = this.db
+  async getKnowledgeBase(workspaceId: string, kbId: string): Promise<KnowledgeBase | null> {
+    const row = (await this.db
       .prepare("SELECT * FROM knowledge_bases WHERE id = ? AND workspace_id = ?")
-      .get(kbId, workspaceId) as Row | undefined;
-    return row ? this.mapKb(row) : null;
+      .get(kbId, workspaceId)) as Row | undefined;
+    return row ? await this.mapKb(row) : null;
   }
 
   private mapKb(r: Row): KnowledgeBase {
@@ -971,7 +1227,7 @@ export class Store {
     };
   }
 
-  addKnowledgeSource(
+  async addKnowledgeSource(
     workspaceId: string,
     kbId: string,
     input: {
@@ -981,10 +1237,10 @@ export class Store {
       title: string;
       contentHash?: string | null;
     },
-  ): KnowledgeSource {
+  ): Promise<KnowledgeSource> {
     const now = nowIso();
     const id = nextId("src");
-    this.db
+    await this.db
       .prepare(
         `INSERT INTO knowledge_sources (id, kb_id, workspace_id, source_type, asset_version_id, url, title, status, content_hash, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`,
@@ -1001,25 +1257,25 @@ export class Store {
         now,
         now,
       );
-    this.db
+    await this.db
       .prepare(
         "UPDATE knowledge_bases SET source_count = source_count + 1, updated_at = ? WHERE id = ?",
       )
       .run(now, kbId);
-    return this.getKnowledgeSource(kbId, id) as KnowledgeSource;
+    return (await this.getKnowledgeSource(kbId, id)) as KnowledgeSource;
   }
 
-  getKnowledgeSource(kbId: string, sourceId: string): KnowledgeSource | null {
-    const row = this.db
+  async getKnowledgeSource(kbId: string, sourceId: string): Promise<KnowledgeSource | null> {
+    const row = (await this.db
       .prepare("SELECT * FROM knowledge_sources WHERE id = ? AND kb_id = ?")
-      .get(sourceId, kbId) as Row | undefined;
-    return row ? this.mapSource(row) : null;
+      .get(sourceId, kbId)) as Row | undefined;
+    return row ? await this.mapSource(row) : null;
   }
 
-  listKnowledgeSources(kbId: string): KnowledgeSource[] {
-    const rows = this.db
+  async listKnowledgeSources(kbId: string): Promise<KnowledgeSource[]> {
+    const rows = (await this.db
       .prepare("SELECT * FROM knowledge_sources WHERE kb_id = ? ORDER BY created_at DESC")
-      .all(kbId) as Row[];
+      .all(kbId)) as Row[];
     return rows.map((r) => this.mapSource(r));
   }
 
@@ -1042,14 +1298,14 @@ export class Store {
     };
   }
 
-  updateKnowledgeSource(
+  async updateKnowledgeSource(
     kbId: string,
     sourceId: string,
     patch: Partial<Pick<KnowledgeSource, "status" | "error" | "contentHash" | "chunkCount">>,
-  ): KnowledgeSource | null {
-    const current = this.getKnowledgeSource(kbId, sourceId);
+  ): Promise<KnowledgeSource | null> {
+    const current = await this.getKnowledgeSource(kbId, sourceId);
     if (!current) return null;
-    this.db
+    await this.db
       .prepare(
         "UPDATE knowledge_sources SET status = ?, error = ?, content_hash = ?, chunk_count = ?, updated_at = ? WHERE id = ?",
       )
@@ -1061,150 +1317,125 @@ export class Store {
         nowIso(),
         sourceId,
       );
-    return this.getKnowledgeSource(kbId, sourceId);
+    return await this.getKnowledgeSource(kbId, sourceId);
   }
 
-  removeKnowledgeSource(kbId: string, sourceId: string): void {
-    this.db.prepare("DELETE FROM knowledge_chunks WHERE source_id = ?").run(sourceId);
-    this.db.prepare("DELETE FROM knowledge_sources WHERE id = ? AND kb_id = ?").run(sourceId, kbId);
-    this.refreshKbCounts(kbId);
+  async removeKnowledgeSource(kbId: string, sourceId: string): Promise<void> {
+    await this.db.prepare("DELETE FROM knowledge_chunks WHERE source_id = ?").run(sourceId);
+    await this.db
+      .prepare("DELETE FROM knowledge_sources WHERE id = ? AND kb_id = ?")
+      .run(sourceId, kbId);
+    await this.refreshKbCounts(kbId);
   }
 
-  retryKnowledgeSource(kbId: string, sourceId: string): KnowledgeSource | null {
-    const current = this.getKnowledgeSource(kbId, sourceId);
+  async retryKnowledgeSource(kbId: string, sourceId: string): Promise<KnowledgeSource | null> {
+    const current = await this.getKnowledgeSource(kbId, sourceId);
     if (!current) return null;
-    this.db
+    await this.db
       .prepare(
         "UPDATE knowledge_sources SET status = 'pending', error = NULL, retry_count = retry_count + 1, updated_at = ? WHERE id = ?",
       )
       .run(nowIso(), sourceId);
-    return this.getKnowledgeSource(kbId, sourceId);
+    return await this.getKnowledgeSource(kbId, sourceId);
   }
 
-  replaceChunks(
+  async replaceChunks(
     kbId: string,
     sourceId: string,
     chunks: Array<
       Pick<KnowledgeChunk, "ordinal" | "headingPath" | "text" | "charStart" | "charEnd">
     >,
-  ): void {
-    const tx = this.db;
-    tx.exec("BEGIN");
-    try {
-      tx.prepare("DELETE FROM knowledge_chunks WHERE source_id = ?").run(sourceId);
-      const insert = tx.prepare(
-        `INSERT INTO knowledge_chunks (id, kb_id, source_id, ordinal, heading_path, text, text_hash, char_start, char_end)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ): Promise<void> {
+    await this.db.prepare("DELETE FROM knowledge_chunks WHERE source_id = ?").run(sourceId);
+    const insert = this.db.prepare(
+      `INSERT INTO knowledge_chunks (id, kb_id, source_id, ordinal, heading_path, text, text_hash, char_start, char_end)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    for (const chunk of chunks) {
+      const id = nextId("chnk");
+      const hash = hashBuffer(Buffer.from(chunk.text, "utf8"));
+      await insert.run(
+        id,
+        kbId,
+        sourceId,
+        chunk.ordinal,
+        chunk.headingPath,
+        chunk.text,
+        hash,
+        chunk.charStart,
+        chunk.charEnd,
       );
-      const ftsInsert = tx.prepare(
-        "INSERT INTO knowledge_chunks_fts (rowid, text, heading_path) VALUES (?, ?, ?)",
-      );
-      for (const [i, chunk] of chunks.entries()) {
-        const id = nextId("chnk");
-        const hash = hashBuffer(Buffer.from(chunk.text, "utf8"));
-        const info = insert.run(
-          id,
-          kbId,
-          sourceId,
-          chunk.ordinal,
-          chunk.headingPath,
-          chunk.text,
-          hash,
-          chunk.charStart,
-          chunk.charEnd,
-        );
-        ftsInsert.run(info.lastInsertRowid, chunk.text, chunk.headingPath);
-        void i;
-      }
-      tx.prepare(
-        "UPDATE knowledge_sources SET chunk_count = ?, status = 'ready', error = NULL, updated_at = ? WHERE id = ?",
-      ).run(chunks.length, nowIso(), sourceId);
-      tx.exec("COMMIT");
-    } catch (err) {
-      tx.exec("ROLLBACK");
-      throw err;
     }
-    this.refreshKbCounts(kbId);
+    await this.db
+      .prepare(
+        "UPDATE knowledge_sources SET chunk_count = ?, status = 'ready', error = NULL, updated_at = ? WHERE id = ?",
+      )
+      .run(chunks.length, nowIso(), sourceId);
+    await this.refreshKbCounts(kbId);
   }
 
-  refreshKbCounts(kbId: string): void {
-    const counts = this.db
+  async refreshKbCounts(kbId: string): Promise<void> {
+    const counts = (await this.db
       .prepare(
         "SELECT COUNT(*) AS s, COALESCE(SUM(chunk_count), 0) AS c FROM knowledge_sources WHERE kb_id = ?",
       )
-      .get(kbId) as { s: number; c: number };
-    this.db
+      .get(kbId)) as { s: number; c: number };
+    await this.db
       .prepare(
         "UPDATE knowledge_bases SET source_count = ?, chunk_count = ?, updated_at = ? WHERE id = ?",
       )
       .run(counts.s, counts.c, nowIso(), kbId);
   }
 
-  searchChunks(
+  async searchChunks(
     kbId: string,
     query: string,
     limit = 10,
-  ): Array<{ chunk: KnowledgeChunk; score: number; source: KnowledgeSource }> {
-    const match = query
-      .split(/\s+/)
-      .filter(Boolean)
-      .map((t) => `"${t.replaceAll('"', "")}"`)
-      .join(" OR ");
-    let rows: Row[] = [];
-    if (match) {
-      rows = this.db
-        .prepare(
-          `SELECT k.*, bm25(knowledge_chunks_fts, 1.0, 1.0) AS score
-           FROM knowledge_chunks_fts f
-           JOIN knowledge_chunks k ON k.id = (SELECT id FROM knowledge_chunks WHERE rowid = f.rowid LIMIT 1)
-           WHERE knowledge_chunks_fts MATCH ? AND k.kb_id = ?
-           ORDER BY score LIMIT ?`,
-        )
-        .all(match, kbId, limit) as Row[];
-    }
-    if (rows.length === 0) {
-      rows = this.db
-        .prepare(
-          "SELECT *, 0 AS score FROM knowledge_chunks WHERE kb_id = ? AND (text LIKE ? OR heading_path LIKE ?) LIMIT ?",
-        )
-        .all(kbId, `%${query}%`, `%${query}%`, limit) as Row[];
-    }
-    return rows.map((r) => {
-      const source = this.getKnowledgeSource(kbId, str(r.source_id));
-      return {
-        chunk: {
-          id: str(r.id),
-          kbId,
-          sourceId: str(r.source_id),
-          ordinal: num(r.ordinal),
-          headingPath: str(r.heading_path),
-          text: str(r.text),
-          textHash: str(r.text_hash),
-          charStart: num(r.char_start),
-          charEnd: num(r.char_end),
-        },
-        score: num(r.score, 0),
-        source:
-          source ??
-          ({
-            id: str(r.source_id),
+  ): Promise<Array<{ chunk: KnowledgeChunk; score: number; source: KnowledgeSource }>> {
+    const like = `%${query}%`;
+    const rows = (await this.db
+      .prepare(
+        "SELECT *, 0 AS score FROM knowledge_chunks WHERE kb_id = ? AND (text ILIKE ? OR heading_path ILIKE ?) LIMIT ?",
+      )
+      .all(kbId, like, like, limit)) as Row[];
+    return await Promise.all(
+      rows.map(async (r) => {
+        const source = await this.getKnowledgeSource(kbId, str(r.source_id));
+        return {
+          chunk: {
+            id: str(r.id),
             kbId,
-            workspaceId: "",
-            sourceType: "upload",
-            title: "未知来源",
-            status: "ready",
-            chunkCount: 0,
-            createdAt: "",
-            updatedAt: "",
-          } as KnowledgeSource),
-      };
-    });
+            sourceId: str(r.source_id),
+            ordinal: num(r.ordinal),
+            headingPath: str(r.heading_path),
+            text: str(r.text),
+            textHash: str(r.text_hash),
+            charStart: num(r.char_start),
+            charEnd: num(r.char_end),
+          },
+          score: num(r.score, 0),
+          source:
+            source ??
+            ({
+              id: str(r.source_id),
+              kbId,
+              workspaceId: "",
+              sourceType: "upload",
+              title: "未知来源",
+              status: "ready",
+              chunkCount: 0,
+              createdAt: "",
+              updatedAt: "",
+            } as KnowledgeSource),
+        };
+      }),
+    );
   }
 
-  listChunksBySource(kbId: string, sourceId: string): KnowledgeChunk[] {
-    const rows = this.db
+  async listChunksBySource(kbId: string, sourceId: string): Promise<KnowledgeChunk[]> {
+    const rows = (await this.db
       .prepare("SELECT * FROM knowledge_chunks WHERE kb_id = ? AND source_id = ? ORDER BY ordinal")
-      .all(kbId, sourceId) as Row[];
+      .all(kbId, sourceId)) as Row[];
     return rows.map((r) => ({
       id: str(r.id),
       kbId: str(r.kb_id),
@@ -1220,47 +1451,50 @@ export class Store {
 
   /* ---------------- datasets ---------------- */
 
-  createDataset(actor: ActorContext, input: { name: string; description?: string }): Dataset {
+  async createDataset(
+    actor: ActorContext,
+    input: { name: string; description?: string },
+  ): Promise<Dataset> {
     const now = nowIso();
     const id = nextId("ds");
-    this.db
+    await this.db
       .prepare(
         "INSERT INTO datasets (id, workspace_id, name, description, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
       )
       .run(id, actor.workspaceId, input.name, input.description ?? "", now, now);
-    return this.getDataset(actor.workspaceId, id) as Dataset;
+    return (await this.getDataset(actor.workspaceId, id)) as Dataset;
   }
 
-  createDatasetRecord(workspaceId: string, name: string, description = ""): Dataset {
+  async createDatasetRecord(workspaceId: string, name: string, description = ""): Promise<Dataset> {
     const now = nowIso();
     const id = nextId("ds");
-    this.db
+    await this.db
       .prepare(
         "INSERT INTO datasets (id, workspace_id, name, description, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
       )
       .run(id, workspaceId, name, description, now, now);
-    return this.getDataset(workspaceId, id) as Dataset;
+    return (await this.getDataset(workspaceId, id)) as Dataset;
   }
 
-  listDatasets(workspaceId: string): Dataset[] {
-    const rows = this.db
+  async listDatasets(workspaceId: string): Promise<Dataset[]> {
+    const rows = (await this.db
       .prepare("SELECT * FROM datasets WHERE workspace_id = ? ORDER BY updated_at DESC")
-      .all(workspaceId) as Row[];
+      .all(workspaceId)) as Row[];
     return rows.map((r) => this.mapDataset(r));
   }
 
-  getDataset(workspaceId: string, datasetId: string): Dataset | null {
-    const row = this.db
+  async getDataset(workspaceId: string, datasetId: string): Promise<Dataset | null> {
+    const row = (await this.db
       .prepare("SELECT * FROM datasets WHERE id = ? AND workspace_id = ?")
-      .get(datasetId, workspaceId) as Row | undefined;
-    return row ? this.mapDataset(row) : null;
+      .get(datasetId, workspaceId)) as Row | undefined;
+    return row ? await this.mapDataset(row) : null;
   }
 
-  getDatasetAny(datasetId: string): Dataset | null {
-    const row = this.db.prepare("SELECT * FROM datasets WHERE id = ?").get(datasetId) as
+  async getDatasetAny(datasetId: string): Promise<Dataset | null> {
+    const row = (await this.db.prepare("SELECT * FROM datasets WHERE id = ?").get(datasetId)) as
       | Row
       | undefined;
-    return row ? this.mapDataset(row) : null;
+    return row ? await this.mapDataset(row) : null;
   }
 
   private mapDataset(r: Row): Dataset {
@@ -1277,7 +1511,7 @@ export class Store {
     };
   }
 
-  addDatasetVersion(
+  async addDatasetVersion(
     workspaceId: string,
     datasetId: string,
     input: {
@@ -1290,18 +1524,18 @@ export class Store {
       objectKey?: string | null;
       contentHash?: string | null;
     },
-  ): DatasetVersion {
+  ): Promise<DatasetVersion> {
     const now = nowIso();
-    const dataset = this.getDataset(workspaceId, datasetId);
+    const dataset = await this.getDataset(workspaceId, datasetId);
     if (!dataset) throw new Error("dataset not found");
-    const versionRow = this.db
+    const versionRow = (await this.db
       .prepare(
         "SELECT COALESCE(MAX(version), 0) + 1 AS n FROM dataset_versions WHERE dataset_id = ?",
       )
-      .get(datasetId) as { n: number };
+      .get(datasetId)) as { n: number };
     const version = versionRow.n;
     const id = nextId("dsv");
-    this.db
+    await this.db
       .prepare(
         `INSERT INTO dataset_versions (id, dataset_id, version, file_name, format, row_count, column_count, schema_json, profile_json, quality_json, status, object_key, content_hash, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'ready', ?, ?, ?)`,
@@ -1321,25 +1555,25 @@ export class Store {
         input.contentHash ?? null,
         now,
       );
-    this.db
+    await this.db
       .prepare(
         "UPDATE datasets SET current_version_id = ?, row_count = ?, status = 'normal', updated_at = ? WHERE id = ?",
       )
       .run(id, input.rowCount, now, datasetId);
-    return this.getDatasetVersion(datasetId, id) as DatasetVersion;
+    return (await this.getDatasetVersion(datasetId, id)) as DatasetVersion;
   }
 
-  getDatasetVersion(datasetId: string, versionId: string): DatasetVersion | null {
-    const row = this.db
+  async getDatasetVersion(datasetId: string, versionId: string): Promise<DatasetVersion | null> {
+    const row = (await this.db
       .prepare("SELECT * FROM dataset_versions WHERE id = ? AND dataset_id = ?")
-      .get(versionId, datasetId) as Row | undefined;
-    return row ? this.mapDatasetVersion(row) : null;
+      .get(versionId, datasetId)) as Row | undefined;
+    return row ? await this.mapDatasetVersion(row) : null;
   }
 
-  listDatasetVersions(datasetId: string): DatasetVersion[] {
-    const rows = this.db
+  async listDatasetVersions(datasetId: string): Promise<DatasetVersion[]> {
+    const rows = (await this.db
       .prepare("SELECT * FROM dataset_versions WHERE dataset_id = ? ORDER BY version DESC")
-      .all(datasetId) as Row[];
+      .all(datasetId)) as Row[];
     return rows.map((r) => this.mapDatasetVersion(r));
   }
 
@@ -1363,14 +1597,14 @@ export class Store {
     };
   }
 
-  createSavedView(
+  async createSavedView(
     actor: ActorContext,
     datasetId: string,
     input: { name: string; query: DatasetQuery },
-  ): SavedView {
+  ): Promise<SavedView> {
     const now = nowIso();
     const id = nextId("sv");
-    this.db
+    await this.db
       .prepare(
         "INSERT INTO dataset_saved_views (id, dataset_id, workspace_id, name, query_json, created_at) VALUES (?, ?, ?, ?, ?, ?)",
       )
@@ -1385,10 +1619,10 @@ export class Store {
     };
   }
 
-  listSavedViews(datasetId: string): SavedView[] {
-    const rows = this.db
+  async listSavedViews(datasetId: string): Promise<SavedView[]> {
+    const rows = (await this.db
       .prepare("SELECT * FROM dataset_saved_views WHERE dataset_id = ? ORDER BY created_at DESC")
-      .all(datasetId) as Row[];
+      .all(datasetId)) as Row[];
     return rows.map((r) => ({
       id: str(r.id),
       datasetId: str(r.dataset_id),
@@ -1399,14 +1633,14 @@ export class Store {
     }));
   }
 
-  createChartSpec(
+  async createChartSpec(
     actor: ActorContext,
     datasetId: string,
     input: Omit<ChartSpec, "id" | "datasetId" | "workspaceId" | "createdAt">,
-  ): ChartSpec {
+  ): Promise<ChartSpec> {
     const id = nextId("chrt");
     const now = nowIso();
-    this.db
+    await this.db
       .prepare(
         "INSERT INTO chart_specs (id, dataset_id, workspace_id, name, chart_type, x, y, group_by, aggregation, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
       )
@@ -1425,10 +1659,10 @@ export class Store {
     return { id, datasetId, workspaceId: actor.workspaceId, createdAt: now, ...input };
   }
 
-  listChartSpecs(datasetId: string): ChartSpec[] {
-    const rows = this.db
+  async listChartSpecs(datasetId: string): Promise<ChartSpec[]> {
+    const rows = (await this.db
       .prepare("SELECT * FROM chart_specs WHERE dataset_id = ? ORDER BY created_at DESC")
-      .all(datasetId) as Row[];
+      .all(datasetId)) as Row[];
     return rows.map((r) => ({
       id: str(r.id),
       datasetId: str(r.dataset_id),
@@ -1445,26 +1679,29 @@ export class Store {
 
   /* ---------------- templates ---------------- */
 
-  listTemplates(workspaceId: string, type?: "research" | "presentation"): Template[] {
+  async listTemplates(
+    workspaceId: string,
+    type?: "research" | "presentation",
+  ): Promise<Template[]> {
     const rows = type
-      ? (this.db
+      ? ((await this.db
           .prepare(
             "SELECT * FROM templates WHERE workspace_id = ? AND type = ? ORDER BY usage_count DESC, updated_at DESC",
           )
-          .all(workspaceId, type) as Row[])
-      : (this.db
+          .all(workspaceId, type)) as Row[])
+      : ((await this.db
           .prepare(
             "SELECT * FROM templates WHERE workspace_id = ? ORDER BY usage_count DESC, updated_at DESC",
           )
-          .all(workspaceId) as Row[]);
+          .all(workspaceId)) as Row[]);
     return rows.map((r) => this.mapTemplate(r));
   }
 
-  getTemplate(workspaceId: string, templateId: string): Template | null {
-    const row = this.db
+  async getTemplate(workspaceId: string, templateId: string): Promise<Template | null> {
+    const row = (await this.db
       .prepare("SELECT * FROM templates WHERE id = ? AND workspace_id = ?")
-      .get(templateId, workspaceId) as Row | undefined;
-    return row ? this.mapTemplate(row) : null;
+      .get(templateId, workspaceId)) as Row | undefined;
+    return row ? await this.mapTemplate(row) : null;
   }
 
   private mapTemplate(r: Row): Template {
@@ -1483,7 +1720,7 @@ export class Store {
     };
   }
 
-  createTemplate(
+  async createTemplate(
     actor: ActorContext,
     input: {
       type: Template["type"];
@@ -1491,10 +1728,10 @@ export class Store {
       description?: string;
       content: Record<string, unknown>;
     },
-  ): Template {
+  ): Promise<Template> {
     const now = nowIso();
     const id = nextId("tpl");
-    this.db
+    await this.db
       .prepare(
         "INSERT INTO templates (id, workspace_id, type, name, description, content_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
       )
@@ -1508,11 +1745,11 @@ export class Store {
         now,
         now,
       );
-    return this.getTemplate(actor.workspaceId, id) as Template;
+    return (await this.getTemplate(actor.workspaceId, id)) as Template;
   }
 
-  bumpTemplateUsage(workspaceId: string, templateId: string): void {
-    this.db
+  async bumpTemplateUsage(workspaceId: string, templateId: string): Promise<void> {
+    await this.db
       .prepare(
         "UPDATE templates SET usage_count = usage_count + 1, updated_at = ? WHERE id = ? AND workspace_id = ?",
       )
@@ -1521,7 +1758,7 @@ export class Store {
 
   /* ---------------- publishing ---------------- */
 
-  createPublish(
+  async createPublish(
     actor: ActorContext,
     input: {
       assetId: string;
@@ -1531,14 +1768,14 @@ export class Store {
       allowDownload?: boolean;
       allowCopy?: boolean;
     },
-  ): Publish {
+  ): Promise<Publish> {
     const now = nowIso();
     const id = nextId("pub");
-    const slug = this.uniqueSlug();
-    const shortSlug = this.uniqueSlug(6);
+    const slug = await this.uniqueSlug();
+    const shortSlug = await this.uniqueSlug(6);
     const salt = randomSalt();
     const passwordHash = input.password ? hashPassword(input.password, salt) : null;
-    this.db
+    await this.db
       .prepare(
         `INSERT INTO publishes (id, workspace_id, asset_id, slug, short_slug, visibility, password_hash, password_salt, expires_at, allow_download, allow_copy, status, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?)`,
@@ -1553,15 +1790,15 @@ export class Store {
         passwordHash,
         input.password ? salt : null,
         input.expiresAt ?? null,
-        (input.allowDownload ?? true) ? 1 : 0,
-        (input.allowCopy ?? true) ? 1 : 0,
+        input.allowDownload ?? true,
+        input.allowCopy ?? true,
         now,
         now,
       );
-    return this.getPublish(actor.workspaceId, id) as Publish;
+    return (await this.getPublish(actor.workspaceId, id)) as Publish;
   }
 
-  private uniqueSlug(length = 10): string {
+  private async uniqueSlug(length = 10): Promise<string> {
     const alphabet = "abcdefghijkmnpqrstuvwxyz23456789";
     let slug = "";
     do {
@@ -1570,36 +1807,38 @@ export class Store {
         () => alphabet[Math.floor(Math.random() * alphabet.length)],
       ).join("");
     } while (
-      this.db.prepare("SELECT id FROM publishes WHERE slug = ? OR short_slug = ?").get(slug, slug)
+      await this.db
+        .prepare("SELECT id FROM publishes WHERE slug = ? OR short_slug = ?")
+        .get(slug, slug)
     );
     return slug;
   }
 
-  getPublish(workspaceId: string, publishId: string): Publish | null {
-    const row = this.db
+  async getPublish(workspaceId: string, publishId: string): Promise<Publish | null> {
+    const row = (await this.db
       .prepare("SELECT * FROM publishes WHERE id = ? AND workspace_id = ?")
-      .get(publishId, workspaceId) as Row | undefined;
-    return row ? this.mapPublish(row) : null;
+      .get(publishId, workspaceId)) as Row | undefined;
+    return row ? await this.mapPublish(row) : null;
   }
 
-  getPublishBySlug(slug: string): Publish | null {
-    const row = this.db.prepare("SELECT * FROM publishes WHERE slug = ?").get(slug) as
+  async getPublishBySlug(slug: string): Promise<Publish | null> {
+    const row = (await this.db.prepare("SELECT * FROM publishes WHERE slug = ?").get(slug)) as
       | Row
       | undefined;
-    return row ? this.mapPublish(row) : null;
+    return row ? await this.mapPublish(row) : null;
   }
 
-  getPublishByShortSlug(shortSlug: string): Publish | null {
-    const row = this.db.prepare("SELECT * FROM publishes WHERE short_slug = ?").get(shortSlug) as
-      | Row
-      | undefined;
-    return row ? this.mapPublish(row) : null;
+  async getPublishByShortSlug(shortSlug: string): Promise<Publish | null> {
+    const row = (await this.db
+      .prepare("SELECT * FROM publishes WHERE short_slug = ?")
+      .get(shortSlug)) as Row | undefined;
+    return row ? await this.mapPublish(row) : null;
   }
 
-  listPublishes(workspaceId: string): Publish[] {
-    const rows = this.db
+  async listPublishes(workspaceId: string): Promise<Publish[]> {
+    const rows = (await this.db
       .prepare("SELECT * FROM publishes WHERE workspace_id = ? ORDER BY updated_at DESC")
-      .all(workspaceId) as Row[];
+      .all(workspaceId)) as Row[];
     return rows.map((r) => this.mapPublish(r));
   }
 
@@ -1624,7 +1863,7 @@ export class Store {
     };
   }
 
-  updatePublish(
+  async updatePublish(
     workspaceId: string,
     publishId: string,
     patch: Partial<
@@ -1639,10 +1878,10 @@ export class Store {
         | "status"
       >
     >,
-  ): Publish | null {
-    const current = this.getPublish(workspaceId, publishId);
+  ): Promise<Publish | null> {
+    const current = await this.getPublish(workspaceId, publishId);
     if (!current) return null;
-    this.db
+    await this.db
       .prepare(
         `UPDATE publishes SET visibility = ?, password_hash = ?, password_salt = ?, expires_at = ?, allow_download = ?, allow_copy = ?, status = ?, updated_at = ? WHERE id = ?`,
       )
@@ -1657,22 +1896,22 @@ export class Store {
         nowIso(),
         publishId,
       );
-    return this.getPublish(workspaceId, publishId);
+    return await this.getPublish(workspaceId, publishId);
   }
 
-  verifyPassword(publish: Publish, password: string): boolean {
+  async verifyPassword(publish: Publish, password: string): Promise<boolean> {
     if (!publish.passwordHash || !publish.passwordSalt) return false;
     return hashPassword(password, publish.passwordSalt) === publish.passwordHash;
   }
 
-  createRelease(
+  async createRelease(
     publishId: string,
     input: { assetVersionId: string; manifest: Record<string, unknown> },
-  ): PublishRelease {
+  ): Promise<PublishRelease> {
     const now = nowIso();
     const id = nextId("rel");
     const etag = `"${hashBuffer(Buffer.from(json(input.manifest) + input.assetVersionId)).slice(0, 32)}"`;
-    this.db
+    await this.db
       .prepare(
         "INSERT INTO publish_releases (id, publish_id, asset_version_id, etag, manifest_json, status, created_at) VALUES (?, ?, ?, ?, ?, 'ready', ?)",
       )
@@ -1688,18 +1927,18 @@ export class Store {
     };
   }
 
-  setActiveRelease(workspaceId: string, publishId: string, releaseId: string): void {
-    this.db
+  async setActiveRelease(workspaceId: string, publishId: string, releaseId: string): Promise<void> {
+    await this.db
       .prepare(
         "UPDATE publishes SET active_release_id = ?, updated_at = ? WHERE id = ? AND workspace_id = ?",
       )
       .run(releaseId, nowIso(), publishId, workspaceId);
   }
 
-  getRelease(releaseId: string): PublishRelease | null {
-    const row = this.db.prepare("SELECT * FROM publish_releases WHERE id = ?").get(releaseId) as
-      | Row
-      | undefined;
+  async getRelease(releaseId: string): Promise<PublishRelease | null> {
+    const row = (await this.db
+      .prepare("SELECT * FROM publish_releases WHERE id = ?")
+      .get(releaseId)) as Row | undefined;
     if (!row) return null;
     return {
       id: str(row.id),
@@ -1712,10 +1951,14 @@ export class Store {
     };
   }
 
-  createShortLink(publish: Publish, shortSlug: string, destination: string): ShortLink {
+  async createShortLink(
+    publish: Publish,
+    shortSlug: string,
+    destination: string,
+  ): Promise<ShortLink> {
     const now = nowIso();
     const id = nextId("lnk");
-    this.db
+    await this.db
       .prepare(
         "INSERT INTO short_links (id, publish_id, short_slug, destination, created_at) VALUES (?, ?, ?, ?, ?)",
       )
@@ -1723,10 +1966,10 @@ export class Store {
     return { id, publishId: publish.id, shortSlug, destination, revokedAt: null, createdAt: now };
   }
 
-  getShortLink(shortSlug: string): ShortLink | null {
-    const row = this.db
+  async getShortLink(shortSlug: string): Promise<ShortLink | null> {
+    const row = (await this.db
       .prepare("SELECT * FROM short_links WHERE short_slug = ? AND revoked_at IS NULL")
-      .get(shortSlug) as Row | undefined;
+      .get(shortSlug)) as Row | undefined;
     if (!row) return null;
     return {
       id: str(row.id),
@@ -1738,16 +1981,16 @@ export class Store {
     };
   }
 
-  revokePublish(workspaceId: string, publishId: string): void {
+  async revokePublish(workspaceId: string, publishId: string): Promise<void> {
     const now = nowIso();
-    this.db
+    await this.db
       .prepare(
         "UPDATE publishes SET status = 'revoked', updated_at = ? WHERE id = ? AND workspace_id = ?",
       )
       .run(now, publishId, workspaceId);
   }
 
-  recordAccessEvent(input: {
+  async recordAccessEvent(input: {
     publishId: string;
     releaseId?: string | null;
     tsBucket: string;
@@ -1755,8 +1998,8 @@ export class Store {
     deviceClass?: string | null;
     hashedVisitor?: string | null;
     statusCode?: number;
-  }): void {
-    this.db
+  }): Promise<void> {
+    await this.db
       .prepare(
         "INSERT INTO publish_access_events (id, publish_id, release_id, ts_bucket, referrer_domain, device_class, hashed_visitor, status_code) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
       )
@@ -1770,41 +2013,43 @@ export class Store {
         input.hashedVisitor ?? null,
         input.statusCode ?? 200,
       );
-    this.db
+    await this.db
       .prepare("UPDATE publishes SET view_count = view_count + 1, updated_at = ? WHERE id = ?")
       .run(nowIso(), input.publishId);
   }
 
-  getPublishStats(publishId: string): {
+  async getPublishStats(publishId: string): Promise<{
     views: number;
     daily: Array<{ day: string; views: number }>;
-  } {
+  }> {
     const views = num(
-      this.db.prepare("SELECT view_count AS v FROM publishes WHERE id = ?").get(publishId) as {
+      (await this.db
+        .prepare("SELECT view_count AS v FROM publishes WHERE id = ?")
+        .get(publishId)) as {
         v: number;
       },
     );
-    const rows = this.db
+    const rows = (await this.db
       .prepare(
         "SELECT ts_bucket AS day, COUNT(*) AS views FROM publish_access_events WHERE publish_id = ? GROUP BY ts_bucket ORDER BY day DESC LIMIT 30",
       )
-      .all(publishId) as Array<{ day: string; views: number }>;
+      .all(publishId)) as Array<{ day: string; views: number }>;
     return { views, daily: rows };
   }
 
   /* ---------------- notifications ---------------- */
 
-  createNotification(input: {
+  async createNotification(input: {
     workspaceId: string;
     subject: string;
     type: Notification["type"];
     title: string;
     body?: string;
     link?: string | null;
-  }): Notification {
+  }): Promise<Notification> {
     const now = nowIso();
     const id = nextId("ntf");
-    this.db
+    await this.db
       .prepare(
         "INSERT INTO notifications (id, workspace_id, subject, type, title, body, link, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
       )
@@ -1831,12 +2076,16 @@ export class Store {
     };
   }
 
-  listNotifications(workspaceId: string, subject: string, limit = 50): Notification[] {
-    const rows = this.db
+  async listNotifications(
+    workspaceId: string,
+    subject: string,
+    limit = 50,
+  ): Promise<Notification[]> {
+    const rows = (await this.db
       .prepare(
         "SELECT * FROM notifications WHERE workspace_id = ? AND subject = ? ORDER BY created_at DESC LIMIT ?",
       )
-      .all(workspaceId, subject, limit) as Row[];
+      .all(workspaceId, subject, limit)) as Row[];
     return rows.map((r) => ({
       id: str(r.id),
       workspaceId: str(r.workspace_id),
@@ -1850,25 +2099,29 @@ export class Store {
     }));
   }
 
-  unreadNotificationCount(workspaceId: string, subject: string): number {
-    const row = this.db
+  async unreadNotificationCount(workspaceId: string, subject: string): Promise<number> {
+    const row = (await this.db
       .prepare(
         "SELECT COUNT(*) AS n FROM notifications WHERE workspace_id = ? AND subject = ? AND read_at IS NULL",
       )
-      .get(workspaceId, subject) as { n: number };
+      .get(workspaceId, subject)) as { n: number };
     return row.n;
   }
 
-  markNotificationRead(workspaceId: string, subject: string, notificationId: string): void {
-    this.db
+  async markNotificationRead(
+    workspaceId: string,
+    subject: string,
+    notificationId: string,
+  ): Promise<void> {
+    await this.db
       .prepare(
         "UPDATE notifications SET read_at = ? WHERE id = ? AND workspace_id = ? AND subject = ?",
       )
       .run(nowIso(), notificationId, workspaceId, subject);
   }
 
-  markAllNotificationsRead(workspaceId: string, subject: string): void {
-    this.db
+  async markAllNotificationsRead(workspaceId: string, subject: string): Promise<void> {
+    await this.db
       .prepare(
         "UPDATE notifications SET read_at = ? WHERE workspace_id = ? AND subject = ? AND read_at IS NULL",
       )
@@ -1877,10 +2130,10 @@ export class Store {
 
   /* ---------------- billing ---------------- */
 
-  getCreditAccount(workspaceId: string): CreditAccount | null {
-    const row = this.db
+  async getCreditAccount(workspaceId: string): Promise<CreditAccount | null> {
+    const row = (await this.db
       .prepare("SELECT * FROM credit_accounts WHERE workspace_id = ?")
-      .get(workspaceId) as Row | undefined;
+      .get(workspaceId)) as Row | undefined;
     if (!row) return null;
     return {
       id: str(row.id),
@@ -1892,12 +2145,12 @@ export class Store {
     };
   }
 
-  ledger(workspaceId: string, limit = 100): CreditLedgerEntry[] {
-    const rows = this.db
+  async ledger(workspaceId: string, limit = 100): Promise<CreditLedgerEntry[]> {
+    const rows = (await this.db
       .prepare(
         "SELECT * FROM credit_ledger_entries WHERE workspace_id = ? ORDER BY created_at DESC LIMIT ?",
       )
-      .all(workspaceId, limit) as Row[];
+      .all(workspaceId, limit)) as Row[];
     return rows.map((r) => ({
       id: str(r.id),
       workspaceId: str(r.workspace_id),
@@ -1910,38 +2163,38 @@ export class Store {
     }));
   }
 
-  reserveCredits(
+  async reserveCredits(
     workspaceId: string,
     taskId: string,
     amount: number,
     operationId: string,
-  ): { ok: boolean; balance: number; reserved: number } {
-    const account = this.getCreditAccount(workspaceId);
+  ): Promise<{ ok: boolean; balance: number; reserved: number }> {
+    const account = await this.getCreditAccount(workspaceId);
     if (!account) return { ok: false, balance: 0, reserved: 0 };
-    const dup = this.db
+    const dup = await this.db
       .prepare("SELECT id FROM credit_ledger_entries WHERE operation_id = ?")
       .get(operationId);
     if (dup) {
-      const res = this.db
+      const res = (await this.db
         .prepare("SELECT amount FROM credit_reservations WHERE task_id = ?")
-        .get(taskId) as { amount: number } | undefined;
+        .get(taskId)) as { amount: number } | undefined;
       return { ok: true, balance: account.balance, reserved: res?.amount ?? amount };
     }
     if (account.balance < amount) return { ok: false, balance: account.balance, reserved: 0 };
     const now = nowIso();
-    this.db.exec("BEGIN");
+    await this.db.exec("BEGIN");
     try {
-      this.db
+      await this.db
         .prepare(
           "UPDATE credit_accounts SET balance = balance - ?, total_used = total_used + ?, updated_at = ? WHERE workspace_id = ?",
         )
         .run(amount, amount, now, workspaceId);
-      this.db
+      await this.db
         .prepare(
           "INSERT INTO credit_ledger_entries (id, workspace_id, entry_type, amount, operation_id, task_id, description, created_at) VALUES (?, ?, 'reserve', ?, ?, ?, ?, ?)",
         )
         .run(nextId("led"), workspaceId, amount, operationId, taskId, "任务 Credits 预留", now);
-      this.db
+      await this.db
         .prepare(
           "INSERT INTO credit_reservations (id, workspace_id, task_id, amount, status, expires_at, created_at) VALUES (?, ?, ?, ?, 'active', ?, ?) ON CONFLICT(task_id) DO UPDATE SET amount = excluded.amount",
         )
@@ -1953,39 +2206,44 @@ export class Store {
           new Date(Date.now() + 24 * 3600 * 1000).toISOString(),
           now,
         );
-      this.db.exec("COMMIT");
+      await this.db.exec("COMMIT");
     } catch (err) {
-      this.db.exec("ROLLBACK");
+      await this.db.exec("ROLLBACK");
       throw err;
     }
     return {
       ok: true,
-      balance: (this.getCreditAccount(workspaceId) as CreditAccount).balance,
+      balance: ((await this.getCreditAccount(workspaceId)) as CreditAccount).balance,
       reserved: amount,
     };
   }
 
-  settleCredits(workspaceId: string, taskId: string, actual: number, operationId: string): void {
-    const dup = this.db
+  async settleCredits(
+    workspaceId: string,
+    taskId: string,
+    actual: number,
+    operationId: string,
+  ): Promise<void> {
+    const dup = await this.db
       .prepare("SELECT id FROM credit_ledger_entries WHERE operation_id = ?")
       .get(operationId);
     if (dup) return;
-    const reservation = this.db
+    const reservation = (await this.db
       .prepare("SELECT * FROM credit_reservations WHERE task_id = ?")
-      .get(taskId) as Row | undefined;
+      .get(taskId)) as Row | undefined;
     const reserved = reservation ? num(reservation.amount) : actual;
     const refund = Math.max(0, reserved - actual);
     const extra = Math.max(0, actual - reserved);
     const now = nowIso();
-    this.db.exec("BEGIN");
+    await this.db.exec("BEGIN");
     try {
-      this.db
+      await this.db
         .prepare(
           "INSERT INTO credit_ledger_entries (id, workspace_id, entry_type, amount, operation_id, task_id, description, created_at) VALUES (?, ?, 'settle', ?, ?, ?, ?, ?)",
         )
         .run(nextId("led"), workspaceId, actual, operationId, taskId, "任务 Credits 结算", now);
       if (refund > 0) {
-        this.db
+        await this.db
           .prepare(
             "INSERT INTO credit_ledger_entries (id, workspace_id, entry_type, amount, operation_id, task_id, description, created_at) VALUES (?, ?, 'release', ?, ?, ?, ?, ?)",
           )
@@ -1998,45 +2256,45 @@ export class Store {
             "预留返还",
             now,
           );
-        this.db
+        await this.db
           .prepare(
             "UPDATE credit_accounts SET balance = balance + ?, total_used = total_used - ?, updated_at = ? WHERE workspace_id = ?",
           )
           .run(refund, refund, now, workspaceId);
       }
       if (extra > 0) {
-        this.db
+        await this.db
           .prepare(
             "UPDATE credit_accounts SET balance = balance - ?, total_used = total_used + ?, updated_at = ? WHERE workspace_id = ?",
           )
           .run(extra, extra, now, workspaceId);
       }
-      this.db
+      await this.db
         .prepare("UPDATE credit_reservations SET status = 'settled' WHERE task_id = ?")
         .run(taskId);
-      this.db.exec("COMMIT");
+      await this.db.exec("COMMIT");
     } catch (err) {
-      this.db.exec("ROLLBACK");
+      await this.db.exec("ROLLBACK");
       throw err;
     }
   }
 
-  usageRecords(workspaceId: string, limit = 100): Array<Record<string, unknown>> {
-    return this.db
+  async usageRecords(workspaceId: string, limit = 100): Promise<Array<Record<string, unknown>>> {
+    return (await this.db
       .prepare(
         "SELECT * FROM usage_records WHERE workspace_id = ? ORDER BY created_at DESC LIMIT ?",
       )
-      .all(workspaceId, limit) as Array<Record<string, unknown>>;
+      .all(workspaceId, limit)) as Array<Record<string, unknown>>;
   }
 
-  recordUsage(input: {
+  async recordUsage(input: {
     workspaceId: string;
     taskId?: string;
     kind: string;
     amount: number;
     metadata?: Record<string, unknown>;
-  }): void {
-    this.db
+  }): Promise<void> {
+    await this.db
       .prepare(
         "INSERT INTO usage_records (id, workspace_id, task_id, kind, amount, metadata_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
       )
@@ -2053,14 +2311,14 @@ export class Store {
 
   /* ---------------- tokens & mcp ---------------- */
 
-  createApiToken(
+  async createApiToken(
     workspaceId: string,
     input: { name: string; scopes: Array<"read" | "write">; expiresAt?: string | null },
     secretHash: string,
-  ): ApiToken {
+  ): Promise<ApiToken> {
     const now = nowIso();
     const id = nextId("tok");
-    this.db
+    await this.db
       .prepare(
         "INSERT INTO api_tokens (id, workspace_id, name, secret_hash, scopes, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
       )
@@ -2086,10 +2344,10 @@ export class Store {
     };
   }
 
-  listApiTokens(workspaceId: string): ApiToken[] {
-    const rows = this.db
+  async listApiTokens(workspaceId: string): Promise<ApiToken[]> {
+    const rows = (await this.db
       .prepare("SELECT * FROM api_tokens WHERE workspace_id = ? ORDER BY created_at DESC")
-      .all(workspaceId) as Row[];
+      .all(workspaceId)) as Row[];
     return rows.map((r) => ({
       id: str(r.id),
       workspaceId: str(r.workspace_id),
@@ -2103,10 +2361,10 @@ export class Store {
     }));
   }
 
-  getApiToken(workspaceId: string, tokenId: string): ApiToken | null {
-    const row = this.db
+  async getApiToken(workspaceId: string, tokenId: string): Promise<ApiToken | null> {
+    const row = (await this.db
       .prepare("SELECT * FROM api_tokens WHERE id = ? AND workspace_id = ?")
-      .get(tokenId, workspaceId) as Row | undefined;
+      .get(tokenId, workspaceId)) as Row | undefined;
     if (!row) return null;
     return {
       id: str(row.id),
@@ -2121,28 +2379,30 @@ export class Store {
     };
   }
 
-  findApiTokenByHash(secretHash: string): ApiToken | null {
-    const row = this.db
+  async findApiTokenByHash(secretHash: string): Promise<ApiToken | null> {
+    const row = (await this.db
       .prepare("SELECT * FROM api_tokens WHERE secret_hash = ? AND revoked_at IS NULL")
-      .get(secretHash) as Row | undefined;
+      .get(secretHash)) as Row | undefined;
     if (!row) return null;
-    return this.getApiToken(str(row.workspace_id), str(row.id));
+    return await this.getApiToken(str(row.workspace_id), str(row.id));
   }
 
-  revokeApiToken(workspaceId: string, tokenId: string): void {
-    this.db
+  async revokeApiToken(workspaceId: string, tokenId: string): Promise<void> {
+    await this.db
       .prepare("UPDATE api_tokens SET revoked_at = ? WHERE id = ? AND workspace_id = ?")
       .run(nowIso(), tokenId, workspaceId);
   }
 
-  touchApiToken(tokenId: string): void {
-    this.db.prepare("UPDATE api_tokens SET last_used_at = ? WHERE id = ?").run(nowIso(), tokenId);
+  async touchApiToken(tokenId: string): Promise<void> {
+    await this.db
+      .prepare("UPDATE api_tokens SET last_used_at = ? WHERE id = ?")
+      .run(nowIso(), tokenId);
   }
 
-  getMcpConfig(workspaceId: string): McpConfig | null {
-    const row = this.db
+  async getMcpConfig(workspaceId: string): Promise<McpConfig | null> {
+    const row = (await this.db
       .prepare("SELECT * FROM mcp_configs WHERE workspace_id = ?")
-      .get(workspaceId) as Row | undefined;
+      .get(workspaceId)) as Row | undefined;
     if (!row) return null;
     return {
       id: str(row.id),
@@ -2156,13 +2416,13 @@ export class Store {
     };
   }
 
-  updateMcpConfig(
+  async updateMcpConfig(
     workspaceId: string,
     patch: Partial<
       Pick<McpConfig, "enabled" | "scope" | "scopeIds" | "writeEnabled" | "serverUrl">
     >,
-  ): McpConfig {
-    const current = this.getMcpConfig(workspaceId) ?? {
+  ): Promise<McpConfig> {
+    const current = (await this.getMcpConfig(workspaceId)) ?? {
       id: nextId("mcp"),
       workspaceId,
       enabled: false,
@@ -2172,7 +2432,7 @@ export class Store {
       serverUrl: "http://localhost:3001/mcp",
       updatedAt: nowIso(),
     };
-    this.db
+    await this.db
       .prepare(
         `INSERT INTO mcp_configs (id, workspace_id, enabled, scope, scope_ids, write_enabled, server_url, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -2188,30 +2448,30 @@ export class Store {
         patch.serverUrl ?? current.serverUrl,
         nowIso(),
       );
-    return this.getMcpConfig(workspaceId) as McpConfig;
+    return (await this.getMcpConfig(workspaceId)) as McpConfig;
   }
 
   /* ---------------- audit ---------------- */
 
-  audit(
+  async audit(
     workspaceId: string,
     actor: string,
     action: string,
     resource: string,
     outcome: "success" | "denied" | "failed",
     metadata: Record<string, unknown> = {},
-  ): void {
-    this.db
+  ): Promise<void> {
+    await this.db
       .prepare(
         "INSERT INTO audit_events (id, workspace_id, actor, action, resource, outcome, metadata_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
       )
       .run(nextId("aud"), workspaceId, actor, action, resource, outcome, json(metadata), nowIso());
   }
 
-  listAudit(workspaceId: string, limit = 50): AuditEvent[] {
-    const rows = this.db
+  async listAudit(workspaceId: string, limit = 50): Promise<AuditEvent[]> {
+    const rows = (await this.db
       .prepare("SELECT * FROM audit_events WHERE workspace_id = ? ORDER BY created_at DESC LIMIT ?")
-      .all(workspaceId, limit) as Row[];
+      .all(workspaceId, limit)) as Row[];
     return rows.map((r) => ({
       id: str(r.id),
       workspaceId: str(r.workspace_id),
@@ -2226,12 +2486,12 @@ export class Store {
 
   /* ---------------- outbox / inbox / idempotency ---------------- */
 
-  appendOutbox(
+  async appendOutbox(
     input: Omit<OutboxEvent, "id" | "status" | "createdAt" | "dispatchedAt">,
-  ): OutboxEvent {
+  ): Promise<OutboxEvent> {
     const now = nowIso();
     const id = nextId("evt");
-    this.db
+    await this.db
       .prepare(
         `INSERT INTO outbox_events (id, event_type, aggregate_type, aggregate_id, aggregate_version, workspace_id, data_json, status, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?)`,
@@ -2249,10 +2509,10 @@ export class Store {
     return { ...input, id, status: "pending", createdAt: now, dispatchedAt: null };
   }
 
-  claimOutbox(limit = 10, _claimTimeoutSec = 30): OutboxEvent[] {
-    const rows = this.db
+  async claimOutbox(limit = 10, _claimTimeoutSec = 30): Promise<OutboxEvent[]> {
+    const rows = (await this.db
       .prepare("SELECT * FROM outbox_events WHERE status = 'pending' ORDER BY created_at LIMIT ?")
-      .all(limit) as Row[];
+      .all(limit)) as Row[];
     return rows.map((r) => ({
       id: str(r.id),
       eventType: str(r.event_type),
@@ -2267,25 +2527,25 @@ export class Store {
     }));
   }
 
-  markOutboxDispatched(eventId: string): void {
-    this.db
+  async markOutboxDispatched(eventId: string): Promise<void> {
+    await this.db
       .prepare("UPDATE outbox_events SET status = 'dispatched', dispatched_at = ? WHERE id = ?")
       .run(nowIso(), eventId);
   }
 
-  markOutboxFailed(eventId: string): void {
-    this.db.prepare("UPDATE outbox_events SET status = 'failed' WHERE id = ?").run(eventId);
+  async markOutboxFailed(eventId: string): Promise<void> {
+    await this.db.prepare("UPDATE outbox_events SET status = 'failed' WHERE id = ?").run(eventId);
   }
 
-  hasInbox(eventId: string, consumer: string): boolean {
-    const row = this.db
+  async hasInbox(eventId: string, consumer: string): Promise<boolean> {
+    const row = await this.db
       .prepare("SELECT event_id FROM inbox_events WHERE event_id = ? AND consumer = ?")
       .get(eventId, consumer);
     return row !== undefined;
   }
 
-  insertInbox(eventId: string, consumer: string): void {
-    this.db
+  async insertInbox(eventId: string, consumer: string): Promise<void> {
+    await this.db
       .prepare(
         "INSERT OR IGNORE INTO inbox_events (event_id, consumer, processed_at) VALUES (?, ?, ?)",
       )
@@ -2297,14 +2557,14 @@ export class Store {
     workspaceId: string,
     fn: () => T | Promise<T>,
   ): Promise<{ value: T; replayed: boolean }> {
-    const existing = this.db
+    const existing = (await this.db
       .prepare("SELECT response_json FROM idempotency_receipts WHERE key = ? AND workspace_id = ?")
-      .get(key, workspaceId) as { response_json: string } | undefined;
+      .get(key, workspaceId)) as { response_json: string } | undefined;
     if (existing) {
       return { value: parse<T>(existing.response_json, null as T), replayed: true };
     }
     const value = await fn();
-    this.db
+    await this.db
       .prepare(
         "INSERT INTO idempotency_receipts (key, workspace_id, response_json, created_at) VALUES (?, ?, ?, ?)",
       )
@@ -2314,7 +2574,7 @@ export class Store {
 
   /* ---------------- git connections ---------------- */
 
-  createGitConnection(
+  async createGitConnection(
     workspaceId: string,
     input: {
       name: string;
@@ -2324,10 +2584,10 @@ export class Store {
       syncPath: string;
       localDir?: string;
     },
-  ): Record<string, unknown> {
+  ): Promise<Record<string, unknown>> {
     const now = nowIso();
     const id = nextId("git");
-    this.db
+    await this.db
       .prepare(
         `INSERT INTO git_connections (id, workspace_id, name, provider, repo_url, branch, sync_path, local_dir, status, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'idle', ?, ?)`,
@@ -2344,23 +2604,23 @@ export class Store {
         now,
         now,
       );
-    return this.getGitConnection(workspaceId, id) as Record<string, unknown>;
+    return (await this.getGitConnection(workspaceId, id)) as Record<string, unknown>;
   }
 
-  listGitConnections(workspaceId: string): Array<Record<string, unknown>> {
-    return this.db
+  async listGitConnections(workspaceId: string): Promise<Array<Record<string, unknown>>> {
+    return (await this.db
       .prepare("SELECT * FROM git_connections WHERE workspace_id = ? ORDER BY updated_at DESC")
-      .all(workspaceId) as Array<Record<string, unknown>>;
+      .all(workspaceId)) as Array<Record<string, unknown>>;
   }
 
-  getGitConnection(workspaceId: string, id: string): Record<string, unknown> | null {
-    const row = this.db
+  async getGitConnection(workspaceId: string, id: string): Promise<Record<string, unknown> | null> {
+    const row = (await this.db
       .prepare("SELECT * FROM git_connections WHERE id = ? AND workspace_id = ?")
-      .get(id, workspaceId) as Row | undefined;
+      .get(id, workspaceId)) as Row | undefined;
     return row ?? null;
   }
 
-  updateGitConnection(
+  async updateGitConnection(
     workspaceId: string,
     id: string,
     patch: Partial<{
@@ -2370,10 +2630,10 @@ export class Store {
       lastError: string | null;
       localDir: string | null;
     }>,
-  ): Record<string, unknown> | null {
-    const current = this.getGitConnection(workspaceId, id);
+  ): Promise<Record<string, unknown> | null> {
+    const current = await this.getGitConnection(workspaceId, id);
     if (!current) return null;
-    this.db
+    await this.db
       .prepare(
         `UPDATE git_connections SET status = ?, last_sync_at = ?, last_sync_status = ?, last_error = ?, local_dir = ?, updated_at = ? WHERE id = ?`,
       )
@@ -2388,55 +2648,55 @@ export class Store {
         nowIso(),
         id,
       );
-    return this.getGitConnection(workspaceId, id);
+    return await this.getGitConnection(workspaceId, id);
   }
 
-  deleteGitConnection(workspaceId: string, id: string): void {
-    this.db
+  async deleteGitConnection(workspaceId: string, id: string): Promise<void> {
+    await this.db
       .prepare("DELETE FROM git_connections WHERE id = ? AND workspace_id = ?")
       .run(id, workspaceId);
   }
 
   /* ---------------- custom domains ---------------- */
 
-  createCustomDomain(workspaceId: string, domain: string): Record<string, unknown> {
+  async createCustomDomain(workspaceId: string, domain: string): Promise<Record<string, unknown>> {
     const now = nowIso();
     const id = nextId("dom");
     const token = `sg-verify-${crypto.randomUUID().replaceAll("-", "").slice(0, 16)}`;
-    this.db
+    await this.db
       .prepare(
         `INSERT INTO custom_domains (id, workspace_id, domain, verification_token, status, created_at, updated_at)
          VALUES (?, ?, ?, ?, 'pending', ?, ?)`,
       )
       .run(id, workspaceId, domain.toLowerCase(), token, now, now);
-    return this.getCustomDomain(workspaceId, id) as Record<string, unknown>;
+    return (await this.getCustomDomain(workspaceId, id)) as Record<string, unknown>;
   }
 
-  listCustomDomains(workspaceId: string): Array<Record<string, unknown>> {
-    return this.db
+  async listCustomDomains(workspaceId: string): Promise<Array<Record<string, unknown>>> {
+    return (await this.db
       .prepare("SELECT * FROM custom_domains WHERE workspace_id = ? ORDER BY created_at DESC")
-      .all(workspaceId) as Array<Record<string, unknown>>;
+      .all(workspaceId)) as Array<Record<string, unknown>>;
   }
 
-  getCustomDomain(workspaceId: string, id: string): Record<string, unknown> | null {
-    const row = this.db
+  async getCustomDomain(workspaceId: string, id: string): Promise<Record<string, unknown> | null> {
+    const row = (await this.db
       .prepare("SELECT * FROM custom_domains WHERE id = ? AND workspace_id = ?")
-      .get(id, workspaceId) as Row | undefined;
+      .get(id, workspaceId)) as Row | undefined;
     return row ?? null;
   }
 
-  getCustomDomainByDomain(domain: string): Record<string, unknown> | null {
-    const row = this.db
+  async getCustomDomainByDomain(domain: string): Promise<Record<string, unknown> | null> {
+    const row = (await this.db
       .prepare("SELECT * FROM custom_domains WHERE domain = ?")
-      .get(domain.toLowerCase()) as Row | undefined;
+      .get(domain.toLowerCase())) as Row | undefined;
     return row ?? null;
   }
 
-  verifyCustomDomain(workspaceId: string, id: string, token: string): boolean {
-    const domain = this.getCustomDomain(workspaceId, id);
+  async verifyCustomDomain(workspaceId: string, id: string, token: string): Promise<boolean> {
+    const domain = await this.getCustomDomain(workspaceId, id);
     if (!domain) return false;
     if (String(domain.verification_token) !== token) return false;
-    this.db
+    await this.db
       .prepare(
         "UPDATE custom_domains SET status = 'verified', verified_at = ?, updated_at = ? WHERE id = ?",
       )
@@ -2444,23 +2704,27 @@ export class Store {
     return true;
   }
 
-  bindDomainPublish(workspaceId: string, id: string, publishId: string | null): void {
-    this.db
+  async bindDomainPublish(
+    workspaceId: string,
+    id: string,
+    publishId: string | null,
+  ): Promise<void> {
+    await this.db
       .prepare(
         "UPDATE custom_domains SET publish_id = ?, updated_at = ? WHERE id = ? AND workspace_id = ?",
       )
       .run(publishId, nowIso(), id, workspaceId);
   }
 
-  deleteCustomDomain(workspaceId: string, id: string): void {
-    this.db
+  async deleteCustomDomain(workspaceId: string, id: string): Promise<void> {
+    await this.db
       .prepare("DELETE FROM custom_domains WHERE id = ? AND workspace_id = ?")
       .run(id, workspaceId);
   }
 
   /* ---------------- task schedules ---------------- */
 
-  createSchedule(
+  async createSchedule(
     workspaceId: string,
     input: {
       name: string;
@@ -2469,11 +2733,11 @@ export class Store {
       spec: Record<string, unknown>;
       cron: string;
     },
-  ): Record<string, unknown> {
+  ): Promise<Record<string, unknown>> {
     const now = nowIso();
     const id = nextId("sch");
     const next = computeNextCron(input.cron, new Date());
-    this.db
+    await this.db
       .prepare(
         `INSERT INTO task_schedules (id, workspace_id, name, task_type, goal, spec_json, cron, enabled, next_run_at, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`,
@@ -2490,23 +2754,23 @@ export class Store {
         now,
         now,
       );
-    return this.getSchedule(workspaceId, id) as Record<string, unknown>;
+    return (await this.getSchedule(workspaceId, id)) as Record<string, unknown>;
   }
 
-  listSchedules(workspaceId: string): Array<Record<string, unknown>> {
-    return this.db
+  async listSchedules(workspaceId: string): Promise<Array<Record<string, unknown>>> {
+    return (await this.db
       .prepare("SELECT * FROM task_schedules WHERE workspace_id = ? ORDER BY created_at DESC")
-      .all(workspaceId) as Array<Record<string, unknown>>;
+      .all(workspaceId)) as Array<Record<string, unknown>>;
   }
 
-  getSchedule(workspaceId: string, id: string): Record<string, unknown> | null {
-    const row = this.db
+  async getSchedule(workspaceId: string, id: string): Promise<Record<string, unknown> | null> {
+    const row = (await this.db
       .prepare("SELECT * FROM task_schedules WHERE id = ? AND workspace_id = ?")
-      .get(id, workspaceId) as Row | undefined;
+      .get(id, workspaceId)) as Row | undefined;
     return row ?? null;
   }
 
-  updateSchedule(
+  async updateSchedule(
     workspaceId: string,
     id: string,
     patch: Partial<{
@@ -2516,8 +2780,8 @@ export class Store {
       cron: string;
       spec: Record<string, unknown>;
     }>,
-  ): Record<string, unknown> | null {
-    const current = this.getSchedule(workspaceId, id);
+  ): Promise<Record<string, unknown> | null> {
+    const current = await this.getSchedule(workspaceId, id);
     if (!current) return null;
     const enabled = patch.enabled ?? bool(current.enabled);
     const cron = patch.cron ?? str(current.cron);
@@ -2527,7 +2791,7 @@ export class Store {
           ? computeNextCron(cron, new Date())
           : null
         : (current.next_run_at as string | null);
-    this.db
+    await this.db
       .prepare(
         `UPDATE task_schedules SET name = ?, goal = ?, spec_json = ?, cron = ?, enabled = ?, next_run_at = ?, updated_at = ? WHERE id = ?`,
       )
@@ -2541,31 +2805,31 @@ export class Store {
         nowIso(),
         id,
       );
-    return this.getSchedule(workspaceId, id);
+    return await this.getSchedule(workspaceId, id);
   }
 
-  deleteSchedule(workspaceId: string, id: string): void {
-    this.db
+  async deleteSchedule(workspaceId: string, id: string): Promise<void> {
+    await this.db
       .prepare("DELETE FROM task_schedules WHERE id = ? AND workspace_id = ?")
       .run(id, workspaceId);
   }
 
-  getDueSchedules(): Array<Record<string, unknown>> {
+  async getDueSchedules(): Promise<Array<Record<string, unknown>>> {
     const now = nowIso();
-    return this.db
+    return (await this.db
       .prepare(
         "SELECT * FROM task_schedules WHERE enabled = 1 AND next_run_at IS NOT NULL AND next_run_at <= ? ORDER BY next_run_at LIMIT 10",
       )
-      .all(now) as Array<Record<string, unknown>>;
+      .all(now)) as Array<Record<string, unknown>>;
   }
 
-  markScheduleRun(id: string): void {
-    const schedule = this.db.prepare("SELECT * FROM task_schedules WHERE id = ?").get(id) as
+  async markScheduleRun(id: string): Promise<void> {
+    const schedule = (await this.db.prepare("SELECT * FROM task_schedules WHERE id = ?").get(id)) as
       | Row
       | undefined;
     if (!schedule) return;
     const next = computeNextCron(str(schedule.cron), new Date());
-    this.db
+    await this.db
       .prepare(
         "UPDATE task_schedules SET last_run_at = ?, next_run_at = ?, run_count = run_count + 1, updated_at = ? WHERE id = ?",
       )
@@ -2574,45 +2838,50 @@ export class Store {
 
   /* ---------------- workspace members & ACL ---------------- */
 
-  listMembers(workspaceId: string): Array<Record<string, unknown>> {
-    return this.db
+  async listMembers(workspaceId: string): Promise<Array<Record<string, unknown>>> {
+    return (await this.db
       .prepare("SELECT * FROM workspace_members WHERE workspace_id = ? ORDER BY created_at")
-      .all(workspaceId) as Array<Record<string, unknown>>;
+      .all(workspaceId)) as Array<Record<string, unknown>>;
   }
 
-  addMember(
+  async addMember(
     workspaceId: string,
     subject: string,
     role: string,
     invitedBy: string,
-  ): Record<string, unknown> {
-    this.db
+  ): Promise<Record<string, unknown>> {
+    await this.db
       .prepare(
         `INSERT INTO workspace_members (id, workspace_id, subject, role, status, invited_by, created_at)
          VALUES (?, ?, ?, ?, 'active', ?, ?)
          ON CONFLICT(workspace_id, subject) DO UPDATE SET role = excluded.role`,
       )
       .run(nextId("mem"), workspaceId, subject, role, invitedBy, nowIso());
-    return this.listMembers(workspaceId).find((m) => m.subject === subject) as Record<
+    return (await this.listMembers(workspaceId)).find((m) => m.subject === subject) as Record<
       string,
       unknown
     >;
   }
 
-  updateMemberRole(workspaceId: string, subject: string, role: string): void {
-    this.db
+  async updateMemberRole(workspaceId: string, subject: string, role: string): Promise<void> {
+    await this.db
       .prepare("UPDATE workspace_members SET role = ? WHERE workspace_id = ? AND subject = ?")
       .run(role, workspaceId, subject);
   }
 
-  removeMember(workspaceId: string, subject: string): void {
-    this.db
+  async removeMember(workspaceId: string, subject: string): Promise<void> {
+    await this.db
       .prepare("DELETE FROM workspace_members WHERE workspace_id = ? AND subject = ?")
       .run(workspaceId, subject);
   }
 
-  grantAcl(assetId: string, principalType: string, principalId: string, role: string): void {
-    this.db
+  async grantAcl(
+    assetId: string,
+    principalType: string,
+    principalId: string,
+    role: string,
+  ): Promise<void> {
+    await this.db
       .prepare(
         `INSERT INTO asset_acl (id, asset_id, principal_type, principal_id, role, created_at)
          VALUES (?, ?, ?, ?, ?, ?)
@@ -2621,38 +2890,43 @@ export class Store {
       .run(nextId("acl"), assetId, principalType, principalId, role, nowIso());
   }
 
-  listAcl(assetId: string): Array<Record<string, unknown>> {
-    return this.db
+  async listAcl(assetId: string): Promise<Array<Record<string, unknown>>> {
+    return (await this.db
       .prepare("SELECT * FROM asset_acl WHERE asset_id = ? ORDER BY created_at")
-      .all(assetId) as Array<Record<string, unknown>>;
+      .all(assetId)) as Array<Record<string, unknown>>;
   }
 
-  revokeAcl(assetId: string, principalType: string, principalId: string): void {
-    this.db
+  async revokeAcl(assetId: string, principalType: string, principalId: string): Promise<void> {
+    await this.db
       .prepare(
         "DELETE FROM asset_acl WHERE asset_id = ? AND principal_type = ? AND principal_id = ?",
       )
       .run(assetId, principalType, principalId);
   }
 
-  canAccess(workspaceId: string, assetId: string, subject: string, needWrite: boolean): boolean {
-    const asset = this.getAsset(workspaceId, assetId);
+  async canAccess(
+    workspaceId: string,
+    assetId: string,
+    subject: string,
+    needWrite: boolean,
+  ): Promise<boolean> {
+    const asset = await this.getAsset(workspaceId, assetId);
     if (!asset) return false;
     if (asset.ownerSubject === subject) return true;
-    const member = this.db
+    const member = (await this.db
       .prepare(
         "SELECT role FROM workspace_members WHERE workspace_id = ? AND subject = ? AND status = 'active'",
       )
-      .get(workspaceId, subject) as { role: string } | undefined;
+      .get(workspaceId, subject)) as { role: string } | undefined;
     if (member) {
       if (!needWrite && ["admin", "editor", "viewer"].includes(member.role)) return true;
       if (needWrite && ["admin", "editor"].includes(member.role)) return true;
     }
-    const acl = this.db
+    const acl = (await this.db
       .prepare(
         "SELECT role FROM asset_acl WHERE asset_id = ? AND principal_id = ? AND principal_type = 'user'",
       )
-      .get(assetId, subject) as { role: string } | undefined;
+      .get(assetId, subject)) as { role: string } | undefined;
     if (acl) {
       if (!needWrite && ["editor", "viewer"].includes(acl.role)) return true;
       if (needWrite && acl.role === "editor") return true;
@@ -2663,15 +2937,15 @@ export class Store {
 
   /* ---------------- proposed patches (AI) ---------------- */
 
-  createProposedPatch(input: {
+  async createProposedPatch(input: {
     assetId: string;
     baseVersionId: string;
     selection: string;
     action: string;
     proposed: string;
-  }): string {
+  }): Promise<string> {
     const id = nextId("pat");
-    this.db
+    await this.db
       .prepare(
         "INSERT INTO proposed_patches (id, asset_id, base_version_id, selection, action, proposed, status, created_at) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)",
       )
@@ -2687,21 +2961,26 @@ export class Store {
     return id;
   }
 
-  getProposedPatch(assetId: string, patchId: string): Record<string, unknown> | null {
-    const row = this.db
+  async getProposedPatch(
+    assetId: string,
+    patchId: string,
+  ): Promise<Record<string, unknown> | null> {
+    const row = (await this.db
       .prepare("SELECT * FROM proposed_patches WHERE id = ? AND asset_id = ?")
-      .get(patchId, assetId) as Row | undefined;
+      .get(patchId, assetId)) as Row | undefined;
     return row ?? null;
   }
 
-  applyProposedPatch(assetId: string, patchId: string): string | null {
-    const patch = this.getProposedPatch(assetId, patchId);
+  async applyProposedPatch(assetId: string, patchId: string): Promise<string | null> {
+    const patch = await this.getProposedPatch(assetId, patchId);
     if (!patch) return null;
-    this.db.prepare("UPDATE proposed_patches SET status = 'applied' WHERE id = ?").run(patchId);
+    await this.db
+      .prepare("UPDATE proposed_patches SET status = 'applied' WHERE id = ?")
+      .run(patchId);
     return str(patch.proposed);
   }
 
-  getDb(): DatabaseSync {
+  getDb(): Db {
     return this.db;
   }
 
@@ -2794,7 +3073,7 @@ function matchCronField(field: string | undefined, value: number): boolean {
   return false;
 }
 
-export function createStore(db: DatabaseSync, storage: ObjectStore): Store {
+export function createStore(db: Db, storage: ObjectStore): Store {
   return new Store(db, storage);
 }
 

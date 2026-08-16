@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -10,7 +11,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
@@ -244,19 +244,16 @@ func serveReleaseFile(w http.ResponseWriter, r *http.Request, cfg platform.Confi
 		serveErrorPage(w, http.StatusNotFound, "内容不存在", "该发布物不存在。")
 		return
 	}
-	objectPath := filepath.Join(cfg.ObjectRoot, "publishes", meta.Publish.ID, "releases", meta.Release.ID, filepath.Clean(relPath))
-	if !strings.HasPrefix(objectPath, filepath.Join(cfg.ObjectRoot, "publishes")) {
-		serveErrorPage(w, http.StatusForbidden, "禁止访问", "非法路径。")
+	data, status, err := cfg.FetchReleaseFile(meta.Publish.ID, meta.Release.ID, relPath)
+	if err != nil {
+		serveErrorPage(w, http.StatusServiceUnavailable, "读取失败", "发布文件服务暂时不可用。")
 		return
 	}
-	file, err := os.Open(objectPath)
-	if err != nil {
+	if status == http.StatusNotFound {
 		serveErrorPage(w, http.StatusNotFound, "文件不存在", "该资源文件缺失。")
 		return
 	}
-	defer file.Close()
-	info, err := file.Stat()
-	if err != nil {
+	if status != http.StatusOK {
 		serveErrorPage(w, http.StatusInternalServerError, "读取失败", "读取资源失败。")
 		return
 	}
@@ -271,8 +268,21 @@ func serveReleaseFile(w http.ResponseWriter, r *http.Request, cfg platform.Confi
 	if relPath == "index.html" {
 		h.Set("Cache-Control", "private, no-store")
 		if csp, ok := meta.Release.Manifest["csp"].(string); ok && csp != "" {
-			h.Set("Content-Security-Policy", csp)
+			h.Add("Content-Security-Policy", csp)
 		}
+		// Published HTML shares the product origin by deployment decision. This
+		// mandatory policy prevents it from reading authenticated API responses,
+		// embedding product pages, submitting forms, or exfiltrating through
+		// third-party subresources. A manifest CSP may only make it stricter.
+		h.Add("Content-Security-Policy", strings.Join([]string{
+			"default-src 'self' data: blob:",
+			"connect-src 'none'",
+			"frame-src 'none'",
+			"frame-ancestors 'none'",
+			"form-action 'none'",
+			"base-uri 'none'",
+			"object-src 'none'",
+		}, "; "))
 		if meta.Release.Etag != "" {
 			h.Set("ETag", meta.Release.Etag)
 		}
@@ -281,8 +291,11 @@ func serveReleaseFile(w http.ResponseWriter, r *http.Request, cfg platform.Confi
 	} else {
 		h.Set("Cache-Control", "public, max-age=60, stale-while-revalidate=600")
 	}
-	w.WriteHeader(http.StatusOK)
-	http.ServeContent(w, r, relPath, info.ModTime(), file)
+	modified := time.Now().UTC()
+	if parsed, err := time.Parse(time.RFC3339, meta.Release.Created); err == nil {
+		modified = parsed
+	}
+	http.ServeContent(w, r, relPath, modified, bytes.NewReader(data))
 }
 
 func manifestAllows(meta PublishMeta, assetPath string) bool {

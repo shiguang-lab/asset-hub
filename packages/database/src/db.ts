@@ -1,715 +1,498 @@
-import { mkdirSync } from "node:fs";
-import { dirname } from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import { readFile } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { nextId } from "@shiguang/contracts";
+import { Pool } from "pg";
+import { hashBuffer, type ObjectStore } from "./storage.js";
 
 const SCHEMA_VERSION = 1;
+export type Row = Record<string, unknown>;
 
-const DDL = `
-PRAGMA journal_mode = WAL;
-PRAGMA foreign_keys = ON;
+function toPg(sql: string): string {
+  let out = "";
+  let n = 0;
+  let q = false;
+  for (let i = 0; i < sql.length; i++) {
+    const c = sql[i];
+    if (c === "'") {
+      if (q && sql[i + 1] === "'") {
+        out += "''";
+        i++;
+        continue;
+      }
+      q = !q;
+      out += c;
+    } else if (c === "?" && !q) {
+      n++;
+      out += "$" + n;
+    } else out += c;
+  }
+  return out;
+}
 
-CREATE TABLE IF NOT EXISTS schema_meta (
-  key TEXT PRIMARY KEY,
-  value TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS workspaces (
-  id TEXT PRIMARY KEY,
-  type TEXT NOT NULL DEFAULT 'personal',
-  owner_subject TEXT NOT NULL,
-  name TEXT NOT NULL,
-  created_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS users (
-  subject TEXT PRIMARY KEY,
-  workspace_id TEXT NOT NULL REFERENCES workspaces(id),
-  name TEXT NOT NULL DEFAULT '',
-  email TEXT,
-  avatar_url TEXT,
-  default_quality TEXT NOT NULL DEFAULT 'balanced',
-  default_language TEXT NOT NULL DEFAULT 'zh-CN',
-  notify_email INTEGER NOT NULL DEFAULT 0,
-  created_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS workspace_members (
-  id TEXT PRIMARY KEY,
-  workspace_id TEXT NOT NULL REFERENCES workspaces(id),
-  subject TEXT NOT NULL,
-  role TEXT NOT NULL DEFAULT 'viewer',
-  status TEXT NOT NULL DEFAULT 'active',
-  invited_by TEXT,
-  created_at TEXT NOT NULL,
-  UNIQUE (workspace_id, subject)
-);
-
-CREATE TABLE IF NOT EXISTS asset_acl (
-  id TEXT PRIMARY KEY,
-  asset_id TEXT NOT NULL REFERENCES assets(id),
-  principal_type TEXT NOT NULL,
-  principal_id TEXT NOT NULL,
-  role TEXT NOT NULL DEFAULT 'viewer',
-  created_at TEXT NOT NULL,
-  UNIQUE (asset_id, principal_type, principal_id)
-);
-CREATE INDEX IF NOT EXISTS idx_asset_acl_asset ON asset_acl(asset_id);
-
-CREATE TABLE IF NOT EXISTS assets (
-  id TEXT PRIMARY KEY,
-  workspace_id TEXT NOT NULL REFERENCES workspaces(id),
-  owner_subject TEXT NOT NULL,
-  type TEXT NOT NULL,
-  title TEXT NOT NULL,
-  description TEXT NOT NULL DEFAULT '',
-  visibility TEXT NOT NULL DEFAULT 'private',
-  status TEXT NOT NULL DEFAULT 'normal',
-  tags_json TEXT NOT NULL DEFAULT '[]',
-  source_type TEXT NOT NULL DEFAULT 'manual',
-  current_version_id TEXT,
-  lock_version INTEGER NOT NULL DEFAULT 1,
-  deleted_at TEXT,
-  published_url TEXT,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_assets_workspace ON assets(workspace_id, deleted_at, updated_at);
-CREATE INDEX IF NOT EXISTS idx_assets_type ON assets(workspace_id, type, deleted_at);
-
-CREATE TABLE IF NOT EXISTS asset_versions (
-  id TEXT PRIMARY KEY,
-  asset_id TEXT NOT NULL REFERENCES assets(id),
-  sequence INTEGER NOT NULL,
-  change_kind TEXT NOT NULL DEFAULT 'edit',
-  content_hash TEXT NOT NULL,
-  size INTEGER NOT NULL DEFAULT 0,
-  media_type TEXT NOT NULL,
-  metadata_json TEXT NOT NULL DEFAULT '{}',
-  created_at TEXT NOT NULL,
-  UNIQUE (asset_id, sequence)
-);
-CREATE INDEX IF NOT EXISTS idx_asset_versions_asset ON asset_versions(asset_id, sequence DESC);
-
-CREATE TABLE IF NOT EXISTS asset_blobs (
-  id TEXT PRIMARY KEY,
-  version_id TEXT NOT NULL REFERENCES asset_versions(id),
-  role TEXT NOT NULL,
-  object_key TEXT NOT NULL,
-  content_hash TEXT NOT NULL,
-  size INTEGER NOT NULL,
-  media_type TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS asset_relations (
-  id TEXT PRIMARY KEY,
-  source_asset_id TEXT NOT NULL REFERENCES assets(id),
-  target_asset_id TEXT NOT NULL REFERENCES assets(id),
-  relation_type TEXT NOT NULL,
-  provenance_json TEXT NOT NULL DEFAULT '{}',
-  created_at TEXT NOT NULL,
-  UNIQUE (source_asset_id, target_asset_id, relation_type)
-);
-CREATE INDEX IF NOT EXISTS idx_asset_relations_target ON asset_relations(target_asset_id);
-
-CREATE TABLE IF NOT EXISTS tasks (
-  id TEXT PRIMARY KEY,
-  workspace_id TEXT NOT NULL REFERENCES workspaces(id),
-  owner_subject TEXT NOT NULL,
-  type TEXT NOT NULL,
-  goal TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'created',
-  progress REAL NOT NULL DEFAULT 0,
-  current_step TEXT NOT NULL DEFAULT '',
-  spec_json TEXT NOT NULL DEFAULT '{}',
-  plan_json TEXT,
-  input_asset_ids TEXT NOT NULL DEFAULT '[]',
-  output_asset_ids TEXT NOT NULL DEFAULT '[]',
-  credits_used REAL NOT NULL DEFAULT 0,
-  error TEXT,
-  cancel_requested INTEGER NOT NULL DEFAULT 0,
-  checkpoint_json TEXT,
-  started_at TEXT,
-  completed_at TEXT,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_tasks_workspace ON tasks(workspace_id, updated_at);
-CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status, updated_at);
-
-CREATE TABLE IF NOT EXISTS task_steps (
-  id TEXT PRIMARY KEY,
-  task_id TEXT NOT NULL REFERENCES tasks(id),
-  type TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'pending',
-  progress REAL NOT NULL DEFAULT 0,
-  detail TEXT NOT NULL DEFAULT '',
-  error TEXT,
-  attempt INTEGER NOT NULL DEFAULT 1,
-  outputs_json TEXT NOT NULL DEFAULT '{}',
-  started_at TEXT,
-  completed_at TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_task_steps_task ON task_steps(task_id, type);
-
-CREATE TABLE IF NOT EXISTS evidence_items (
-  id TEXT PRIMARY KEY,
-  task_id TEXT NOT NULL REFERENCES tasks(id),
-  claim TEXT NOT NULL,
-  source_title TEXT NOT NULL,
-  source_url TEXT,
-  source_asset_version_id TEXT,
-  locator TEXT,
-  excerpt_hash TEXT,
-  excerpt TEXT NOT NULL DEFAULT '',
-  retrieved_at TEXT NOT NULL,
-  confidence REAL NOT NULL DEFAULT 0.5,
-  verification_status TEXT NOT NULL DEFAULT 'unverified'
-);
-CREATE INDEX IF NOT EXISTS idx_evidence_task ON evidence_items(task_id);
-
-CREATE TABLE IF NOT EXISTS knowledge_bases (
-  id TEXT PRIMARY KEY,
-  workspace_id TEXT NOT NULL REFERENCES workspaces(id),
-  name TEXT NOT NULL,
-  description TEXT NOT NULL DEFAULT '',
-  status TEXT NOT NULL DEFAULT 'active',
-  source_count INTEGER NOT NULL DEFAULT 0,
-  chunk_count INTEGER NOT NULL DEFAULT 0,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_kb_workspace ON knowledge_bases(workspace_id);
-
-CREATE TABLE IF NOT EXISTS knowledge_sources (
-  id TEXT PRIMARY KEY,
-  kb_id TEXT NOT NULL REFERENCES knowledge_bases(id),
-  workspace_id TEXT NOT NULL REFERENCES workspaces(id),
-  source_type TEXT NOT NULL,
-  asset_version_id TEXT,
-  url TEXT,
-  title TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'pending',
-  error TEXT,
-  content_hash TEXT,
-  chunk_count INTEGER NOT NULL DEFAULT 0,
-  retry_count INTEGER NOT NULL DEFAULT 0,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_kb_sources ON knowledge_sources(kb_id, status);
-
-CREATE TABLE IF NOT EXISTS knowledge_chunks (
-  id TEXT PRIMARY KEY,
-  kb_id TEXT NOT NULL REFERENCES knowledge_bases(id),
-  source_id TEXT NOT NULL REFERENCES knowledge_sources(id),
-  ordinal INTEGER NOT NULL,
-  heading_path TEXT NOT NULL DEFAULT '',
-  text TEXT NOT NULL,
-  text_hash TEXT NOT NULL,
-  char_start INTEGER NOT NULL DEFAULT 0,
-  char_end INTEGER NOT NULL DEFAULT 0
-);
-CREATE INDEX IF NOT EXISTS idx_kb_chunks_source ON knowledge_chunks(source_id);
-CREATE INDEX IF NOT EXISTS idx_kb_chunks_kb ON knowledge_chunks(kb_id);
-
-CREATE VIRTUAL TABLE IF NOT EXISTS knowledge_chunks_fts USING fts5(
-  text,
-  heading_path,
-  content='',
-  tokenize='unicode61'
-);
-
-CREATE TABLE IF NOT EXISTS datasets (
-  id TEXT PRIMARY KEY,
-  workspace_id TEXT NOT NULL REFERENCES workspaces(id),
-  name TEXT NOT NULL,
-  description TEXT NOT NULL DEFAULT '',
-  current_version_id TEXT,
-  status TEXT NOT NULL DEFAULT 'normal',
-  row_count INTEGER NOT NULL DEFAULT 0,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_datasets_workspace ON datasets(workspace_id, updated_at);
-
-CREATE TABLE IF NOT EXISTS dataset_versions (
-  id TEXT PRIMARY KEY,
-  dataset_id TEXT NOT NULL REFERENCES datasets(id),
-  version INTEGER NOT NULL,
-  file_name TEXT NOT NULL,
-  format TEXT NOT NULL,
-  row_count INTEGER NOT NULL DEFAULT 0,
-  column_count INTEGER NOT NULL DEFAULT 0,
-  schema_json TEXT NOT NULL DEFAULT '[]',
-  profile_json TEXT NOT NULL DEFAULT '{}',
-  quality_json TEXT NOT NULL DEFAULT '[]',
-  status TEXT NOT NULL DEFAULT 'processing',
-  error TEXT,
-  object_key TEXT,
-  content_hash TEXT,
-  created_at TEXT NOT NULL,
-  UNIQUE (dataset_id, version)
-);
-
-CREATE TABLE IF NOT EXISTS dataset_saved_views (
-  id TEXT PRIMARY KEY,
-  dataset_id TEXT NOT NULL REFERENCES datasets(id),
-  workspace_id TEXT NOT NULL REFERENCES workspaces(id),
-  name TEXT NOT NULL,
-  query_json TEXT NOT NULL DEFAULT '{}',
-  created_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS chart_specs (
-  id TEXT PRIMARY KEY,
-  dataset_id TEXT NOT NULL REFERENCES datasets(id),
-  workspace_id TEXT NOT NULL REFERENCES workspaces(id),
-  name TEXT NOT NULL,
-  chart_type TEXT NOT NULL,
-  x TEXT,
-  y TEXT,
-  group_by TEXT,
-  aggregation TEXT NOT NULL DEFAULT 'sum',
-  created_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS templates (
-  id TEXT PRIMARY KEY,
-  workspace_id TEXT NOT NULL REFERENCES workspaces(id),
-  type TEXT NOT NULL,
-  name TEXT NOT NULL,
-  description TEXT NOT NULL DEFAULT '',
-  content_json TEXT NOT NULL DEFAULT '{}',
-  version INTEGER NOT NULL DEFAULT 1,
-  published INTEGER NOT NULL DEFAULT 0,
-  usage_count INTEGER NOT NULL DEFAULT 0,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS publishes (
-  id TEXT PRIMARY KEY,
-  workspace_id TEXT NOT NULL REFERENCES workspaces(id),
-  asset_id TEXT NOT NULL REFERENCES assets(id),
-  slug TEXT NOT NULL UNIQUE,
-  short_slug TEXT NOT NULL UNIQUE,
-  visibility TEXT NOT NULL DEFAULT 'public',
-  password_hash TEXT,
-  password_salt TEXT,
-  expires_at TEXT,
-  allow_download INTEGER NOT NULL DEFAULT 1,
-  allow_copy INTEGER NOT NULL DEFAULT 1,
-  active_release_id TEXT,
-  view_count INTEGER NOT NULL DEFAULT 0,
-  status TEXT NOT NULL DEFAULT 'active',
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_publishes_asset ON publishes(asset_id);
-
-CREATE TABLE IF NOT EXISTS publish_releases (
-  id TEXT PRIMARY KEY,
-  publish_id TEXT NOT NULL REFERENCES publishes(id),
-  asset_version_id TEXT NOT NULL,
-  etag TEXT NOT NULL,
-  manifest_json TEXT NOT NULL DEFAULT '{}',
-  status TEXT NOT NULL DEFAULT 'building',
-  created_at TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_publish_releases_publish ON publish_releases(publish_id, created_at DESC);
-
-CREATE TABLE IF NOT EXISTS short_links (
-  id TEXT PRIMARY KEY,
-  publish_id TEXT NOT NULL REFERENCES publishes(id),
-  short_slug TEXT NOT NULL UNIQUE,
-  destination TEXT NOT NULL,
-  revoked_at TEXT,
-  created_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS publish_access_events (
-  id TEXT PRIMARY KEY,
-  publish_id TEXT NOT NULL,
-  release_id TEXT,
-  ts_bucket TEXT NOT NULL,
-  referrer_domain TEXT,
-  country TEXT,
-  device_class TEXT,
-  hashed_visitor TEXT,
-  status_code INTEGER NOT NULL DEFAULT 200
-);
-CREATE INDEX IF NOT EXISTS idx_publish_events ON publish_access_events(publish_id, ts_bucket);
-
-CREATE TABLE IF NOT EXISTS publish_daily_stats (
-  publish_id TEXT NOT NULL,
-  day TEXT NOT NULL,
-  views INTEGER NOT NULL DEFAULT 0,
-  uniques INTEGER NOT NULL DEFAULT 0,
-  PRIMARY KEY (publish_id, day)
-);
-
-CREATE TABLE IF NOT EXISTS notifications (
-  id TEXT PRIMARY KEY,
-  workspace_id TEXT NOT NULL REFERENCES workspaces(id),
-  subject TEXT NOT NULL,
-  type TEXT NOT NULL,
-  title TEXT NOT NULL,
-  body TEXT NOT NULL DEFAULT '',
-  link TEXT,
-  read_at TEXT,
-  created_at TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_notifications_ws ON notifications(workspace_id, read_at, created_at);
-
-CREATE TABLE IF NOT EXISTS credit_accounts (
-  id TEXT PRIMARY KEY,
-  workspace_id TEXT NOT NULL UNIQUE REFERENCES workspaces(id),
-  balance REAL NOT NULL DEFAULT 0,
-  total_granted REAL NOT NULL DEFAULT 0,
-  total_used REAL NOT NULL DEFAULT 0,
-  updated_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS credit_ledger_entries (
-  id TEXT PRIMARY KEY,
-  workspace_id TEXT NOT NULL REFERENCES workspaces(id),
-  entry_type TEXT NOT NULL,
-  amount REAL NOT NULL,
-  operation_id TEXT NOT NULL UNIQUE,
-  task_id TEXT,
-  description TEXT NOT NULL DEFAULT '',
-  created_at TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_credit_ledger_ws ON credit_ledger_entries(workspace_id, created_at);
-
-CREATE TABLE IF NOT EXISTS credit_reservations (
-  id TEXT PRIMARY KEY,
-  workspace_id TEXT NOT NULL REFERENCES workspaces(id),
-  task_id TEXT NOT NULL,
-  amount REAL NOT NULL,
-  status TEXT NOT NULL DEFAULT 'active',
-  expires_at TEXT NOT NULL,
-  created_at TEXT NOT NULL,
-  UNIQUE (task_id)
-);
-
-CREATE TABLE IF NOT EXISTS api_tokens (
-  id TEXT PRIMARY KEY,
-  workspace_id TEXT NOT NULL REFERENCES workspaces(id),
-  name TEXT NOT NULL,
-  secret_hash TEXT NOT NULL,
-  scopes TEXT NOT NULL DEFAULT '["read"]',
-  expires_at TEXT,
-  revoked_at TEXT,
-  last_used_at TEXT,
-  created_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS mcp_configs (
-  id TEXT PRIMARY KEY,
-  workspace_id TEXT NOT NULL UNIQUE REFERENCES workspaces(id),
-  enabled INTEGER NOT NULL DEFAULT 0,
-  scope TEXT NOT NULL DEFAULT 'all',
-  scope_ids TEXT NOT NULL DEFAULT '[]',
-  write_enabled INTEGER NOT NULL DEFAULT 0,
-  server_url TEXT NOT NULL DEFAULT '',
-  updated_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS git_connections (
-  id TEXT PRIMARY KEY,
-  workspace_id TEXT NOT NULL REFERENCES workspaces(id),
-  name TEXT NOT NULL,
-  provider TEXT NOT NULL DEFAULT 'github',
-  repo_url TEXT NOT NULL,
-  branch TEXT NOT NULL DEFAULT 'main',
-  sync_path TEXT NOT NULL DEFAULT '/',
-  local_dir TEXT,
-  status TEXT NOT NULL DEFAULT 'idle',
-  last_sync_at TEXT,
-  last_sync_status TEXT,
-  last_error TEXT,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_git_conn_ws ON git_connections(workspace_id);
-
-CREATE TABLE IF NOT EXISTS custom_domains (
-  id TEXT PRIMARY KEY,
-  workspace_id TEXT NOT NULL REFERENCES workspaces(id),
-  domain TEXT NOT NULL UNIQUE,
-  verification_token TEXT NOT NULL,
-  verified_at TEXT,
-  status TEXT NOT NULL DEFAULT 'pending',
-  publish_id TEXT,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_custom_domains_ws ON custom_domains(workspace_id);
-
-CREATE TABLE IF NOT EXISTS task_schedules (
-  id TEXT PRIMARY KEY,
-  workspace_id TEXT NOT NULL REFERENCES workspaces(id),
-  name TEXT NOT NULL,
-  task_type TEXT NOT NULL DEFAULT 'research',
-  goal TEXT NOT NULL,
-  spec_json TEXT NOT NULL DEFAULT '{}',
-  cron TEXT NOT NULL,
-  enabled INTEGER NOT NULL DEFAULT 1,
-  next_run_at TEXT,
-  last_run_at TEXT,
-  run_count INTEGER NOT NULL DEFAULT 0,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_task_schedules_due ON task_schedules(enabled, next_run_at);
-
-CREATE TABLE IF NOT EXISTS audit_events (
-  id TEXT PRIMARY KEY,
-  workspace_id TEXT NOT NULL REFERENCES workspaces(id),
-  actor TEXT NOT NULL,
-  action TEXT NOT NULL,
-  resource TEXT NOT NULL,
-  outcome TEXT NOT NULL DEFAULT 'success',
-  metadata_json TEXT NOT NULL DEFAULT '{}',
-  created_at TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_audit_ws ON audit_events(workspace_id, created_at);
-
-CREATE TABLE IF NOT EXISTS outbox_events (
-  id TEXT PRIMARY KEY,
-  event_type TEXT NOT NULL,
-  aggregate_type TEXT NOT NULL,
-  aggregate_id TEXT NOT NULL,
-  aggregate_version INTEGER NOT NULL DEFAULT 1,
-  workspace_id TEXT NOT NULL,
-  data_json TEXT NOT NULL DEFAULT '{}',
-  status TEXT NOT NULL DEFAULT 'pending',
-  created_at TEXT NOT NULL,
-  dispatched_at TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_outbox_pending ON outbox_events(status, created_at);
-
-CREATE TABLE IF NOT EXISTS inbox_events (
-  event_id TEXT NOT NULL,
-  consumer TEXT NOT NULL,
-  processed_at TEXT NOT NULL,
-  PRIMARY KEY (event_id, consumer)
-);
-
-CREATE TABLE IF NOT EXISTS idempotency_receipts (
-  key TEXT PRIMARY KEY,
-  workspace_id TEXT NOT NULL,
-  response_json TEXT NOT NULL,
-  created_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS proposed_patches (
-  id TEXT PRIMARY KEY,
-  asset_id TEXT NOT NULL REFERENCES assets(id),
-  base_version_id TEXT NOT NULL,
-  selection TEXT NOT NULL DEFAULT '',
-  action TEXT NOT NULL,
-  proposed TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'pending',
-  created_at TEXT NOT NULL
-);
-
-CREATE TABLE IF NOT EXISTS usage_records (
-  id TEXT PRIMARY KEY,
-  workspace_id TEXT NOT NULL,
-  task_id TEXT,
-  kind TEXT NOT NULL,
-  amount REAL NOT NULL DEFAULT 0,
-  metadata_json TEXT NOT NULL DEFAULT '{}',
-  created_at TEXT NOT NULL
-);
-`;
+export class Db {
+  constructor(readonly pool: Pool) {}
+  prepare(sql: string) {
+    const s = toPg(sql);
+    return {
+      get: async (...p: unknown[]): Promise<Row | undefined> =>
+        (await this.pool.query(s, p)).rows[0] as Row | undefined,
+      all: async (...p: unknown[]): Promise<Row[]> => (await this.pool.query(s, p)).rows as Row[],
+      run: async (...p: unknown[]): Promise<void> => {
+        await this.pool.query(s, p);
+      },
+    };
+  }
+  async exec(sql: string): Promise<void> {
+    await this.pool.query(sql);
+  }
+}
 
 export interface OpenDatabaseOptions {
-  path: string;
+  url: string;
   seedDemo?: boolean;
   demoSubject?: string;
   demoWorkspaceName?: string;
+  storage?: ObjectStore;
 }
 
-export function openDatabase(options: OpenDatabaseOptions): DatabaseSync {
-  if (options.path !== ":memory:") {
-    mkdirSync(dirname(options.path), { recursive: true });
-  }
-  const db = new DatabaseSync(options.path);
-  db.exec(DDL);
-  const row = db.prepare("SELECT value FROM schema_meta WHERE key = 'schema_version'").get() as
-    | { value: string }
-    | undefined;
-  if (!row) {
-    db.prepare("INSERT INTO schema_meta (key, value) VALUES (?, ?)").run(
-      "schema_version",
-      String(SCHEMA_VERSION),
-    );
-  }
-  if (options.seedDemo !== false) {
-    seedDemo(db, options.demoSubject ?? "dev-user", options.demoWorkspaceName ?? "个人空间");
+export async function openDatabase(o: OpenDatabaseOptions): Promise<Db> {
+  const pool = new Pool({ connectionString: o.url });
+  const p = resolve(dirname(fileURLToPath(import.meta.url)), "../migrations/0001_init.sql");
+  await pool.query(await readFile(p, "utf8"));
+  const db = new Db(pool);
+  const row = await db.prepare("SELECT value FROM schema_meta WHERE key = 'schema_version'").get();
+  if (!row)
+    await db
+      .prepare("INSERT INTO schema_meta (key, value) VALUES (?, ?)")
+      .run("schema_version", String(SCHEMA_VERSION));
+  if (o.seedDemo !== false) {
+    const subject = o.demoSubject ?? "dev-user";
+    await seedDemo(db, subject, o.demoWorkspaceName ?? "个人空间");
+    if (o.storage) await seedDemoAssets(db, o.storage, subject);
   }
   return db;
 }
 
-export function seedDemo(db: DatabaseSync, subject: string, workspaceName: string): void {
+export async function seedDemo(db: Db, subject: string, workspaceName: string): Promise<void> {
   const now = new Date().toISOString();
-  const existing = db.prepare("SELECT id FROM workspaces WHERE owner_subject = ?").get(subject);
-  if (existing) return;
-
-  const workspaceId = nextId("wsp");
-  db.prepare(
-    "INSERT INTO workspaces (id, type, owner_subject, name, created_at) VALUES (?, ?, ?, ?, ?)",
-  ).run(workspaceId, "personal", subject, workspaceName, now);
-  db.prepare(
-    "INSERT INTO users (subject, workspace_id, name, email, default_quality, default_language, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-  ).run(subject, workspaceId, "演示用户", "demo@shiguang.local", "balanced", "zh-CN", now);
-  db.prepare(
-    "INSERT INTO credit_accounts (id, workspace_id, balance, total_granted, total_used, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
-  ).run(nextId("acc"), workspaceId, 10_000, 10_000, 0, now);
-  db.prepare(
-    "INSERT INTO credit_ledger_entries (id, workspace_id, entry_type, amount, operation_id, description, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-  ).run(
-    nextId("led"),
-    workspaceId,
-    "grant",
-    10_000,
-    `op_seed_${subject}`,
-    "新用户初始 Credits",
-    now,
-  );
-  db.prepare(
-    "INSERT INTO mcp_configs (id, workspace_id, enabled, scope, scope_ids, write_enabled, server_url, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-  ).run(nextId("mcp"), workspaceId, 0, "all", "[]", 0, "http://localhost:3001/mcp", now);
-
-  seedTemplates(db, workspaceId, now);
-}
-
-function seedTemplates(db: DatabaseSync, workspaceId: string, now: string): void {
-  const research = {
-    scope: [
-      { id: "market", label: "市场规模与增长", enabled: true },
-      { id: "players", label: "主要公司与产品", enabled: true },
-      { id: "competition", label: "竞争格局", enabled: true },
-      { id: "trends", label: "趋势与机会", enabled: true },
-    ],
-    depth: "standard",
-    quality: "balanced",
-    outputs: ["report", "sources"],
+  if (await db.prepare("SELECT id FROM workspaces WHERE owner_subject = ?").get(subject)) return;
+  const ws = nextId("wsp");
+  await db
+    .prepare(
+      "INSERT INTO workspaces (id, type, owner_subject, name, created_at) VALUES (?, ?, ?, ?, ?)",
+    )
+    .run(ws, "personal", subject, workspaceName, now);
+  await db
+    .prepare(
+      "INSERT INTO users (subject, workspace_id, name, email, default_quality, default_language, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    )
+    .run(subject, ws, "演示用户", "demo@shiguang.local", "balanced", "zh-CN", now);
+  await db
+    .prepare(
+      "INSERT INTO credit_accounts (id, workspace_id, balance, total_granted, total_used, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+    )
+    .run(nextId("acc"), ws, 10000, 10000, 0, now);
+  await db
+    .prepare(
+      "INSERT INTO credit_ledger_entries (id, workspace_id, entry_type, amount, operation_id, description, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    )
+    .run(nextId("led"), ws, "grant", 10000, "op_seed_" + subject, "新用户初始 Credits", now);
+  await db
+    .prepare(
+      "INSERT INTO mcp_configs (id, workspace_id, enabled, scope, scope_ids, write_enabled, server_url, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .run(nextId("mcp"), ws, false, "all", "[]", false, "", now);
+  const r = {
+    type: "research",
+    name: "标准研究报告",
+    description: "适合大多数研究任务的默认模板。",
+    content: { document: { sections: ["背景", "方法", "关键发现", "结论与建议"] } },
   };
-  const presentation = {
-    theme: "light",
-    aspectRatio: "16:9",
+  await db
+    .prepare(
+      "INSERT INTO templates (id, workspace_id, type, name, description, content_json, version, published, usage_count, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .run(
+      nextId("tpl"),
+      ws,
+      "research",
+      r.name,
+      r.description,
+      JSON.stringify(r),
+      1,
+      true,
+      0,
+      now,
+      now,
+    );
+  const pres = {
+    theme: "default",
     slides: [
-      {
-        id: "s1",
-        layout: "title",
-        title: "{{title}}",
-        blocks: [{ id: "b1", type: "heading", content: "{{title}}" }],
-      },
-      {
-        id: "s2",
-        layout: "content",
-        title: "核心要点",
-        blocks: [
-          { id: "b2", type: "heading", content: "核心要点" },
-          {
-            id: "b3",
-            type: "bullet",
-            content: "背景与现状\n关键数据\n结论与建议",
-          },
-        ],
-      },
-      {
-        id: "s3",
-        layout: "closing",
-        title: "总结",
-        blocks: [{ id: "b4", type: "heading", content: "总结与展望" }],
-      },
+      { id: "s1", layout: "title", title: "标题页", blocks: [] },
+      { id: "s2", layout: "content", title: "核心要点", blocks: [] },
+      { id: "s3", layout: "closing", title: "总结与展望", blocks: [] },
     ],
   };
-  const insert = db.prepare(
-    "INSERT INTO templates (id, workspace_id, type, name, description, content_json, version, published, usage_count, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-  );
-  insert.run(
-    nextId("tpl"),
-    workspaceId,
-    "research",
-    "行业研究标准模板",
-    "市场、玩家、竞争、趋势四段式行业调研。",
-    JSON.stringify(research),
-    1,
-    1,
-    0,
-    now,
-    now,
-  );
-  insert.run(
-    nextId("tpl"),
-    workspaceId,
-    "research",
-    "竞品分析模板",
-    "聚焦竞品功能、定价、渠道与用户评价。",
-    JSON.stringify({
-      ...research,
-      scope: [
-        { id: "product", label: "产品与功能对比", enabled: true },
-        { id: "pricing", label: "定价与商业化", enabled: true },
-        { id: "channel", label: "渠道与增长", enabled: true },
-        { id: "reviews", label: "用户评价与口碑", enabled: true },
-      ],
-    }),
-    1,
-    1,
-    0,
-    now,
-    now,
-  );
-  insert.run(
-    nextId("tpl"),
-    workspaceId,
-    "presentation",
-    "商务汇报模板",
-    "标题、核心要点、总结的三段式演示模板。",
-    JSON.stringify(presentation),
-    1,
-    1,
-    0,
-    now,
-    now,
-  );
-  insert.run(
-    nextId("tpl"),
-    workspaceId,
-    "presentation",
-    "数据演示模板",
-    "突出数据与图表的演示模板。",
-    JSON.stringify({
-      ...presentation,
-      theme: "dark",
-      slides: [
-        presentation.slides[0],
-        {
-          id: "s2",
-          layout: "data",
-          title: "关键数据",
-          blocks: [
-            { id: "b2", type: "heading", content: "关键数据一览" },
-            { id: "b3", type: "text", content: "趋势 · 对比 · 份额" },
-          ],
-        },
-        presentation.slides[2],
-      ],
-    }),
-    1,
-    1,
-    0,
-    now,
-    now,
-  );
+  await db
+    .prepare(
+      "INSERT INTO templates (id, workspace_id, type, name, description, content_json, version, published, usage_count, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .run(
+      nextId("tpl"),
+      ws,
+      "presentation",
+      "数据演示模板",
+      "突出数据与图表的演示模板。",
+      JSON.stringify(pres),
+      1,
+      true,
+      0,
+      now,
+      now,
+    );
 }
 
-export type Db = DatabaseSync;
+/**
+ * Seed demo assets (documents, presentation, knowledge base, publishes, tasks)
+ * so the workspace opens with realistic content. Idempotent: skips when the
+ * demo documents already exist.
+ */
+export async function seedDemoAssets(db: Db, storage: ObjectStore, subject: string): Promise<void> {
+  const wsRow = await db.prepare("SELECT id FROM workspaces WHERE owner_subject = ?").get(subject);
+  if (!wsRow) return;
+  const workspaceId = String(wsRow.id);
+  const seeded = await db
+    .prepare("SELECT id FROM assets WHERE workspace_id = ? AND title = '2024 新能源汽车行业研究报告'")
+    .get(workspaceId);
+  if (seeded) return;
+
+  // Remove accidental empty documents auto-created by the editor's new-doc flow.
+  await cleanupUntitledDocs(db, workspaceId);
+
+  const now = Date.now();
+  const H = 3600_000;
+  const D = 24 * H;
+  const ago = (ms: number) => new Date(now - ms).toISOString();
+
+  interface DemoDoc {
+    title: string;
+    description: string;
+    tags: string[];
+    visibility: "private" | "link" | "public";
+    publishedUrl: string | null;
+    updatedAgo: number;
+    createdAgo: number;
+    content: string;
+  }
+
+  const docs: DemoDoc[] = [
+    {
+      title: "2024 新能源汽车行业研究报告",
+      description: "深入分析全球新能源汽车市场趋势、竞争格局与技术演进",
+      tags: ["行业研究", "新能源汽车"],
+      visibility: "public",
+      publishedUrl: "http://localhost:3004/p/nev-2024",
+      updatedAgo: 1 * D + 6 * H,
+      createdAgo: 30 * D,
+      content: `# 2024 新能源汽车行业研究报告
+
+## 一、市场概览
+
+2024 年全球新能源汽车销量持续增长，渗透率稳步提升。
+
+## 二、竞争格局
+
+- 中国市场保持领先
+- 欧洲市场加速转型
+- 东南亚成为新兴增长极
+
+## 三、技术演进
+
+电池技术、智能驾驶与补能网络是三大主线。
+
+## 四、结论与建议
+
+建议关注东南亚市场的政策红利与本土化供应链机会。`,
+    },
+    {
+      title: "越南消费金融市场分析",
+      description: "聚焦越南消费金融市场现状与未来机遇，包含市场规模、主要玩家与增长驱动",
+      tags: ["消费金融", "越南市场"],
+      visibility: "link",
+      publishedUrl: "http://localhost:3004/p/vietnam-fintech",
+      updatedAgo: 6 * H,
+      createdAgo: 12 * D,
+      content: `# 越南消费金融市场分析
+
+## 市场规模
+
+越南消费金融渗透率快速提升，年轻人口结构是核心驱动。
+
+## 主要玩家
+
+- FE Credit
+- Home Credit
+- 本地银行系消费金融公司
+
+## 增长驱动
+
+电商、摩托车分期与无抵押现金贷是主要场景。`,
+    },
+    {
+      title: "AI Agent 产品设计规范",
+      description: "定义 AI Agent 产品的设计原则、功能模块与交互规范",
+      tags: ["产品设计", "AI Agent"],
+      visibility: "link",
+      publishedUrl: null,
+      updatedAgo: 2 * D + 4 * H,
+      createdAgo: 45 * D,
+      content: `# AI Agent 产品设计规范
+
+## 设计原则
+
+1. 目标可理解
+2. 过程可观察
+3. 结果可验证
+4. 失败可恢复
+
+## 功能模块
+
+规划、工具调用、记忆、检查点与重试。`,
+    },
+    {
+      title: "Shiguang Lab 产品需求文档",
+      description: "Shiguang Lab 核心功能需求、用户场景与验收标准",
+      tags: ["PRD", "产品需求"],
+      visibility: "link",
+      publishedUrl: null,
+      updatedAgo: 95 * D,
+      createdAgo: 120 * D,
+      content: `# Shiguang Lab 产品需求文档
+
+## 产品定位
+
+AI 原生知识与数字资产工作空间。
+
+## 核心模块
+
+文档、知识库、调研、任务、数据集、在线演示。
+
+## 验收标准
+
+首次用户无需帮助即可完成「建文档 / 做调研 / 生成演示 / 发布」至少一种路径。`,
+    },
+    {
+      title: "行业数据 Dashboard",
+      description: "可视化展示行业关键指标与趋势数据，支持多维度下钻分析",
+      tags: ["数据可视化", "Dashboard"],
+      visibility: "public",
+      publishedUrl: "http://localhost:3004/p/industry-dashboard",
+      updatedAgo: 97 * D,
+      createdAgo: 130 * D,
+      content: `# 行业数据 Dashboard
+
+## 核心指标
+
+- 市场规模
+- 增长率
+- 集中度
+- 融资热度
+
+## 维度下钻
+
+按地区、公司、产品、时间多维度下钻。`,
+    },
+  ];
+
+  const docIds: Array<{ id: string; versionId: string }> = [];
+  for (const doc of docs) {
+    docIds.push(await insertDoc(db, storage, workspaceId, subject, doc));
+  }
+  const nevDoc = docIds[0]!;
+  const vietnamDoc = docIds[1]!;
+  const aiAgentDoc = docIds[2]!;
+  const dashboardDoc = docIds[4]!;
+
+  // Presentation generated from the first document.
+  const presId = nextId("ast");
+  const presVersionId = nextId("av");
+  const presUpdated = ago(3 * D);
+  const presManifest = JSON.stringify({
+    theme: "default",
+    slides: [
+      { id: "s1", layout: "title", title: "2024 新能源汽车行业研究报告", blocks: [] },
+      { id: "s2", layout: "content", title: "市场概览", blocks: [] },
+      { id: "s3", layout: "content", title: "竞争格局", blocks: [] },
+      { id: "s4", layout: "closing", title: "结论与建议", blocks: [] },
+    ],
+  });
+  await db
+    .prepare(
+      `INSERT INTO assets (id, workspace_id, owner_subject, type, title, description, visibility, status, tags_json, source_type, current_version_id, lock_version, created_at, updated_at)
+       VALUES (?, ?, ?, 'presentation', '新能源汽车行业研究报告演示', '由文档生成的在线演示', 'link', 'normal', '["行业研究"]', 'template', ?, 1, ?, ?)`,
+    )
+    .run(presId, workspaceId, subject, presVersionId, presUpdated, presUpdated);
+  await db
+    .prepare(
+      `INSERT INTO asset_versions (id, asset_id, sequence, change_kind, content_hash, size, media_type, metadata_json, created_at)
+       VALUES (?, ?, 1, 'create', ?, ?, 'application/json', '{}', ?)`,
+    )
+    .run(presVersionId, presId, hashBuffer(Buffer.from(presManifest)), Buffer.byteLength(presManifest), presUpdated);
+  const presKey = `assets/${presId}/versions/${presVersionId}/content`;
+  await storage.put(presKey, Buffer.from(presManifest), "application/json");
+  await db
+    .prepare(
+      `INSERT INTO asset_blobs (id, version_id, role, object_key, content_hash, size, media_type)
+       VALUES (?, ?, 'content', ?, ?, ?, 'application/json')`,
+    )
+    .run(nextId("blob"), presVersionId, presKey, hashBuffer(Buffer.from(presManifest)), Buffer.byteLength(presManifest));
+
+  // Relations matching the design's "关联" column:
+  // doc1/doc5 -> presentation (generated_from); doc2/doc3 -> knowledge (knowledge_source_of).
+  await db
+    .prepare(
+      `INSERT INTO asset_relations (id, source_asset_id, target_asset_id, relation_type, provenance_json, created_at)
+       VALUES (?, ?, ?, 'generated_from', '{"via":"demo"}', ?)`,
+    )
+    .run(nextId("rel"), nevDoc.id, presId, ago(2 * D));
+  await db
+    .prepare(
+      `INSERT INTO asset_relations (id, source_asset_id, target_asset_id, relation_type, provenance_json, created_at)
+       VALUES (?, ?, ?, 'knowledge_source_of', '{"via":"demo"}', ?)`,
+    )
+    .run(nextId("rel"), vietnamDoc.id, presId, ago(5 * H));
+  await db
+    .prepare(
+      `INSERT INTO asset_relations (id, source_asset_id, target_asset_id, relation_type, provenance_json, created_at)
+       VALUES (?, ?, ?, 'knowledge_source_of', '{"via":"demo"}', ?)`,
+    )
+    .run(nextId("rel"), aiAgentDoc.id, presId, ago(7 * D));
+  await db
+    .prepare(
+      `INSERT INTO asset_relations (id, source_asset_id, target_asset_id, relation_type, provenance_json, created_at)
+       VALUES (?, ?, ?, 'generated_from', '{"via":"demo"}', ?)`,
+    )
+    .run(nextId("rel"), dashboardDoc.id, presId, ago(2 * D));
+
+  // Knowledge base with two sources.
+  const kbId = nextId("kb");
+  await db
+    .prepare(
+      `INSERT INTO knowledge_bases (id, workspace_id, name, description, source_count, chunk_count, created_at, updated_at)
+       VALUES (?, ?, '越南消费金融资料库', '越南消费金融市场研究资料与行业数据', 2, 38, ?, ?)`,
+    )
+    .run(kbId, workspaceId, ago(8 * D), ago(5 * H));
+  for (const s of [
+    { versionId: vietnamDoc.versionId, title: docs[1]!.title },
+    { versionId: aiAgentDoc.versionId, title: docs[2]!.title },
+  ]) {
+    await db
+      .prepare(
+        `INSERT INTO knowledge_sources (id, kb_id, workspace_id, source_type, asset_version_id, url, title, status, content_hash, created_at, updated_at)
+         VALUES (?, ?, ?, 'asset', ?, NULL, ?, 'ready', ?, ?, ?)`,
+      )
+      .run(nextId("src"), kbId, workspaceId, s.versionId, s.title, "", ago(8 * D), ago(8 * D));
+  }
+
+  // Publishes for the three published documents.
+  for (const [i, doc] of docs.entries()) {
+    if (!doc.publishedUrl) continue;
+    await db
+      .prepare(
+        `INSERT INTO publishes (id, workspace_id, asset_id, slug, short_slug, visibility, allow_download, allow_copy, status, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, 'public', true, true, 'active', ?, ?)`,
+      )
+      .run(nextId("pub"), workspaceId, docIds[i]!.id, `doc-${i + 1}`, `d${i + 1}`, ago(2 * D), ago(2 * D));
+  }
+
+  // A running task and a completed task for the home/task pages.
+  await db
+    .prepare(
+      `INSERT INTO tasks (id, workspace_id, owner_subject, type, goal, status, progress, current_step, spec_json, input_asset_ids, output_asset_ids, credits_used, cancel_requested, started_at, created_at, updated_at)
+       VALUES (?, ?, ?, 'research', '调研东南亚电动车充电基础设施与政策环境', 'running', 62, '分析竞品与政策', '{"depth":"standard"}', '[]', '[]', 184, false, ?, ?, ?)`,
+    )
+    .run(nextId("tsk"), workspaceId, subject, ago(1 * H), ago(1 * H), ago(6 * H));
+  await db
+    .prepare(
+      `INSERT INTO tasks (id, workspace_id, owner_subject, type, goal, status, progress, current_step, spec_json, input_asset_ids, output_asset_ids, credits_used, cancel_requested, started_at, completed_at, created_at, updated_at)
+       VALUES (?, ?, ?, 'research', '2024 全球半导体行业竞争格局分析', 'completed', 100, '完成', '{"depth":"deep"}', '[]', '[]', 1280, false, ?, ?, ?, ?)`,
+    )
+    .run(nextId("tsk"), workspaceId, subject, ago(12 * D), ago(11 * D), ago(12 * D), ago(11 * D));
+}
+
+async function insertDoc(
+  db: Db,
+  storage: ObjectStore,
+  workspaceId: string,
+  subject: string,
+  doc: {
+    title: string;
+    description: string;
+    tags: string[];
+    visibility: string;
+    publishedUrl: string | null;
+    updatedAgo: number;
+    createdAgo: number;
+    content: string;
+  },
+): Promise<{ id: string; versionId: string }> {
+  const id = nextId("ast");
+  const versionId = nextId("av");
+  const createdAt = new Date(Date.now() - doc.createdAgo).toISOString();
+  const updatedAt = new Date(Date.now() - doc.updatedAgo).toISOString();
+  await db
+    .prepare(
+      `INSERT INTO assets (id, workspace_id, owner_subject, type, title, description, visibility, status, tags_json, source_type, current_version_id, lock_version, published_url, created_at, updated_at)
+       VALUES (?, ?, ?, 'document', ?, ?, ?, 'normal', ?, 'manual', ?, 1, ?, ?, ?)`,
+    )
+    .run(
+      id,
+      workspaceId,
+      subject,
+      doc.title,
+      doc.description,
+      doc.visibility,
+      JSON.stringify(doc.tags),
+      versionId,
+      doc.publishedUrl,
+      createdAt,
+      updatedAt,
+    );
+  const data = Buffer.from(doc.content, "utf8");
+  await db
+    .prepare(
+      `INSERT INTO asset_versions (id, asset_id, sequence, change_kind, content_hash, size, media_type, metadata_json, created_at)
+       VALUES (?, ?, 1, 'create', ?, ?, 'text/markdown', '{}', ?)`,
+    )
+    .run(versionId, id, hashBuffer(data), data.byteLength, createdAt);
+  const objectKey = `assets/${id}/versions/${versionId}/content`;
+  await storage.put(objectKey, data, "text/plain");
+  await db
+    .prepare(
+      `INSERT INTO asset_blobs (id, version_id, role, object_key, content_hash, size, media_type)
+       VALUES (?, ?, 'content', ?, ?, ?, 'text/markdown')`,
+    )
+    .run(nextId("blob"), versionId, objectKey, hashBuffer(data), data.byteLength);
+  return { id, versionId };
+}
+
+/** Delete empty "未命名文档" assets auto-created by the editor's new-doc flow. */
+async function cleanupUntitledDocs(db: Db, workspaceId: string): Promise<void> {
+  const ids = (
+    (await db
+      .prepare("SELECT id FROM assets WHERE workspace_id = ? AND title = '未命名文档'")
+      .all(workspaceId)) as Row[]
+  ).map((r) => String(r.id));
+  for (const id of ids) {
+    await db
+      .prepare("DELETE FROM asset_blobs WHERE version_id IN (SELECT id FROM asset_versions WHERE asset_id = ?)")
+      .run(id);
+    await db.prepare("DELETE FROM asset_versions WHERE asset_id = ?").run(id);
+    await db
+      .prepare("DELETE FROM asset_relations WHERE source_asset_id = ? OR target_asset_id = ?")
+      .run(id, id);
+    await db.prepare("DELETE FROM publishes WHERE asset_id = ?").run(id);
+    await db.prepare("DELETE FROM assets WHERE id = ?").run(id);
+  }
+}

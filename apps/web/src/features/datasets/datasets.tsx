@@ -1,4 +1,14 @@
-import { Button, Card, Empty, Input, Select, StatusBadge, Tabs, useToast } from "@shiguang/ui";
+import {
+  Button,
+  Card,
+  Empty,
+  Input,
+  Scrollbar,
+  Select,
+  StatusBadge,
+  Tabs,
+  useToast,
+} from "@shiguang/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as echarts from "echarts";
 import { useEffect, useRef, useState } from "react";
@@ -293,7 +303,7 @@ export function DatasetDetailPage() {
               style={{ width: 110 }}
             />
           </div>
-          <div style={{ overflow: "auto", maxHeight: 560 }}>
+          <Scrollbar style={{ maxHeight: 560 }}>
             <table className="sg-table">
               <thead>
                 <tr>
@@ -312,7 +322,7 @@ export function DatasetDetailPage() {
                 ))}
               </tbody>
             </table>
-          </div>
+          </Scrollbar>
           <div className="sg-pagination">
             <span className="sg-subtle">
               共 {queryResult.data?.total.toLocaleString() ?? "-"} 行
@@ -487,7 +497,7 @@ export function DatasetDetailPage() {
           <h3 className="sg-h3" style={{ marginTop: 16 }}>
             列画像
           </h3>
-          <div style={{ overflow: "auto" }}>
+          <Scrollbar>
             <table className="sg-table">
               <thead>
                 <tr>
@@ -530,7 +540,7 @@ export function DatasetDetailPage() {
                 })}
               </tbody>
             </table>
-          </div>
+          </Scrollbar>
         </Card>
       )}
     </div>

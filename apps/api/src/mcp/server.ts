@@ -10,6 +10,7 @@ import {
 } from "@shiguang/contracts";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
+import { requireAssetAccess } from "../platform/authorization.js";
 import { forbidden, unauthorized } from "../platform/errors.js";
 import type { AppContext } from "../types.js";
 
@@ -17,7 +18,7 @@ interface ToolDef {
   name: McpToolName;
   description: string;
   inputSchema: z.ZodTypeAny;
-  handler: (input: z.infer<z.ZodTypeAny>, ctx: AppContext) => Promise<unknown>;
+  handler: (input: z.infer<z.ZodTypeAny>, ctx: AppContext, actor: ActorContext) => Promise<unknown>;
 }
 
 export function registerMcp(app: FastifyInstance, ctx: AppContext): void {
@@ -26,11 +27,14 @@ export function registerMcp(app: FastifyInstance, ctx: AppContext): void {
       name: "search_assets",
       description: "按名称/标签/类型检索工作区中的数字资产（文档、报告、数据、演示等）。",
       inputSchema: mcpToolInputs.searchAssets,
-      handler: async (input) => {
-        const actor = getActor(ctx);
+      handler: async (input, ctx, actor) => {
         const q = input as z.infer<typeof mcpToolInputs.searchAssets>;
-        const assets = ctx.store.searchAssets(actor.workspaceId, q.query, 20);
-        const scoped = applyScope(assets, q.scope, q.scopeIds);
+        const config = await requireMcpScope(ctx, actor, "assets");
+        const assets = await ctx.store.searchAssets(actor.workspaceId, q.query, 20, {
+          subject: actor.subject,
+          workspaceRole: actor.workspaceRole,
+        });
+        const scoped = applyAssetScope(assets, config.scopeIds, q.scope, q.scopeIds);
         return {
           content: [
             {
@@ -61,11 +65,16 @@ export function registerMcp(app: FastifyInstance, ctx: AppContext): void {
       description:
         "读取资产内容；document/report 返回 Markdown，html 返回源码，dataset/presentation 返回结构化 JSON。",
       inputSchema: mcpToolInputs.readAsset,
-      handler: async (input) => {
-        const actor = getActor(ctx);
+      handler: async (input, ctx, actor) => {
         const q = input as z.infer<typeof mcpToolInputs.readAsset>;
-        const asset = ctx.store.getAsset(actor.workspaceId, q.assetId);
+        await requireMcpScope(ctx, actor, "assets", q.assetId);
+        const asset = await ctx.store.getAsset(actor.workspaceId, q.assetId);
         if (!asset) {
+          return { content: [{ type: "text", text: "资产不存在或无权访问" }], isError: true };
+        }
+        try {
+          await requireAssetAccess(ctx, actor, q.assetId, "read");
+        } catch {
           return { content: [{ type: "text", text: "资产不存在或无权访问" }], isError: true };
         }
         const content = await ctx.store.readContent(q.assetId, q.versionId);
@@ -110,14 +119,14 @@ export function registerMcp(app: FastifyInstance, ctx: AppContext): void {
       name: "search_knowledge",
       description: "在指定知识库中检索相关片段，返回 Source 与原文定位。",
       inputSchema: mcpToolInputs.searchKnowledge,
-      handler: async (input) => {
-        const actor = getActor(ctx);
+      handler: async (input, ctx, actor) => {
         const q = input as z.infer<typeof mcpToolInputs.searchKnowledge>;
-        const kb = ctx.store.getKnowledgeBase(actor.workspaceId, q.knowledgeBaseId);
+        await requireMcpScope(ctx, actor, "knowledge_bases", q.knowledgeBaseId);
+        const kb = await ctx.store.getKnowledgeBase(actor.workspaceId, q.knowledgeBaseId);
         if (!kb) {
           return { content: [{ type: "text", text: "知识库不存在或无权访问" }], isError: true };
         }
-        const results = ctx.store.searchChunks(q.knowledgeBaseId, q.query, q.limit);
+        const results = await ctx.store.searchChunks(q.knowledgeBaseId, q.query, q.limit);
         return {
           content: [
             {
@@ -143,11 +152,11 @@ export function registerMcp(app: FastifyInstance, ctx: AppContext): void {
       name: "create_asset",
       description: "创建新的数字资产（Write 权限）。",
       inputSchema: mcpToolInputs.createAsset,
-      handler: async (input) => {
-        requireWrite(ctx, "create_asset");
-        const actor = getActor(ctx);
+      handler: async (input, ctx, actor) => {
+        await requireMcpScope(ctx, actor, "assets");
+        await requireWrite(ctx, actor, "create_asset");
         const q = input as z.infer<typeof mcpToolInputs.createAsset>;
-        const asset = ctx.store.createAsset(actor, {
+        const asset = await ctx.store.createAsset(actor, {
           type: q.type as AssetType,
           title: q.title,
           description: q.description,
@@ -161,7 +170,7 @@ export function registerMcp(app: FastifyInstance, ctx: AppContext): void {
               }
             : undefined,
         });
-        ctx.bus.emit({
+        await ctx.bus.emit({
           eventId: nextId("evt"),
           eventType: "asset.created",
           schemaVersion: 1,
@@ -186,14 +195,20 @@ export function registerMcp(app: FastifyInstance, ctx: AppContext): void {
       name: "update_asset",
       description: "更新资产标题或内容（Write 权限，携带期望版本以检测冲突）。",
       inputSchema: mcpToolInputs.updateAsset,
-      handler: async (input) => {
-        requireWrite(ctx, "update_asset");
-        const actor = getActor(ctx);
+      handler: async (input, ctx, actor) => {
+        await requireMcpScope(
+          ctx,
+          actor,
+          "assets",
+          (input as z.infer<typeof mcpToolInputs.updateAsset>).assetId,
+        );
+        await requireWrite(ctx, actor, "update_asset");
         const q = input as z.infer<typeof mcpToolInputs.updateAsset>;
+        await requireAssetAccess(ctx, actor, q.assetId, "write");
         if (q.content) {
-          const asset = ctx.store.getAsset(actor.workspaceId, q.assetId);
+          const asset = await ctx.store.getAsset(actor.workspaceId, q.assetId);
           if (!asset) throw unauthorized("资产不存在");
-          const saved = ctx.store.saveContent(
+          const saved = await ctx.store.saveContent(
             actor,
             q.assetId,
             {
@@ -213,7 +228,7 @@ export function registerMcp(app: FastifyInstance, ctx: AppContext): void {
             ],
           };
         }
-        const updated = ctx.store.updateAssetMeta(
+        const updated = await ctx.store.updateAssetMeta(
           actor,
           q.assetId,
           {
@@ -229,16 +244,16 @@ export function registerMcp(app: FastifyInstance, ctx: AppContext): void {
       name: "create_task",
       description: "创建后台任务（Research/导入等，Write 权限）。",
       inputSchema: mcpToolInputs.createTask,
-      handler: async (input) => {
-        requireWrite(ctx, "create_task");
-        const actor = getActor(ctx);
+      handler: async (input, ctx, actor) => {
+        await requireMcpScope(ctx, actor, "all");
+        await requireWrite(ctx, actor, "create_task");
         const q = input as z.infer<typeof mcpToolInputs.createTask>;
-        const task = ctx.store.createTask(actor, {
+        const task = await ctx.store.createTask(actor, {
           type: q.type,
           goal: q.goal,
           spec: q.spec ?? {},
         });
-        ctx.bus.emit({
+        await ctx.bus.emit({
           eventId: nextId("evt"),
           eventType: "task.created",
           schemaVersion: 1,
@@ -258,13 +273,17 @@ export function registerMcp(app: FastifyInstance, ctx: AppContext): void {
       name: "publish_asset",
       description: "将资产发布为公开/未列出/密码访问的稳定 URL（Write 权限 + 高风险操作）。",
       inputSchema: mcpToolInputs.publishAsset,
-      handler: async (input) => {
-        requireWrite(ctx, "publish_asset");
-        const actor = getActor(ctx);
+      handler: async (input, ctx, actor) => {
+        await requireMcpScope(
+          ctx,
+          actor,
+          "assets",
+          (input as z.infer<typeof mcpToolInputs.publishAsset>).assetId,
+        );
+        await requireWrite(ctx, actor, "publish_asset");
         const q = input as z.infer<typeof mcpToolInputs.publishAsset>;
-        const asset = ctx.store.getAsset(actor.workspaceId, q.assetId);
-        if (!asset) throw unauthorized("资产不存在");
-        const publish = ctx.store.createPublish(actor, {
+        await requireAssetAccess(ctx, actor, q.assetId, "manage");
+        const publish = await ctx.store.createPublish(actor, {
           assetId: q.assetId,
           visibility: q.visibility,
           password: null,
@@ -362,7 +381,6 @@ async function handleRpc(
 ): Promise<Record<string, unknown>> {
   switch (method) {
     case "initialize":
-      ctx.actor = actor;
       return {};
     case "notifications/initialized":
       return { result: null as unknown as Record<string, unknown> };
@@ -386,14 +404,13 @@ async function handleRpc(
       if (!tool) {
         return { error: { code: -32602, message: `Unknown tool: ${name}` } };
       }
-      ctx.actor = actor;
       const parsed = tool.inputSchema.safeParse(args);
       if (!parsed.success) {
         return {
           error: { code: -32602, message: `Invalid arguments: ${parsed.error.message}` },
         };
       }
-      const output = await tool.handler(parsed.data, ctx);
+      const output = await tool.handler(parsed.data, ctx, actor);
       return { result: output as Record<string, unknown> };
     }
     default:
@@ -472,42 +489,52 @@ async function resolveMcpActor(ctx: AppContext, req: FastifyRequest): Promise<Ac
     const actor = await ctx.identity.resolve(
       req.headers as Record<string, string | string[] | undefined>,
     );
-    const config = ctx.store.getMcpConfig(actor.workspaceId);
+    const config = await ctx.store.getMcpConfig(actor.workspaceId);
     if (!config?.enabled) return null;
-    ctx.actor = actor;
-    ctx.mcpConfig = config;
     return actor;
   } catch {
     return null;
   }
 }
 
-function requireWrite(ctx: AppContext, tool: string): void {
-  if (!ctx.mcpConfig?.writeEnabled) {
+async function requireWrite(ctx: AppContext, actor: ActorContext, tool: string): Promise<void> {
+  const config = await ctx.store.getMcpConfig(actor.workspaceId);
+  if (!config?.writeEnabled) {
     throw forbidden("MCP Write 权限未开启，请先在设置中确认开启后再使用写工具");
   }
-  const actor = getActor(ctx);
   ctx.identity.requireWrite(actor);
-  ctx.store.audit(actor.workspaceId, actor.subject, `mcp.${tool}`, "mcp", "success", {});
+  await ctx.store.audit(actor.workspaceId, actor.subject, `mcp.${tool}`, "mcp", "success", {});
 }
 
-function applyScope(
+async function requireMcpScope(
+  ctx: AppContext,
+  actor: ActorContext,
+  resource: "all" | "assets" | "knowledge_bases",
+  resourceId?: string,
+): Promise<{ scope: "all" | "assets" | "knowledge_bases"; scopeIds: string[] }> {
+  const config = await ctx.store.getMcpConfig(actor.workspaceId);
+  if (!config?.enabled) throw unauthorized("MCP 未启用或访问凭证无效");
+  if (config.scope !== "all" && config.scope !== resource) {
+    throw forbidden("当前 MCP 连接不包含该资源范围");
+  }
+  if (resourceId && config.scopeIds.length > 0 && !config.scopeIds.includes(resourceId)) {
+    throw forbidden("当前 MCP 连接不包含该资源");
+  }
+  return config;
+}
+
+function applyAssetScope(
   assets: Asset[],
-  scope?: "all" | "knowledge_bases" | "assets",
-  scopeIds?: string[],
+  configuredIds: string[],
+  requestedScope?: "all" | "knowledge_bases" | "assets",
+  requestedIds?: string[],
 ): Asset[] {
-  if (!scope || scope === "all") return assets;
-  if (scopeIds && scopeIds.length > 0) {
-    return assets.filter((a) => scopeIds.includes(a.id));
-  }
-  return [];
-}
-
-function getActor(ctx: AppContext): ActorContext {
-  if (!ctx.actor) {
-    throw unauthorized("MCP 会话未初始化");
-  }
-  return ctx.actor;
+  if (requestedScope === "knowledge_bases") return [];
+  return assets.filter(
+    (asset) =>
+      (configuredIds.length === 0 || configuredIds.includes(asset.id)) &&
+      (!requestedIds || requestedIds.length === 0 || requestedIds.includes(asset.id)),
+  );
 }
 
 function takeHeader(

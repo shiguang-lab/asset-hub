@@ -91,7 +91,7 @@ export function HtmlEditorPage() {
   };
 
   return (
-    <div style={{ maxWidth: 1200, margin: "0 auto" }}>
+    <div>
       <div className="sg-row-between" style={{ marginBottom: 10 }}>
         <input
           value={title}

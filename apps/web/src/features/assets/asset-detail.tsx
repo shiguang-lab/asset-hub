@@ -6,6 +6,7 @@ import {
   formatDate,
   Input,
   Modal,
+  Scrollbar,
   Select,
   StatusBadge,
   Table,
@@ -14,12 +15,26 @@ import {
   useToast,
 } from "@shiguang/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Download } from "lucide-react";
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { type Asset, api, type KnowledgeBase, type Publish } from "../../entities/api.js";
+import { canWriteWorkspace, getAuthSession, isWorkspaceAdmin } from "../../auth/session.js";
+import {
+  type Asset,
+  api,
+  downloadFile,
+  type KnowledgeBase,
+  type Publish,
+} from "../../entities/api.js";
 import { Markdown } from "../../shared/markdown.js";
 import { SandboxHtmlPreview } from "../../shared/sandbox-preview.js";
 import { PublishDialog } from "../publishing/publish-dialog.js";
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
 
 export function AssetDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -33,6 +48,9 @@ export function AssetDetailPage() {
   const [shareSubject, setShareSubject] = useState("");
   const [shareRole, setShareRole] = useState("viewer");
   const [publishOpen, setPublishOpen] = useState(false);
+  const session = getAuthSession();
+  const workspaceWritable = canWriteWorkspace(session);
+  const workspaceAdmin = isWorkspaceAdmin(session);
 
   const { data: asset } = useQuery<Asset>({
     queryKey: ["asset", id],
@@ -65,7 +83,7 @@ export function AssetDetailPage() {
   const { data: acl } = useQuery<{ acl: Array<{ principal_id: string; role: string }> }>({
     queryKey: ["asset-acl", id],
     queryFn: () => api(`/assets/${id}/acl`),
-    enabled: Boolean(id),
+    enabled: Boolean(id && (workspaceAdmin || asset?.ownerSubject === session?.id)),
   });
   const { data: kbs } = useQuery<KnowledgeBase[]>({
     queryKey: ["knowledge"],
@@ -123,6 +141,7 @@ export function AssetDetailPage() {
   });
 
   if (!asset) return <Empty title="加载中…" />;
+  const canManageAsset = workspaceAdmin || asset.ownerSubject === session?.id;
   const published = publishes?.find((p) => p.assetId === asset.id && p.status === "active");
   const content = asset.content;
 
@@ -145,33 +164,52 @@ export function AssetDetailPage() {
           </div>
         </div>
         <div className="sg-row">
-          {asset.type === "document" || asset.type === "report" ? (
+          {workspaceWritable && (asset.type === "document" || asset.type === "report") ? (
             <Button onClick={() => navigate(`/documents/${asset.id}`)}>编辑</Button>
           ) : null}
-          {asset.type === "html" ? (
+          {workspaceWritable && asset.type === "html" ? (
             <Button onClick={() => navigate(`/html/${asset.id}`)}>编辑</Button>
           ) : null}
-          {asset.type === "presentation" ? (
+          {workspaceWritable && asset.type === "presentation" ? (
             <Button onClick={() => navigate(`/presentations/${asset.id}`)}>编辑</Button>
           ) : null}
           {asset.type === "dataset" ? (
             <Button onClick={() => navigate(`/datasets/${asset.id}`)}>打开数据</Button>
           ) : null}
-          <Button onClick={() => setKbModal(true)}>加入知识库</Button>
-          <Button onClick={() => setShareModal(true)}>分享</Button>
-          <Button onClick={() => navigate(`/presentations/new?asset=${asset.id}`)}>生成演示</Button>
-          {published ? (
-            <Button variant="primary" onClick={() => setPublishOpen(true)}>
-              发布设置
+          {asset.type === "file" ? (
+            <Button
+              variant="primary"
+              onClick={() =>
+                void downloadFile(`/assets/${asset.id}/download`, asset.title).catch((error) =>
+                  toast("error", error instanceof Error ? error.message : "下载失败"),
+                )
+              }
+            >
+              <Download size={15} /> 下载文件
             </Button>
-          ) : (
-            <Button variant="primary" onClick={() => setPublishOpen(true)}>
-              发布
+          ) : null}
+          {workspaceWritable && <Button onClick={() => setKbModal(true)}>加入知识库</Button>}
+          {canManageAsset && <Button onClick={() => setShareModal(true)}>分享</Button>}
+          {workspaceWritable && (
+            <Button onClick={() => navigate(`/presentations/new?asset=${asset.id}`)}>
+              生成演示
             </Button>
           )}
-          <Button variant="danger" onClick={() => deleteAsset.mutate()}>
-            删除
-          </Button>
+          {canManageAsset &&
+            (published ? (
+              <Button variant="primary" onClick={() => setPublishOpen(true)}>
+                发布设置
+              </Button>
+            ) : (
+              <Button variant="primary" onClick={() => setPublishOpen(true)}>
+                发布
+              </Button>
+            ))}
+          {canManageAsset && (
+            <Button variant="danger" onClick={() => deleteAsset.mutate()}>
+              删除
+            </Button>
+          )}
         </div>
       </div>
 
@@ -188,14 +226,34 @@ export function AssetDetailPage() {
 
       {tab === "content" && (
         <Card>
-          {content?.kind === "markdown" || asset.type === "report" ? (
+          {content?.kind === "blob" || asset.type === "file" ? (
+            <div className="sg-col" style={{ gap: 10 }}>
+              <strong>{asset.title}</strong>
+              <span className="sg-subtle">
+                {content?.refs?.[0]?.mediaType ?? "application/octet-stream"}
+                {content?.refs?.[0]?.size !== undefined
+                  ? ` · ${formatBytes(content.refs[0].size)}`
+                  : ""}
+              </span>
+              <Button
+                variant="primary"
+                onClick={() =>
+                  void downloadFile(`/assets/${asset.id}/download`, asset.title).catch((error) =>
+                    toast("error", error instanceof Error ? error.message : "下载失败"),
+                  )
+                }
+              >
+                <Download size={15} /> 下载文件
+              </Button>
+            </div>
+          ) : content?.kind === "markdown" || asset.type === "report" ? (
             <Markdown source={content?.text ?? ""} />
           ) : content?.kind === "html" ? (
             <SandboxHtmlPreview source={content?.text ?? ""} />
           ) : content?.kind === "manifest" ? (
-            <pre style={{ overflow: "auto", fontSize: 12 }}>
-              {JSON.stringify(content.manifest, null, 2)}
-            </pre>
+            <Scrollbar>
+              <pre style={{ fontSize: 12 }}>{JSON.stringify(content.manifest, null, 2)}</pre>
+            </Scrollbar>
           ) : (
             <Empty title="没有内容" />
           )}
@@ -242,30 +300,32 @@ export function AssetDetailPage() {
                   <code>{asset.currentVersionId}</code>
                 </td>
               </tr>
-              <tr>
-                <td>共享权限</td>
-                <td>
-                  {(acl?.acl.length ?? 0) === 0 ? (
-                    <span className="sg-subtle">仅所有者可见</span>
-                  ) : (
-                    <div className="sg-col" style={{ gap: 4 }}>
-                      {acl?.acl.map((entry) => (
-                        <div key={entry.principal_id} className="sg-row">
-                          <span className="sg-badge">{entry.principal_id}</span>
-                          <span className="sg-badge sg-badge-accent">{entry.role}</span>
-                          <Button
-                            size="sm"
-                            variant="danger"
-                            onClick={() => revokeShare.mutate(entry.principal_id)}
-                          >
-                            取消
-                          </Button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </td>
-              </tr>
+              {canManageAsset && (
+                <tr>
+                  <td>共享权限</td>
+                  <td>
+                    {(acl?.acl.length ?? 0) === 0 ? (
+                      <span className="sg-subtle">仅所有者可见</span>
+                    ) : (
+                      <div className="sg-col" style={{ gap: 4 }}>
+                        {acl?.acl.map((entry) => (
+                          <div key={entry.principal_id} className="sg-row">
+                            <span className="sg-badge">{entry.principal_id}</span>
+                            <span className="sg-badge sg-badge-accent">{entry.role}</span>
+                            <Button
+                              size="sm"
+                              variant="danger"
+                              onClick={() => revokeShare.mutate(entry.principal_id)}
+                            >
+                              取消
+                            </Button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </td>
+                </tr>
+              )}
             </tbody>
           </Table>
         </Card>
@@ -293,16 +353,18 @@ export function AssetDetailPage() {
                     <code style={{ fontSize: 11 }}>{v.contentHash.slice(0, 18)}…</code>
                   </td>
                   <td>
-                    <Button
-                      size="sm"
-                      onClick={() =>
-                        api(`/assets/${id}/versions/${v.id}/restore`, { method: "POST" }).then(() =>
-                          toast("success", "已恢复该版本"),
-                        )
-                      }
-                    >
-                      恢复
-                    </Button>
+                    {canManageAsset && (
+                      <Button
+                        size="sm"
+                        onClick={() =>
+                          api(`/assets/${id}/versions/${v.id}/restore`, { method: "POST" }).then(
+                            () => toast("success", "已恢复该版本"),
+                          )
+                        }
+                      >
+                        恢复
+                      </Button>
+                    )}
                   </td>
                 </tr>
               ))}

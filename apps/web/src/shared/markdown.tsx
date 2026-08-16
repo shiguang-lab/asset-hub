@@ -54,7 +54,8 @@ export function Markdown({ source, className }: { source: string; className?: st
   }, [mermaid, source]);
 
   if (rendered.length === 0) {
-    return <Markdown source={source} className={className} />;
+    const html = String(processor.processSync(source));
+    return <div className={className ?? "sg-md"} dangerouslySetInnerHTML={{ __html: html }} />;
   }
   const parts: string[] = [];
   let cursor = 0;

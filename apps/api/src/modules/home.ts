@@ -1,23 +1,29 @@
 import type { FastifyInstance } from "fastify";
+import { requireAdmin } from "../platform/authorization.js";
 import type { AppContext } from "../types.js";
 
 export function registerHome(app: FastifyInstance): void {
   const ctx: AppContext = app.ctx;
 
   app.get("/api/v1/home", async (req) => {
-    const recentAssets = ctx.store.listAssets(req.actor.workspaceId, { limit: 6 }).items;
-    const runningTasks = ctx.store
-      .listTasks(req.actor.workspaceId, { limit: 10 })
-      .items.filter((t) =>
+    const recentAssets = (
+      await ctx.store.listAssets(req.actor.workspaceId, {
+        limit: 6,
+        subject: req.actor.subject,
+        workspaceRole: req.actor.workspaceRole,
+      })
+    ).items;
+    const runningTasks = (await ctx.store.listTasks(req.actor.workspaceId, { limit: 10 })).items
+      .filter((t) =>
         ["created", "planning", "queued", "running", "waiting_user"].includes(t.status),
       )
       .slice(0, 5);
-    const unreadNotifications = ctx.store.unreadNotificationCount(
+    const unreadNotifications = await ctx.store.unreadNotificationCount(
       req.actor.workspaceId,
       req.actor.subject,
     );
-    const creditAccount = ctx.store.getCreditAccount(req.actor.workspaceId);
-    const templates = ctx.store.listTemplates(req.actor.workspaceId).slice(0, 2);
+    const creditAccount = await ctx.store.getCreditAccount(req.actor.workspaceId);
+    const templates = (await ctx.store.listTemplates(req.actor.workspaceId)).slice(0, 2);
     return {
       recentAssets,
       runningTasks,
@@ -28,11 +34,11 @@ export function registerHome(app: FastifyInstance): void {
   });
 
   app.get("/api/v1/me", async (req) => {
-    const profile = ctx.store.ensureUser({
+    const profile = await ctx.store.ensureUser({
       subject: req.actor.subject,
       workspaceId: req.actor.workspaceId,
     });
-    const creditAccount = ctx.store.getCreditAccount(req.actor.workspaceId);
+    const creditAccount = await ctx.store.getCreditAccount(req.actor.workspaceId);
     return { profile, workspaceId: req.actor.workspaceId, credits: creditAccount?.balance ?? 0 };
   });
 
@@ -43,11 +49,12 @@ export function registerHome(app: FastifyInstance): void {
       defaultLanguage?: string;
       notifyEmail?: boolean;
     };
-    const profile = ctx.store.updateUserProfile(req.actor.subject, body);
+    const profile = await ctx.store.updateUserProfile(req.actor.subject, body);
     return profile;
   });
 
   app.get("/api/v1/audit", async (req) => {
-    return ctx.store.listAudit(req.actor.workspaceId, 100);
+    requireAdmin(req.actor);
+    return await ctx.store.listAudit(req.actor.workspaceId, 100);
   });
 }

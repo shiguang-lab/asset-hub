@@ -3,18 +3,21 @@ import multipart from "@fastify/multipart";
 import { createAiService } from "@shiguang/ai-core";
 import { loadDatabaseConfig, loadObjectStoreConfig, type ServiceConfig } from "@shiguang/config";
 import { createObjectStore, createStore, openDatabase } from "@shiguang/database";
+import { NatsChannel } from "@shiguang/event-channel";
 import { createLogger } from "@shiguang/observability";
 import Fastify, { type FastifyInstance } from "fastify";
 import { registerInternalRoutes } from "../internal/routes.js";
 import { registerMcp } from "../mcp/server.js";
 import { registerModules } from "../modules/index.js";
+import { enforceRequestAuthorization, requiresWorkspaceWrite } from "../platform/authorization.js";
 import { toProblem } from "../platform/errors.js";
 import { createEventBus } from "../platform/events.js";
 import { IdentityService } from "../platform/identity.js";
+import { SgIdentityVerifier } from "../platform/sg-identity.js";
 import { SseHub } from "../platform/sse.js";
 import type { AppContext } from "../types.js";
 
-export function buildApp(config: ServiceConfig): FastifyInstance {
+export async function buildApp(config: ServiceConfig): Promise<FastifyInstance> {
   const logger = createLogger("api", config.logLevel);
   const app = Fastify({
     logger: { level: config.logLevel, name: "api" },
@@ -32,20 +35,40 @@ export function buildApp(config: ServiceConfig): FastifyInstance {
   });
 
   const dbConfig = loadDatabaseConfig();
-  const db = openDatabase({
-    path: dbConfig.path,
-    seedDemo: config.env !== "test",
+  // Storage is created before the DB so the demo-data seed can persist content blobs.
+  const storage = createObjectStore(loadObjectStoreConfig("api"));
+  const db = await openDatabase({
+    url: dbConfig.url,
+    seedDemo: config.env !== "test" && dbConfig.seedDemo,
     demoSubject: dbConfig.demoSubject,
     demoWorkspaceName: dbConfig.demoWorkspaceName,
+    storage,
   });
-  const storage = createObjectStore(loadObjectStoreConfig("api").rootDir);
   const store = createStore(db, storage);
   const sse = new SseHub(logger);
+  const verifier = new SgIdentityVerifier({
+    issuer: process.env.SG_IDENTITY_ISSUER ?? "https://shiguanglab.com",
+    audience: process.env.SG_IDENTITY_AUDIENCE ?? "asset-hub-api",
+    entitlement: process.env.SG_IDENTITY_ENTITLEMENT ?? "asset-hub:access",
+    jwksUrl:
+      process.env.SG_IDENTITY_JWKS_URL ??
+      "https://shiguanglab.com/.well-known/sg-identity-jwks.json",
+    jwksFile: process.env.SG_IDENTITY_JWKS_FILE,
+  });
   const identity = new IdentityService(store, {
     devAuth: config.devAuth,
     demoSubject: dbConfig.demoSubject,
+    verifyAssertion: (token) => verifier.verify(token),
   });
-  const bus = createEventBus(store, sse, logger);
+  const nats = new NatsChannel();
+  if (process.env.NATS_URL) {
+    try {
+      await nats.connect(process.env.NATS_URL);
+    } catch (err) {
+      logger.warn({ err: err instanceof Error ? err.message : String(err) }, "NATS connect failed");
+    }
+  }
+  const bus = createEventBus(store, sse, logger, nats);
   const ai = createAiService({ quality: "balanced" });
   const ctx: AppContext = {
     config,
@@ -60,8 +83,13 @@ export function buildApp(config: ServiceConfig): FastifyInstance {
   app.decorate("ctx", ctx);
 
   app.addHook("onRequest", async (req) => {
+    if (bypassesBrowserIdentity(req.url)) return;
     req.actor = await identity.resolve(req.headers as Record<string, string | undefined>);
     req.idempotencyKey = takeHeader(req.headers, "idempotency-key");
+    if (req.url.startsWith("/api/v1/") && requiresWorkspaceWrite(req)) {
+      identity.requireWrite(req.actor);
+    }
+    await enforceRequestAuthorization(ctx, req);
   });
 
   app.addHook("onSend", async (req, reply, payload) => {
@@ -136,10 +164,16 @@ export function buildApp(config: ServiceConfig): FastifyInstance {
 
   app.addHook("onClose", async () => {
     sse.close();
-    db.close();
+    await nats.close();
+    await db.pool.end();
   });
 
   return app;
+}
+
+export function bypassesBrowserIdentity(url: string): boolean {
+  const path = url.split("?", 1)[0] ?? url;
+  return path === "/healthz" || path.startsWith("/internal/");
 }
 
 function takeHeader(

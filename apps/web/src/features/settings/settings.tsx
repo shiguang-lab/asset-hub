@@ -4,6 +4,7 @@ import {
   Field,
   formatDate,
   Input,
+  Scrollbar,
   Select,
   Switch,
   Table,
@@ -12,27 +13,40 @@ import {
 } from "@shiguang/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
+import {
+  addOrganizationMember,
+  fetchOrganizationMembers,
+  getAuthSession,
+  isWorkspaceAdmin,
+  type OrganizationMember,
+  type OrganizationRole,
+  removeOrganizationMember,
+  updateOrganizationMember,
+} from "../../auth/session.js";
 import { type ApiToken, api, type McpConfig } from "../../entities/api.js";
 
 export function SettingsPage() {
   const [tab, setTab] = useState("profile");
-  return (
-    <div style={{ maxWidth: 900 }}>
-      <h1 className="sg-h1 sg-mb">设置</h1>
-      <Tabs
-        tabs={[
-          { id: "profile", label: "个人与 AI" },
-          { id: "team", label: "团队与权限" },
+  const session = getAuthSession();
+  const canManageWorkspace = isWorkspaceAdmin(session);
+  const tabs = [
+    { id: "profile", label: "个人与 AI" },
+    { id: "team", label: "团队与权限" },
+    ...(canManageWorkspace
+      ? [
           { id: "mcp", label: "MCP 连接" },
           { id: "tokens", label: "API Token" },
           { id: "git", label: "Git 集成" },
           { id: "domains", label: "自定义域名" },
           { id: "publish", label: "发布" },
           { id: "audit", label: "安全审计" },
-        ]}
-        active={tab}
-        onChange={setTab}
-      />
+        ]
+      : []),
+  ];
+  return (
+    <div>
+      <h1 className="sg-h1 sg-mb">设置</h1>
+      <Tabs tabs={tabs} active={tab} onChange={setTab} />
       {tab === "profile" && <ProfileSettings />}
       {tab === "team" && <TeamSettings />}
       {tab === "mcp" && <McpSettings />}
@@ -326,113 +340,169 @@ function DomainSettings() {
 function TeamSettings() {
   const toast = useToast();
   const queryClient = useQueryClient();
-  const { data } = useQuery<{
-    workspaceId: string;
-    ownerSubject: string;
-    members: Array<{ subject: string; role: string; created_at: string }>;
-  }>({
-    queryKey: ["workspace"],
-    queryFn: () => api("/workspace"),
+  const session = getAuthSession();
+  const organizationId = session?.tenantType === "org" ? session.tenantId : null;
+  const canManage = isWorkspaceAdmin(session);
+  const { data, isLoading, error } = useQuery<OrganizationMember[]>({
+    queryKey: ["organization-members", organizationId],
+    queryFn: () => fetchOrganizationMembers(organizationId as string),
+    enabled: Boolean(organizationId && !session?.localBroker),
   });
-  const [subject, setSubject] = useState("");
-  const [role, setRole] = useState("viewer");
+  const [loginName, setLoginName] = useState("");
+  const [role, setRole] = useState<OrganizationRole>("org:viewer");
 
   const invite = useMutation({
-    mutationFn: () => api("/workspace/members", { method: "POST", body: { subject, role } }),
+    mutationFn: () => addOrganizationMember(organizationId as string, loginName.trim(), role),
     onSuccess: () => {
       toast("success", "已邀请成员");
-      setSubject("");
-      void queryClient.invalidateQueries({ queryKey: ["workspace"] });
+      setLoginName("");
+      void queryClient.invalidateQueries({ queryKey: ["organization-members", organizationId] });
     },
     onError: (e: Error) => toast("error", e.message),
   });
 
   const updateRole = useMutation({
-    mutationFn: ({ subject: s, role: r }: { subject: string; role: string }) =>
-      api(`/workspace/members/${s}`, { method: "PATCH", body: { role: r } }),
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["workspace"] }),
+    mutationFn: ({ userId, nextRole }: { userId: string; nextRole: OrganizationRole }) =>
+      updateOrganizationMember(organizationId as string, userId, nextRole),
+    onSuccess: () =>
+      void queryClient.invalidateQueries({ queryKey: ["organization-members", organizationId] }),
+    onError: (e: Error) => toast("error", e.message),
   });
 
   const remove = useMutation({
-    mutationFn: (s: string) => api(`/workspace/members/${s}`, { method: "DELETE" }),
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["workspace"] }),
+    mutationFn: (userId: string) => removeOrganizationMember(organizationId as string, userId),
+    onSuccess: () => {
+      toast("success", "成员已移除");
+      void queryClient.invalidateQueries({ queryKey: ["organization-members", organizationId] });
+    },
+    onError: (e: Error) => toast("error", e.message),
   });
+
+  if (!session || !organizationId) {
+    return (
+      <Card>
+        <h3 className="sg-h3">Group 与权限</h3>
+        <p className="sg-hint">当前是个人空间。请先在 Header 切换到 Group 空间后管理成员。</p>
+      </Card>
+    );
+  }
+
+  if (session?.localBroker) {
+    return (
+      <Card>
+        <h3 className="sg-h3">Group 与权限</h3>
+        <p className="sg-hint">
+          本地 Broker 的账号和空间由环境配置托管，成员管理与空间切换仅在正常 OAuth 会话中开放。
+        </p>
+      </Card>
+    );
+  }
 
   return (
     <Card>
-      <h3 className="sg-h3">工作区成员</h3>
-      <div className="sg-row sg-mb">
-        <Input
-          value={subject}
-          onChange={(e) => setSubject(e.target.value)}
-          placeholder="成员 subject（如 zhangsan）"
-          style={{ maxWidth: 220 }}
-        />
-        <Select
-          value={role}
-          onChange={setRole}
-          options={[
-            { value: "admin", label: "管理员" },
-            { value: "editor", label: "编辑者" },
-            { value: "viewer", label: "查看者" },
-          ]}
-          className=""
-          style={{ width: 120 }}
-        />
-        <Button
-          variant="primary"
-          size="sm"
-          disabled={!subject.trim()}
-          onClick={() => invite.mutate()}
-        >
-          邀请
-        </Button>
-      </div>
+      <h3 className="sg-h3">Group 成员</h3>
+      <p className="sg-hint sg-mb">
+        {session.organizationName ?? "当前 Group"} · {workspaceRoleLabel(session.roles)}
+      </p>
+      {canManage && (
+        <div className="sg-row sg-mb">
+          <Input
+            value={loginName}
+            onChange={(e) => setLoginName(e.target.value)}
+            placeholder="成员登录账号"
+            style={{ maxWidth: 260 }}
+          />
+          <Select
+            value={role}
+            onChange={(value) => setRole(value as OrganizationRole)}
+            options={ORGANIZATION_ROLE_OPTIONS}
+            style={{ width: 120 }}
+          />
+          <Button
+            variant="primary"
+            size="sm"
+            disabled={!loginName.trim() || invite.isPending}
+            onClick={() => invite.mutate()}
+          >
+            邀请
+          </Button>
+        </div>
+      )}
+      {error && <p className="sg-hint">{error.message}</p>}
+      {isLoading && <p className="sg-hint">正在加载成员…</p>}
       <Table>
         <thead>
           <tr>
             <th>成员</th>
             <th>角色</th>
-            <th>加入时间</th>
             <th></th>
           </tr>
         </thead>
         <tbody>
-          <tr>
-            <td>{data?.ownerSubject}（所有者）</td>
-            <td>owner</td>
-            <td>-</td>
-            <td></td>
-          </tr>
-          {(data?.members ?? []).map((m) => (
-            <tr key={m.subject}>
-              <td>{m.subject}</td>
-              <td>
-                <Select
-                  value={m.role}
-                  onChange={(v) => updateRole.mutate({ subject: m.subject, role: v })}
-                  options={[
-                    { value: "admin", label: "管理员" },
-                    { value: "editor", label: "编辑者" },
-                    { value: "viewer", label: "查看者" },
-                  ]}
-                  className=""
-                  style={{ width: 110 }}
-                />
-              </td>
-              <td>{formatDate(m.created_at)}</td>
-              <td>
-                <Button size="sm" variant="danger" onClick={() => remove.mutate(m.subject)}>
-                  移除
-                </Button>
-              </td>
-            </tr>
-          ))}
+          {(data ?? []).map((member) => {
+            const memberRole = organizationRole(member.roles);
+            return (
+              <tr key={member.userId}>
+                <td>
+                  <strong>{member.displayName || member.loginName}</strong>
+                  <div className="sg-hint">{member.loginName}</div>
+                </td>
+                <td>
+                  {canManage ? (
+                    <Select
+                      value={memberRole}
+                      onChange={(nextRole) =>
+                        updateRole.mutate({
+                          userId: member.userId,
+                          nextRole: nextRole as OrganizationRole,
+                        })
+                      }
+                      options={ORGANIZATION_ROLE_OPTIONS}
+                      style={{ width: 120 }}
+                    />
+                  ) : (
+                    ORGANIZATION_ROLE_OPTIONS.find((option) => option.value === memberRole)?.label
+                  )}
+                </td>
+                <td>
+                  {(canManage || member.userId === session.id) && (
+                    <Button
+                      size="sm"
+                      variant="danger"
+                      disabled={remove.isPending}
+                      onClick={() => remove.mutate(member.userId)}
+                    >
+                      {member.userId === session.id ? "退出" : "移除"}
+                    </Button>
+                  )}
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </Table>
-      <p className="sg-hint">在资产详情页可将资产分享给成员并指定编辑/查看权限。</p>
+      <p className="sg-hint">成员身份由统一账号服务管理；资产分享权限仍可在资产详情中单独收敛。</p>
     </Card>
   );
+}
+
+const ORGANIZATION_ROLE_OPTIONS: Array<{ value: OrganizationRole; label: string }> = [
+  { value: "org:admin", label: "管理员" },
+  { value: "org:member", label: "成员" },
+  { value: "org:viewer", label: "只读" },
+];
+
+function organizationRole(roles: OrganizationRole[]): OrganizationRole {
+  return (
+    roles.find((role) => ORGANIZATION_ROLE_OPTIONS.some((option) => option.value === role)) ??
+    "org:viewer"
+  );
+}
+
+function workspaceRoleLabel(roles: string[]): string {
+  if (roles.includes("org:admin")) return "管理员";
+  if (roles.includes("org:member")) return "成员";
+  return "只读成员";
 }
 
 function ProfileSettings() {
@@ -582,32 +652,34 @@ function McpSettings() {
             在设置页创建 API Token（读取范围即可），然后用以下配置接入外部 Agent：
           </p>
           <Field label="Cursor / Claude Desktop (mcpServers)">
-            <pre
-              style={{
-                background: "#101625",
-                color: "#e6e9f2",
-                padding: 14,
-                borderRadius: 10,
-                overflow: "auto",
-                fontSize: 12,
-              }}
-            >
-              {JSON.stringify(guide?.cursor ?? {}, null, 2)}
-            </pre>
+            <Scrollbar style={{ maxHeight: 280 }}>
+              <pre
+                style={{
+                  background: "#101625",
+                  color: "#e6e9f2",
+                  padding: 14,
+                  borderRadius: 10,
+                  fontSize: 12,
+                }}
+              >
+                {JSON.stringify(guide?.cursor ?? {}, null, 2)}
+              </pre>
+            </Scrollbar>
           </Field>
           <Field label="ChatGPT">
-            <pre
-              style={{
-                background: "#101625",
-                color: "#e6e9f2",
-                padding: 14,
-                borderRadius: 10,
-                overflow: "auto",
-                fontSize: 12,
-              }}
-            >
-              {JSON.stringify(guide?.chatgpt ?? {}, null, 2)}
-            </pre>
+            <Scrollbar style={{ maxHeight: 280 }}>
+              <pre
+                style={{
+                  background: "#101625",
+                  color: "#e6e9f2",
+                  padding: 14,
+                  borderRadius: 10,
+                  fontSize: 12,
+                }}
+              >
+                {JSON.stringify(guide?.chatgpt ?? {}, null, 2)}
+              </pre>
+            </Scrollbar>
           </Field>
         </Card>
       )}

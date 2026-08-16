@@ -119,6 +119,7 @@ export const assetSchema = z.object({
   id: assetIdSchema,
   workspaceId: workspaceIdSchema,
   ownerSubject: z.string(),
+  ownerDisplayName: z.string().optional(),
   type: assetTypeSchema,
   title: z.string(),
   description: z.string().default(""),
@@ -174,6 +175,7 @@ export const assetContentSchema = z.object({
         contentHash: z.string(),
         size: z.number(),
         mediaType: z.string(),
+        fileName: z.string().optional(),
       }),
     )
     .default([]),
@@ -898,6 +900,8 @@ export const taskActionSchema = z.object({
 export const actorContextSchema = z.object({
   subject: z.string(),
   workspaceId: workspaceIdSchema,
+  workspaceType: z.enum(["personal", "team"]).default("personal"),
+  workspaceRole: z.enum(["owner", "admin", "editor", "viewer"]).default("viewer"),
   requestId: z.string(),
   isService: z.boolean().default(false),
   tokenScopes: z.array(z.enum(["read", "write"])).default([]),

@@ -8,6 +8,7 @@ import {
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { badRequest, notFound } from "../platform/errors.js";
+import { requireAssetAccess } from "../platform/authorization.js";
 import type { AppContext } from "../types.js";
 
 export const presentationThemes = [
@@ -56,47 +57,46 @@ export function registerPresentations(app: FastifyInstance): void {
       templateId: body.templateId ?? null,
     };
     if (body.assetId) {
-      const sourceAsset = ctx.store.getAsset(req.actor.workspaceId, body.assetId);
-      if (!sourceAsset) throw notFound("源资产");
+      const sourceAsset = await requireAssetAccess(ctx, req.actor, body.assetId, "read");
       const sourceContent = await ctx.store.readContent(body.assetId);
       if (sourceContent?.text && !spec.sourceText) {
         spec.sourceText = sourceContent.text.slice(0, 20_000);
       }
     }
     const goal = body.title ?? (body.assetId ? `从资产生成在线演示` : "从文本生成在线演示");
-    const task = ctx.store.createTask(req.actor, {
-      type: "presentation_generate",
-      goal,
-      spec,
-      inputAssetIds: body.assetId ? [body.assetId] : [],
-    });
+    const task = await ctx.store.createTask(req.actor, {
+          type: "presentation_generate",
+          goal,
+          spec,
+          inputAssetIds: body.assetId ? [body.assetId] : [],
+        });
     const estimate = { min: 150, max: 400 };
-    const reserved = ctx.store.reserveCredits(
-      req.actor.workspaceId,
-      task.id,
-      estimate.max,
-      `op_reserve_${task.id}`,
-    );
+    const reserved = await ctx.store.reserveCredits(
+          req.actor.workspaceId,
+          task.id,
+          estimate.max,
+          `op_reserve_${task.id}`,
+        );
     if (!reserved.ok) throw badRequest("CREDIT_INSUFFICIENT", "Credits 不足，无法生成演示", {});
-    ctx.bus.emit({
-      eventId: nextId("evt"),
-      eventType: "task.created",
-      schemaVersion: 1,
-      occurredAt: nowIso(),
-      producer: "api",
-      tenantId: req.actor.workspaceId,
-      aggregate: { type: "task", id: task.id, version: 1 },
-      trace: {},
-      data: { taskId: task.id, taskType: "presentation_generate", spec },
-    });
-    ctx.store.audit(
-      req.actor.workspaceId,
-      req.actor.subject,
-      "presentation.generate",
-      task.id,
-      "success",
-      {},
-    );
+    await ctx.bus.emit({
+            eventId: nextId("evt"),
+            eventType: "task.created",
+            schemaVersion: 1,
+            occurredAt: nowIso(),
+            producer: "api",
+            tenantId: req.actor.workspaceId,
+            aggregate: { type: "task", id: task.id, version: 1 },
+            trace: {},
+            data: { taskId: task.id, taskType: "presentation_generate", spec },
+          });
+    await ctx.store.audit(
+            req.actor.workspaceId,
+            req.actor.subject,
+            "presentation.generate",
+            task.id,
+            "success",
+            {},
+          );
     return { task, estimate };
   });
 
@@ -117,8 +117,7 @@ export function registerPresentations(app: FastifyInstance): void {
     let source = body.sourceText ?? "";
     let sourceTitle = body.title ?? "";
     if (body.assetId) {
-      const asset = ctx.store.getAsset(req.actor.workspaceId, body.assetId);
-      if (!asset) throw notFound("源资产");
+      const asset = await requireAssetAccess(ctx, req.actor, body.assetId, "read");
       const content = await ctx.store.readContent(body.assetId);
       source = content?.text ?? "";
       sourceTitle = sourceTitle || asset.title;
@@ -176,14 +175,14 @@ export function registerPresentations(app: FastifyInstance): void {
     if (!Array.isArray(outline.slides) || outline.slides.length === 0) {
       throw badRequest("OUTLINE_EMPTY", "生成的演示大纲为空，请重试", {});
     }
-    ctx.store.audit(
-      req.actor.workspaceId,
-      req.actor.subject,
-      "presentation.outline",
-      "presentation",
-      "success",
-      {},
-    );
+    await ctx.store.audit(
+            req.actor.workspaceId,
+            req.actor.subject,
+            "presentation.outline",
+            "presentation",
+            "success",
+            {},
+          );
     return {
       outline: outline as { title: string; theme: string; aspectRatio: string; slides: unknown[] },
       provider: res.provider,
@@ -201,55 +200,56 @@ export function registerPresentations(app: FastifyInstance): void {
       })
       .parse(req.body);
     const document = { theme: body.theme, aspectRatio: body.aspectRatio, slides: body.slides };
-    const asset = ctx.store.createAssetWithVersion(req.actor, {
-      type: "presentation",
-      title: body.title,
-      sourceType: "template",
-      content: {
-        kind: "manifest",
-        text: null,
-        manifest: document as unknown as Record<string, unknown>,
-        refs: [],
-      },
-    });
+    const asset = await ctx.store.createAssetWithVersion(req.actor, {
+          type: "presentation",
+          title: body.title,
+          sourceType: "template",
+          content: {
+            kind: "manifest",
+            text: null,
+            manifest: document as unknown as Record<string, unknown>,
+            refs: [],
+          },
+        });
     if (body.sourceAssetId) {
-      ctx.store.addRelation(
-        req.actor.workspaceId,
-        body.sourceAssetId,
-        asset.asset.id,
-        "generated_from",
-        {
-          via: "outline-confirm",
-        },
-      );
+      await requireAssetAccess(ctx, req.actor, body.sourceAssetId, "read");
+      await ctx.store.addRelation(
+                req.actor.workspaceId,
+                body.sourceAssetId,
+                asset.asset.id,
+                "generated_from",
+                {
+                  via: "outline-confirm",
+                },
+              );
     }
-    ctx.bus.emit({
-      eventId: nextId("evt"),
-      eventType: "asset.created",
-      schemaVersion: 1,
-      occurredAt: nowIso(),
-      producer: "api",
-      tenantId: req.actor.workspaceId,
-      aggregate: { type: "asset", id: asset.asset.id, version: 1 },
-      trace: {},
-      data: { assetId: asset.asset.id, assetType: "presentation" },
-    });
-    ctx.store.audit(
-      req.actor.workspaceId,
-      req.actor.subject,
-      "presentation.create",
-      asset.asset.id,
-      "success",
-      {
-        slides: body.slides.length,
-      },
-    );
+    await ctx.bus.emit({
+            eventId: nextId("evt"),
+            eventType: "asset.created",
+            schemaVersion: 1,
+            occurredAt: nowIso(),
+            producer: "api",
+            tenantId: req.actor.workspaceId,
+            aggregate: { type: "asset", id: asset.asset.id, version: 1 },
+            trace: {},
+            data: { assetId: asset.asset.id, assetType: "presentation" },
+          });
+    await ctx.store.audit(
+            req.actor.workspaceId,
+            req.actor.subject,
+            "presentation.create",
+            asset.asset.id,
+            "success",
+            {
+              slides: body.slides.length,
+            },
+          );
     return asset.asset;
   });
 
   app.get("/api/v1/presentations/:id", async (req, reply) => {
     const { id } = req.params as { id: string };
-    const asset = ctx.store.getAsset(req.actor.workspaceId, id);
+    const asset = await ctx.store.getAsset(req.actor.workspaceId, id);
     if (asset?.type !== "presentation") {
       return reply.code(404).send({ code: "RESOURCE_NOT_FOUND" });
     }
@@ -263,36 +263,36 @@ export function registerPresentations(app: FastifyInstance): void {
   app.put("/api/v1/presentations/:id", async (req) => {
     const { id } = req.params as { id: string };
     const body = z.object({ document: presentationDocumentSchema }).parse(req.body);
-    const asset = ctx.store.getAsset(req.actor.workspaceId, id);
+    const asset = await ctx.store.getAsset(req.actor.workspaceId, id);
     if (asset?.type !== "presentation") throw notFound("演示");
-    const saved = ctx.store.saveContent(
-      req.actor,
-      id,
-      {
-        kind: "manifest",
-        text: null,
-        manifest: body.document as unknown as Record<string, unknown>,
-        refs: [],
-      },
-      { changeKind: "edit" },
-    );
-    ctx.bus.emit({
-      eventId: nextId("evt"),
-      eventType: "asset.version.created",
-      schemaVersion: 1,
-      occurredAt: nowIso(),
-      producer: "api",
-      tenantId: req.actor.workspaceId,
-      aggregate: { type: "asset", id, version: saved.asset.lockVersion },
-      trace: {},
-      data: { assetId: id, versionId: saved.version.id, contentHash: saved.version.contentHash },
-    });
+    const saved = await ctx.store.saveContent(
+          req.actor,
+          id,
+          {
+            kind: "manifest",
+            text: null,
+            manifest: body.document as unknown as Record<string, unknown>,
+            refs: [],
+          },
+          { changeKind: "edit" },
+        );
+    await ctx.bus.emit({
+            eventId: nextId("evt"),
+            eventType: "asset.version.created",
+            schemaVersion: 1,
+            occurredAt: nowIso(),
+            producer: "api",
+            tenantId: req.actor.workspaceId,
+            aggregate: { type: "asset", id, version: saved.asset.lockVersion },
+            trace: {},
+            data: { assetId: id, versionId: saved.version.id, contentHash: saved.version.contentHash },
+          });
     return saved.asset;
   });
 
   app.post("/api/v1/presentations/:id/slides/:slideId/regenerate", async (req) => {
     const { id, slideId } = req.params as { id: string; slideId: string };
-    const asset = ctx.store.getAsset(req.actor.workspaceId, id);
+    const asset = await ctx.store.getAsset(req.actor.workspaceId, id);
     if (asset?.type !== "presentation") throw notFound("演示");
     const content = await ctx.store.readContent(id);
     const document = content?.manifest

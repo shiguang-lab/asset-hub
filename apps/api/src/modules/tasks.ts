@@ -2,6 +2,7 @@ import { nextId, nowIso, researchCreateSchema, taskTypeSchema } from "@shiguang/
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { badRequest, notFound } from "../platform/errors.js";
+import { requireAssetAccess } from "../platform/authorization.js";
 import type { AppContext } from "../types.js";
 
 export function estimateCredits(spec: {
@@ -64,7 +65,7 @@ export function registerTasks(app: FastifyInstance): void {
   app.post("/api/v1/research/tasks", async (req) => {
     const input = researchCreateSchema.parse(req.body);
     const estimate = estimateCredits(input);
-    const account = ctx.store.getCreditAccount(req.actor.workspaceId);
+    const account = await ctx.store.getCreditAccount(req.actor.workspaceId);
     if (!account || account.balance < estimate.min) {
       throw badRequest(
         "CREDIT_INSUFFICIENT",
@@ -81,14 +82,19 @@ export function registerTasks(app: FastifyInstance): void {
       outputs: input.outputs ?? ["report", "sources"],
       scope: input.scope ?? [],
     };
-    const task = ctx.store.createTask(req.actor, {
+    await Promise.all(
+      (input.inputAssetIds ?? []).map((assetId) =>
+        requireAssetAccess(ctx, req.actor, assetId, "read"),
+      ),
+    );
+    const task = await ctx.store.createTask(req.actor, {
       type: "research",
       goal: input.goal,
       spec: spec as unknown as Record<string, unknown>,
       ...(input.inputAssetIds !== undefined ? { inputAssetIds: input.inputAssetIds } : {}),
     });
     const operationId = `op_reserve_${task.id}`;
-    const reserved = ctx.store.reserveCredits(
+    const reserved = await ctx.store.reserveCredits(
       req.actor.workspaceId,
       task.id,
       estimate.max,
@@ -101,7 +107,7 @@ export function registerTasks(app: FastifyInstance): void {
         {},
       );
     }
-    ctx.bus.emit({
+    await ctx.bus.emit({
       eventId: nextId("evt"),
       eventType: "credit.reserved",
       schemaVersion: 1,
@@ -112,7 +118,7 @@ export function registerTasks(app: FastifyInstance): void {
       trace: {},
       data: { taskId: task.id, amount: estimate.max },
     });
-    ctx.bus.emit({
+    await ctx.bus.emit({
       eventId: nextId("evt"),
       eventType: "task.created",
       schemaVersion: 1,
@@ -123,10 +129,17 @@ export function registerTasks(app: FastifyInstance): void {
       trace: {},
       data: { taskId: task.id, taskType: task.type, spec },
     });
-    ctx.store.audit(req.actor.workspaceId, req.actor.subject, "task.create", task.id, "success", {
-      type: task.type,
-      estimate,
-    });
+    await ctx.store.audit(
+      req.actor.workspaceId,
+      req.actor.subject,
+      "task.create",
+      task.id,
+      "success",
+      {
+        type: task.type,
+        estimate,
+      },
+    );
     return { task, estimate, reserved: estimate.max };
   });
 
@@ -140,20 +153,23 @@ export function registerTasks(app: FastifyInstance): void {
         requireCredits: z.boolean().default(true),
       })
       .parse(req.body);
+    await Promise.all(
+      (body.inputAssetIds ?? []).map((assetId) => requireAssetAccess(ctx, req.actor, assetId, "read")),
+    );
     const estimate =
       body.type === "research" ? estimateCredits(body.spec as never) : { min: 100, max: 200 };
-    const account = ctx.store.getCreditAccount(req.actor.workspaceId);
+    const account = await ctx.store.getCreditAccount(req.actor.workspaceId);
     if (body.requireCredits && (!account || account.balance < estimate.min)) {
       throw badRequest("CREDIT_INSUFFICIENT", `Credits 不足：需要至少 ${estimate.min}`, {});
     }
-    const task = ctx.store.createTask(req.actor, {
+    const task = await ctx.store.createTask(req.actor, {
       type: body.type,
       goal: body.goal,
       spec: body.spec ?? {},
       ...(body.inputAssetIds !== undefined ? { inputAssetIds: body.inputAssetIds } : {}),
     });
     const operationId = `op_reserve_${task.id}`;
-    const reserved = ctx.store.reserveCredits(
+    const reserved = await ctx.store.reserveCredits(
       req.actor.workspaceId,
       task.id,
       estimate.max,
@@ -162,7 +178,7 @@ export function registerTasks(app: FastifyInstance): void {
     if (!reserved.ok) {
       throw badRequest("CREDIT_INSUFFICIENT", `Credits 不足：需要 ${estimate.max}`, {});
     }
-    ctx.bus.emit({
+    await ctx.bus.emit({
       eventId: nextId("evt"),
       eventType: "task.created",
       schemaVersion: 1,
@@ -186,7 +202,7 @@ export function registerTasks(app: FastifyInstance): void {
         cursor: z.string().optional(),
       })
       .parse(req.query);
-    return ctx.store.listTasks(req.actor.workspaceId, {
+    return await ctx.store.listTasks(req.actor.workspaceId, {
       status: query.status,
       limit: query.limit,
       after: query.cursor,
@@ -195,42 +211,57 @@ export function registerTasks(app: FastifyInstance): void {
 
   app.get("/api/v1/tasks/:id", async (req, reply) => {
     const { id } = req.params as { id: string };
-    const task = ctx.store.getTask(req.actor.workspaceId, id);
+    const task = await ctx.store.getTask(req.actor.workspaceId, id);
     if (!task) return reply.code(404).send({ code: "RESOURCE_NOT_FOUND" });
-    const steps = ctx.store.listSteps(id);
-    const evidence = ctx.store.listEvidence(id);
-    const outputs = task.outputAssetIds
-      .map((assetId) => ctx.store.getAsset(req.actor.workspaceId, assetId))
-      .filter(Boolean);
+    const steps = await ctx.store.listSteps(id);
+    const evidence = await ctx.store.listEvidence(id);
+    const outputs = (
+      await Promise.all(
+        task.outputAssetIds.map(async (assetId) => {
+          try {
+            return await requireAssetAccess(ctx, req.actor, assetId, "read");
+          } catch {
+            return null;
+          }
+        }),
+      )
+    ).filter(Boolean);
     return { ...task, steps, evidence, outputs };
   });
 
   app.post("/api/v1/tasks/:id/cancel", async (req) => {
     const { id } = req.params as { id: string };
-    const task = ctx.store.getTask(req.actor.workspaceId, id);
+    const task = await ctx.store.getTask(req.actor.workspaceId, id);
     if (!task) throw notFound("任务");
     if (["completed", "failed", "cancelled"].includes(task.status)) {
       throw badRequest("TASK_NOT_CANCELLABLE", "任务已结束，无法取消");
     }
-    const updated = ctx.store.requestCancel(req.actor.workspaceId, id);
-    ctx.store.audit(req.actor.workspaceId, req.actor.subject, "task.cancel", id, "success", {});
+    const updated = await ctx.store.requestCancel(req.actor.workspaceId, id);
+    await ctx.store.audit(
+      req.actor.workspaceId,
+      req.actor.subject,
+      "task.cancel",
+      id,
+      "success",
+      {},
+    );
     return updated;
   });
 
   app.post("/api/v1/tasks/:id/retry", async (req) => {
     const { id } = req.params as { id: string };
-    const task = ctx.store.getTask(req.actor.workspaceId, id);
+    const task = await ctx.store.getTask(req.actor.workspaceId, id);
     if (!task) throw notFound("任务");
     if (!["failed", "partial_completed", "cancelled"].includes(task.status)) {
       throw badRequest("TASK_NOT_RETRYABLE", "只有失败、部分完成或已取消的任务可以重试");
     }
-    ctx.store.updateTask(req.actor.workspaceId, id, {
+    await ctx.store.updateTask(req.actor.workspaceId, id, {
       status: "queued",
       progress: 0,
       error: null,
       cancelRequested: false,
     });
-    ctx.bus.emit({
+    await ctx.bus.emit({
       eventId: nextId("evt"),
       eventType: "task.created",
       schemaVersion: 1,
@@ -246,21 +277,21 @@ export function registerTasks(app: FastifyInstance): void {
 
   app.post("/api/v1/tasks/:id/pause", async (req) => {
     const { id } = req.params as { id: string };
-    const task = ctx.store.getTask(req.actor.workspaceId, id);
+    const task = await ctx.store.getTask(req.actor.workspaceId, id);
     if (!task) throw notFound("任务");
-    const updated = ctx.store.updateTask(req.actor.workspaceId, id, { status: "paused" });
+    const updated = await ctx.store.updateTask(req.actor.workspaceId, id, { status: "paused" });
     return updated;
   });
 
   app.post("/api/v1/tasks/:id/resume", async (req) => {
     const { id } = req.params as { id: string };
-    const task = ctx.store.getTask(req.actor.workspaceId, id);
+    const task = await ctx.store.getTask(req.actor.workspaceId, id);
     if (!task) throw notFound("任务");
-    const updated = ctx.store.updateTask(req.actor.workspaceId, id, {
+    const updated = await ctx.store.updateTask(req.actor.workspaceId, id, {
       status: "queued",
       cancelRequested: false,
     });
-    ctx.bus.emit({
+    await ctx.bus.emit({
       eventId: nextId("evt"),
       eventType: "task.created",
       schemaVersion: 1,
@@ -287,7 +318,10 @@ export function registerTasks(app: FastifyInstance): void {
 
   /* ---------------- 定时任务 ---------------- */
 
-  app.get("/api/v1/task-schedules", async (req) => ctx.store.listSchedules(req.actor.workspaceId));
+  app.get(
+    "/api/v1/task-schedules",
+    async (req) => await ctx.store.listSchedules(req.actor.workspaceId),
+  );
 
   app.post("/api/v1/task-schedules", async (req) => {
     const body = z
@@ -299,14 +333,14 @@ export function registerTasks(app: FastifyInstance): void {
         cron: z.string().min(1),
       })
       .parse(req.body);
-    const schedule = ctx.store.createSchedule(req.actor.workspaceId, {
+    const schedule = await ctx.store.createSchedule(req.actor.workspaceId, {
       name: body.name,
       taskType: body.taskType,
       goal: body.goal,
       spec: body.spec ?? {},
       cron: body.cron,
     });
-    ctx.store.audit(
+    await ctx.store.audit(
       req.actor.workspaceId,
       req.actor.subject,
       "schedule.create",
@@ -327,16 +361,16 @@ export function registerTasks(app: FastifyInstance): void {
         cron: z.string().optional(),
       })
       .parse(req.body);
-    const schedule = ctx.store.updateSchedule(req.actor.workspaceId, id, body);
+    const schedule = await ctx.store.updateSchedule(req.actor.workspaceId, id, body);
     if (!schedule) throw notFound("定时任务");
     return schedule;
   });
 
   app.delete("/api/v1/task-schedules/:id", async (req, reply) => {
     const { id } = req.params as { id: string };
-    const schedule = ctx.store.getSchedule(req.actor.workspaceId, id);
+    const schedule = await ctx.store.getSchedule(req.actor.workspaceId, id);
     if (!schedule) throw notFound("定时任务");
-    ctx.store.deleteSchedule(req.actor.workspaceId, id);
+    await ctx.store.deleteSchedule(req.actor.workspaceId, id);
     return reply.code(204).send();
   });
 }

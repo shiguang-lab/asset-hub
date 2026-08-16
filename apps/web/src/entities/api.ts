@@ -1,10 +1,9 @@
+import { redirectToUnifiedLogin } from "../auth/session.js";
+
 export const API_BASE = (import.meta.env.VITE_API_BASE as string | undefined) ?? "/api/v1";
 export const SSE_URL = (import.meta.env.VITE_SSE_URL as string | undefined) ?? "/api/v1/events";
 export const PUBLIC_GATEWAY_BASE =
   (import.meta.env.VITE_PUBLIC_GATEWAY_BASE as string | undefined) ?? "http://localhost:3004";
-
-const IDENTITY_HEADER =
-  (import.meta.env.VITE_IDENTITY_HEADER as string | undefined) ?? '{"sub":"dev-user"}';
 
 export class ApiError extends Error {
   constructor(
@@ -26,23 +25,24 @@ export async function api<T>(
     params?: Record<string, string | number | boolean | undefined>;
   } = {},
 ): Promise<T> {
-  const url = new URL(path, window.location.origin);
+  const url = new URL(`${API_BASE}${path}`, window.location.origin);
   if (options.params) {
     for (const [key, value] of Object.entries(options.params)) {
       if (value !== undefined && value !== "") url.searchParams.set(key, String(value));
     }
   }
   const headers: Record<string, string> = {
-    "x-sg-identity": IDENTITY_HEADER,
     ...(options.body !== undefined ? { "content-type": "application/json" } : {}),
     ...(options.headers ?? {}),
   };
   const res = await fetch(url, {
     method: options.method ?? "GET",
+    credentials: "include",
     headers,
     body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
   });
   if (!res.ok) {
+    if (res.status === 401) redirectToUnifiedLogin();
     let problem: { code?: string; detail?: string; recoveries?: string[] } = {};
     try {
       problem = (await res.json()) as typeof problem;
@@ -70,10 +70,11 @@ export async function uploadFile<T>(
   form.append("file", file);
   const res = await fetch(`${API_BASE}${path}`, {
     method: "POST",
-    headers: { "x-sg-identity": IDENTITY_HEADER },
+    credentials: "include",
     body: form,
   });
   if (!res.ok) {
+    if (res.status === 401) redirectToUnifiedLogin();
     let problem: { code?: string; detail?: string } = {};
     try {
       problem = (await res.json()) as typeof problem;
@@ -85,12 +86,35 @@ export async function uploadFile<T>(
   return (await res.json()) as T;
 }
 
+export async function downloadFile(path: string, fileName: string): Promise<void> {
+  const res = await fetch(`${API_BASE}${path}`, {
+    credentials: "include",
+  });
+  if (!res.ok) {
+    if (res.status === 401) redirectToUnifiedLogin();
+    let problem: { code?: string; detail?: string } = {};
+    try {
+      problem = (await res.json()) as typeof problem;
+    } catch {
+      problem = {};
+    }
+    throw new ApiError(res.status, problem.code ?? "ERROR", problem.detail ?? "下载失败");
+  }
+  const url = URL.createObjectURL(await res.blob());
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = fileName;
+  anchor.click();
+  URL.revokeObjectURL(url);
+}
+
 /* ---------------- shared types (lightweight mirrors) ---------------- */
 
 export interface Asset {
   id: string;
   workspaceId: string;
   ownerSubject: string;
+  ownerDisplayName?: string;
   type: string;
   title: string;
   description: string;
@@ -104,18 +128,34 @@ export interface Asset {
   publishedUrl: string | null;
   createdAt: string;
   updatedAt: string;
-  content?: { kind: string; text?: string | null; manifest?: Record<string, unknown> | null };
+  content?: {
+    kind: string;
+    text?: string | null;
+    manifest?: Record<string, unknown> | null;
+    refs?: Array<{
+      role: string;
+      objectKey: string;
+      contentHash: string;
+      size: number;
+      mediaType: string;
+      fileName?: string;
+    }>;
+  };
 }
 
 export interface Task {
   id: string;
   workspaceId: string;
+  ownerSubject?: string;
   type: string;
   goal: string;
   status: string;
   progress: number;
   currentStep: string;
   spec: Record<string, unknown>;
+  plan?: Record<string, unknown> | null;
+  checkpoint?: Record<string, unknown> | null;
+  inputAssetIds?: string[];
   outputAssetIds: string[];
   creditsUsed: number;
   error: string | null;
@@ -138,6 +178,8 @@ export interface TaskStep {
   detail: string;
   error: string | null;
   attempt?: number;
+  startedAt?: string | null;
+  completedAt?: string | null;
 }
 
 export interface KnowledgeBase {

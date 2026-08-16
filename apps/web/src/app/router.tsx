@@ -1,9 +1,11 @@
 import { createBrowserRouter } from "react-router-dom";
 import { AssetDetailPage } from "../features/assets/asset-detail.js";
 import { AssetsPage } from "../features/assets/assets.js";
+import { AssistantPage } from "../features/assistant/assistant.js";
 import { BillingPage } from "../features/billing/billing.js";
 import { DatasetDetailPage, DatasetsPage } from "../features/datasets/datasets.js";
 import { DocumentEditorPage } from "../features/documents/editor.js";
+import { DocumentsPage } from "../features/documents/documents.js";
 import { HtmlEditorPage } from "../features/documents/html-editor.js";
 import { HomePage } from "../features/home/home.js";
 import {
@@ -23,7 +25,7 @@ import { ProfilePage } from "../features/profile/profile.js";
 import { PublishesPage } from "../features/publishing/publishes.js";
 import { ResearchNewPage, ResearchPage } from "../features/research/research.js";
 import { SettingsPage } from "../features/settings/settings.js";
-import { TaskDetailPage, TasksPage } from "../features/tasks/tasks.js";
+import { TaskDetailPage, TaskNewPage, TasksPage } from "../features/tasks/tasks.js";
 import { TemplatesPage } from "../features/templates/templates.js";
 import { Shell } from "../shell/layout.js";
 
@@ -35,6 +37,7 @@ export const router = createBrowserRouter([
       { index: true, element: <HomePage /> },
       { path: "assets", element: <AssetsPage /> },
       { path: "assets/:id", element: <AssetDetailPage /> },
+      { path: "documents", element: <DocumentsPage /> },
       { path: "documents/new", element: <DocumentEditorPage /> },
       { path: "documents/:id", element: <DocumentEditorPage /> },
       { path: "html/new", element: <HtmlEditorPage /> },
@@ -45,6 +48,7 @@ export const router = createBrowserRouter([
       { path: "research", element: <ResearchPage /> },
       { path: "research/new", element: <ResearchNewPage /> },
       { path: "tasks", element: <TasksPage /> },
+      { path: "tasks/new", element: <TaskNewPage /> },
       { path: "tasks/:id", element: <TaskDetailPage /> },
       { path: "datasets", element: <DatasetsPage /> },
       { path: "datasets/:id", element: <DatasetDetailPage /> },
@@ -57,6 +61,7 @@ export const router = createBrowserRouter([
       { path: "billing", element: <BillingPage /> },
       { path: "profile", element: <ProfilePage /> },
       { path: "publishes", element: <PublishesPage /> },
+      { path: "assistant", element: <AssistantPage /> },
       { path: "settings", element: <SettingsPage /> },
       { path: "*", element: <NotFoundPage /> },
     ],

@@ -1,0 +1,83 @@
+# BEGIN ASSET HUB MANAGED ROUTES
+# Import this block inside the shared access-gateway server before its fallback
+# `handle` block. Published HTML shares the product host and is isolated by CSP.
+
+@assetHub host doc.shiguanglab.com
+handle @assetHub {
+	@assetHubPublish path /p/* /s/*
+	handle @assetHubPublish {
+		route {
+			request_header -X-SG-Identity
+			request_header -X-SG-*
+			request_header -X-User-*
+			reverse_proxy asset-hub-public-gateway:3004 {
+				header_up Cookie "__Secure-sg_session=[^;]+;?[[:space:]]*" ""
+				header_up -Authorization
+			}
+		}
+	}
+
+	@assetHubStatic path /assets/* /favicon.ico /favicon.svg /healthz
+	handle @assetHubStatic {
+		route {
+			request_header -X-SG-Identity
+			request_header -X-SG-*
+			request_header -X-User-*
+			reverse_proxy asset-hub-web:8080 {
+				header_up -Cookie
+				header_up -Authorization
+				header_down -Set-Cookie
+			}
+		}
+	}
+
+	@assetHubSharedAuth path /api/auth/session /api/auth/context /api/auth/logout /api/account/*
+	handle @assetHubSharedAuth {
+		route {
+			request_header -X-SG-Identity
+			request_header -X-SG-*
+			request_header -X-User-*
+			reverse_proxy {$AUTH_SERVICE_UPSTREAM:auth-service:8081} {
+				header_up X-SG-Gateway-Token {$GATEWAY_SHARED_TOKEN}
+			}
+		}
+	}
+
+	@assetHubAPI path /api/v1/* /mcp /mcp/*
+	handle @assetHubAPI {
+		route {
+			request_header -X-SG-Identity
+			request_header -X-SG-*
+			request_header -X-User-*
+			forward_auth {$AUTH_SERVICE_UPSTREAM:auth-service:8081} {
+				uri /v1/forward-auth
+				header_up -Connection
+				header_up -Upgrade
+				header_up X-SG-Gateway-Token {$GATEWAY_SHARED_TOKEN}
+				header_up X-SG-Product-ID asset-hub
+				header_up X-SG-Audience asset-hub-api
+				header_up X-SG-Required-Entitlements asset-hub:access
+				copy_headers X-SG-Identity
+			}
+			reverse_proxy asset-hub-api:3001 {
+				header_up -Cookie
+				header_up -Authorization
+				header_down -Set-Cookie
+			}
+		}
+	}
+
+	handle {
+		route {
+			request_header -X-SG-Identity
+			request_header -X-SG-*
+			request_header -X-User-*
+			reverse_proxy asset-hub-web:8080 {
+				header_up -Cookie
+				header_up -Authorization
+				header_down -Set-Cookie
+			}
+		}
+	}
+}
+# END ASSET HUB MANAGED ROUTES

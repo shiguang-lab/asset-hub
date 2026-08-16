@@ -260,17 +260,24 @@ type QueryResult struct {
 
 func LoadRows(objectRoot, dataKey string) ([]Row, error) {
 	path := filepath.Join(objectRoot, filepath.Clean(dataKey))
-	data, err := os.ReadFile(path)
+	contents, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read dataset: %w", err)
 	}
-	text := string(data)
+	return ParseRows(contents)
+}
+
+// ParseRows parses the canonical dataset object returned by the API-backed
+// object store. Keeping parsing independent of storage lets production use S3
+// without sharing a filesystem with the compute worker.
+func ParseRows(contents []byte) ([]Row, error) {
+	text := string(contents)
 	trimmed := strings.TrimSpace(text)
 	if strings.HasPrefix(trimmed, "[") || strings.HasPrefix(trimmed, "{") {
 		var parsed []Row
-		if err := json.Unmarshal(data, &parsed); err != nil {
+		if err := json.Unmarshal(contents, &parsed); err != nil {
 			var obj map[string]any
-			if err2 := json.Unmarshal(data, &obj); err2 != nil {
+			if err2 := json.Unmarshal(contents, &obj); err2 != nil {
 				return nil, fmt.Errorf("invalid json: %w", err)
 			}
 			if rows, ok := obj["rows"].([]any); ok {

@@ -35,6 +35,7 @@ export interface ChatCompletionRequest {
   maxTokens?: number;
   responseFormat?: "text" | "json_object";
   quality?: ModelQuality;
+  taskId?: string;
 }
 
 export interface ChatCompletionResponse {
@@ -60,14 +61,46 @@ const completionSchema = z.object({
     .optional(),
 });
 
+interface ResolveRuntimeConfig {
+  provider?: string;
+  model?: string;
+  baseURL?: string;
+  apiKey?: string;
+  routeExpiresAt?: string;
+}
+
 export class ModelGatewayClient {
   constructor(private readonly config: ModelGatewayConfig) {}
+
+  private async resolve(agentKey: string, taskId: string): Promise<ResolveRuntimeConfig | null> {
+    if (!this.config.baseUrl) throw new Error("MODEL_GATEWAY_URL is not configured");
+    const url = new URL("/internal/model-config/resolve", this.config.baseUrl);
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${this.config.apiKey ?? ""}`,
+      },
+      body: JSON.stringify({ agentKey, taskKey: "", taskId }),
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new Error(`model gateway resolve ${res.status}: ${body.slice(0, 300)}`);
+    }
+    return (await res.json()) as ResolveRuntimeConfig | null;
+  }
 
   async complete(request: ChatCompletionRequest): Promise<ChatCompletionResponse> {
     if (!this.config.baseUrl) {
       throw new Error("MODEL_GATEWAY_URL is not configured");
     }
-    const url = new URL("/v1/chat/completions", this.config.baseUrl);
+    const taskId = request.taskId ?? `task_${crypto.randomUUID()}`;
+    const agentKey = qualityToProfile(request.quality ?? "balanced");
+    const runtime = await this.resolve(agentKey, taskId);
+    if (!runtime) {
+      throw new Error(`model gateway has no route configured for agentKey=${agentKey}`);
+    }
+    const url = new URL("/v1/chat/completions", runtime.baseURL ?? this.config.baseUrl);
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.config.timeoutMs);
     try {
@@ -75,10 +108,10 @@ export class ModelGatewayClient {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          ...(this.config.apiKey ? { authorization: `Bearer ${this.config.apiKey}` } : {}),
+          ...(runtime.apiKey ? { authorization: `Bearer ${runtime.apiKey}` } : {}),
         },
         body: JSON.stringify({
-          model: this.config.model,
+          model: runtime.model ?? this.config.model,
           messages: request.messages,
           temperature: request.temperature ?? 0.7,
           max_tokens: request.maxTokens ?? 2048,

@@ -56,7 +56,10 @@ export function toProblem(err: unknown, requestId?: string): ProblemDetails {
       fields: err.fields,
     };
   }
-  if (err instanceof Error && err.message.includes("ASSET_VERSION_CONFLICT")) {
+  if (
+    err instanceof Error &&
+    (err as Error & { code?: string }).code === "ASSET_VERSION_CONFLICT"
+  ) {
     return {
       type: "https://docs.shiguanglab.com/problems/version-conflict",
       title: "版本冲突",
