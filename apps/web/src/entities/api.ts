@@ -103,9 +103,22 @@ export async function downloadFile(path: string, fileName: string): Promise<void
   const url = URL.createObjectURL(await res.blob());
   const anchor = document.createElement("a");
   anchor.href = url;
-  anchor.download = fileName;
+  anchor.download = responseDownloadName(res.headers.get("content-disposition")) ?? fileName;
   anchor.click();
   URL.revokeObjectURL(url);
+}
+
+function responseDownloadName(contentDisposition: string | null): string | null {
+  if (!contentDisposition) return null;
+  const encoded = /filename\*=UTF-8''([^;]+)/i.exec(contentDisposition)?.[1];
+  if (encoded) {
+    try {
+      return decodeURIComponent(encoded);
+    } catch {
+      return encoded;
+    }
+  }
+  return /filename="?([^";]+)"?/i.exec(contentDisposition)?.[1] ?? null;
 }
 
 /* ---------------- shared types (lightweight mirrors) ---------------- */
@@ -278,7 +291,26 @@ export interface Publish {
   updatedAt: string;
   url?: string;
   shortUrl?: string;
-  stats?: { views: number; daily: Array<{ day: string; views: number }> };
+  stats?: {
+    views: number;
+    uniqueVisitors: number;
+    daily: Array<{ day: string; views: number; uniqueVisitors: number }>;
+  };
+}
+
+export interface PublishStatsSummary {
+  views: number;
+  uniqueVisitors: number;
+  averageLikes: number;
+  averageWatchSeconds: number;
+  growthRate: number;
+  daily: Array<{ day: string; views: number; uniqueVisitors: number }>;
+}
+
+export async function publishedShortUrl(assetId: string): Promise<string | null> {
+  const publishes = await api<Publish[]>("/publishes", { params: { assetId } });
+  const active = publishes.find((publish) => publish.status === "active");
+  return active?.shortUrl ?? null;
 }
 
 export interface Notification {

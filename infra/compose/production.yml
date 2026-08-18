@@ -145,6 +145,7 @@ services:
     environment:
       PORT: "3004"
       API_INTERNAL_BASE: http://api:3001
+      SSR_BASE_URL: http://ssr:3005
     ports:
       - "${NAS_BIND_IP:-127.0.0.1}:${PUBLIC_GATEWAY_DEBUG_PORT:-3704}:3004"
     healthcheck:
@@ -155,11 +156,39 @@ services:
     depends_on:
       api:
         condition: service_healthy
+      ssr:
+        condition: service_started
     networks:
       app:
       auth-edge:
         aliases:
           - asset-hub-public-gateway
+
+  ssr:
+    <<: *security
+    image: shiguang/asset-hub-ssr:${IMAGE_TAG:-latest}
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+      target: ssr
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=128m,mode=1777
+    environment:
+      NODE_ENV: production
+      PORT: "3005"
+      HOSTNAME: 0.0.0.0
+      PUBLIC_GATEWAY_INTERNAL_URL: http://public-gateway:3004
+    expose:
+      - "3005"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3005/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    networks:
+      - app
 
 volumes:
   worker-state:

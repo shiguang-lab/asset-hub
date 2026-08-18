@@ -16,17 +16,24 @@ export function registerIntegrations(app: FastifyInstance): void {
     const secret = `sg_${randomBytes(24).toString("base64url")}`;
     const secretHash = createHash("sha256").update(secret).digest("hex");
     const token = await ctx.store.createApiToken(
-          req.actor.workspaceId,
-          {
-            name: body.name,
-            scopes: body.scopes,
-            expiresAt: body.expiresAt ?? null,
-          },
-          secretHash,
-        );
-    await ctx.store.audit(req.actor.workspaceId, req.actor.subject, "token.create", token.id, "success", {
-            scopes: body.scopes,
-          });
+      req.actor.workspaceId,
+      {
+        name: body.name,
+        scopes: body.scopes,
+        expiresAt: body.expiresAt ?? null,
+      },
+      secretHash,
+    );
+    await ctx.store.audit(
+      req.actor.workspaceId,
+      req.actor.subject,
+      "token.create",
+      token.id,
+      "success",
+      {
+        scopes: body.scopes,
+      },
+    );
     return { token, secret };
   });
 
@@ -40,7 +47,14 @@ export function registerIntegrations(app: FastifyInstance): void {
     const token = await ctx.store.getApiToken(req.actor.workspaceId, id);
     if (!token) throw notFound("Token");
     await ctx.store.revokeApiToken(req.actor.workspaceId, id);
-    await ctx.store.audit(req.actor.workspaceId, req.actor.subject, "token.revoke", id, "success", {});
+    await ctx.store.audit(
+      req.actor.workspaceId,
+      req.actor.subject,
+      "token.revoke",
+      id,
+      "success",
+      {},
+    );
     return reply.code(204).send();
   });
 
@@ -54,24 +68,31 @@ export function registerIntegrations(app: FastifyInstance): void {
   app.patch("/api/v1/integrations/mcp", async (req) => {
     const body = mcpConfigUpdateSchema.parse(req.body);
     const config = await ctx.store.updateMcpConfig(req.actor.workspaceId, body);
-    await ctx.store.audit(req.actor.workspaceId, req.actor.subject, "mcp.update", config.id, "success", {
-            enabled: body.enabled,
-            scope: body.scope,
-            writeEnabled: body.writeEnabled,
-          });
+    await ctx.store.audit(
+      req.actor.workspaceId,
+      req.actor.subject,
+      "mcp.update",
+      config.id,
+      "success",
+      {
+        enabled: body.enabled,
+        scope: body.scope,
+        writeEnabled: body.writeEnabled,
+      },
+    );
     return config;
   });
 
   app.post("/api/v1/integrations/mcp/revoke", async (req) => {
     const config = await ctx.store.updateMcpConfig(req.actor.workspaceId, { enabled: false });
     await ctx.store.audit(
-            req.actor.workspaceId,
-            req.actor.subject,
-            "mcp.revoke",
-            config.id,
-            "success",
-            {},
-          );
+      req.actor.workspaceId,
+      req.actor.subject,
+      "mcp.revoke",
+      config.id,
+      "success",
+      {},
+    );
     return config;
   });
 
@@ -135,20 +156,21 @@ export function registerIntegrations(app: FastifyInstance): void {
       .parse(req.body);
     const connection = await ctx.store.createGitConnection(req.actor.workspaceId, body);
     await ctx.store.audit(
-            req.actor.workspaceId,
-            req.actor.subject,
-            "git.connect",
-            String(connection.id),
-            "success",
-            {
-              provider: body.provider,
-            },
-          );
+      req.actor.workspaceId,
+      req.actor.subject,
+      "git.connect",
+      String(connection.id),
+      "success",
+      {
+        provider: body.provider,
+      },
+    );
     return connection;
   });
 
-  app.get("/api/v1/integrations/git", async (req) =>
-    await ctx.store.listGitConnections(req.actor.workspaceId),
+  app.get(
+    "/api/v1/integrations/git",
+    async (req) => await ctx.store.listGitConnections(req.actor.workspaceId),
   );
 
   app.delete("/api/v1/integrations/git/:id", async (req, reply) => {
@@ -164,26 +186,26 @@ export function registerIntegrations(app: FastifyInstance): void {
     const connection = await ctx.store.getGitConnection(req.actor.workspaceId, id);
     if (!connection) throw notFound("Git 连接");
     await ctx.store.updateGitConnection(req.actor.workspaceId, id, {
-            status: "syncing",
-            lastError: null,
-          });
+      status: "syncing",
+      lastError: null,
+    });
     const task = await ctx.store.createTask(req.actor, {
-          type: "git_sync",
-          goal: `同步 Git 仓库：${String(connection.name)}`,
-          spec: { connectionId: id },
-        });
+      type: "git_sync",
+      goal: `同步 Git 仓库：${String(connection.name)}`,
+      spec: { connectionId: id },
+    });
     await ctx.store.reserveCredits(req.actor.workspaceId, task.id, 100, `op_reserve_${task.id}`);
     await ctx.bus.emit({
-            eventId: nextId("evt"),
-            eventType: "task.created",
-            schemaVersion: 1,
-            occurredAt: nowIso(),
-            producer: "api",
-            tenantId: req.actor.workspaceId,
-            aggregate: { type: "task", id: task.id, version: 1 },
-            trace: {},
-            data: { taskId: task.id, taskType: "git_sync", spec: { connectionId: id } },
-          });
+      eventId: nextId("evt"),
+      eventType: "task.created",
+      schemaVersion: 1,
+      occurredAt: nowIso(),
+      producer: "api",
+      tenantId: req.actor.workspaceId,
+      aggregate: { type: "task", id: task.id, version: 1 },
+      trace: {},
+      data: { taskId: task.id, taskType: "git_sync", spec: { connectionId: id } },
+    });
     await ctx.store.audit(req.actor.workspaceId, req.actor.subject, "git.sync", id, "success", {});
     return { task, estimate: estimateCredits({ depth: "quick", outputs: [] }) };
   });
@@ -196,18 +218,19 @@ export function registerIntegrations(app: FastifyInstance): void {
       .parse(req.body);
     const domain = await ctx.store.createCustomDomain(req.actor.workspaceId, body.domain);
     await ctx.store.audit(
-            req.actor.workspaceId,
-            req.actor.subject,
-            "domain.add",
-            String(domain.id),
-            "success",
-            {},
-          );
+      req.actor.workspaceId,
+      req.actor.subject,
+      "domain.add",
+      String(domain.id),
+      "success",
+      {},
+    );
     return domain;
   });
 
-  app.get("/api/v1/integrations/domains", async (req) =>
-    await ctx.store.listCustomDomains(req.actor.workspaceId),
+  app.get(
+    "/api/v1/integrations/domains",
+    async (req) => await ctx.store.listCustomDomains(req.actor.workspaceId),
   );
 
   app.post("/api/v1/integrations/domains/:id/verify", async (req) => {
@@ -217,7 +240,14 @@ export function registerIntegrations(app: FastifyInstance): void {
     if (!domain) throw notFound("域名");
     const ok = await ctx.store.verifyCustomDomain(req.actor.workspaceId, id, body.token);
     if (!ok) throw badRequest("VERIFICATION_FAILED", "验证 Token 不匹配，请检查 DNS TXT 记录", {});
-    await ctx.store.audit(req.actor.workspaceId, req.actor.subject, "domain.verify", id, "success", {});
+    await ctx.store.audit(
+      req.actor.workspaceId,
+      req.actor.subject,
+      "domain.verify",
+      id,
+      "success",
+      {},
+    );
     return { ok: true, domain: await ctx.store.getCustomDomain(req.actor.workspaceId, id) };
   });
 

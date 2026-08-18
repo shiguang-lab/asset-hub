@@ -34,47 +34,52 @@ export function registerDatasets(app: FastifyInstance): void {
     const objectKey = `datasets/${req.actor.workspaceId}/${dataset.id}/${Date.now()}-${fileName}`;
     await ctx.storage.put(objectKey, buffer, part.mimetype || "text/csv");
     const task = await ctx.store.createTask(req.actor, {
-          type: "dataset_import",
-          goal: `导入数据集 ${fileName}`,
-          spec: {
-            datasetId: dataset.id,
-            objectKey,
-            fileName,
-            contentHash: hashBuffer(buffer),
-            size: buffer.byteLength,
-          },
-          inputAssetIds: [],
-        });
+      type: "dataset_import",
+      goal: `导入数据集 ${fileName}`,
+      spec: {
+        datasetId: dataset.id,
+        objectKey,
+        fileName,
+        contentHash: hashBuffer(buffer),
+        size: buffer.byteLength,
+      },
+      inputAssetIds: [],
+    });
     const estimate = { min: 50, max: 100 };
-    await ctx.store.reserveCredits(req.actor.workspaceId, task.id, estimate.max, `op_reserve_${task.id}`);
+    await ctx.store.reserveCredits(
+      req.actor.workspaceId,
+      task.id,
+      estimate.max,
+      `op_reserve_${task.id}`,
+    );
     await ctx.bus.emit({
-            eventId: nextId("evt"),
-            eventType: "task.created",
-            schemaVersion: 1,
-            occurredAt: nowIso(),
-            producer: "api",
-            tenantId: req.actor.workspaceId,
-            aggregate: { type: "task", id: task.id, version: 1 },
-            trace: {},
-            data: {
-              taskId: task.id,
-              taskType: "dataset_import",
-              spec: {
-                datasetId: dataset.id,
-                objectKey,
-                fileName,
-                contentHash: hashBuffer(buffer),
-              },
-            },
-          });
+      eventId: nextId("evt"),
+      eventType: "task.created",
+      schemaVersion: 1,
+      occurredAt: nowIso(),
+      producer: "api",
+      tenantId: req.actor.workspaceId,
+      aggregate: { type: "task", id: task.id, version: 1 },
+      trace: {},
+      data: {
+        taskId: task.id,
+        taskType: "dataset_import",
+        spec: {
+          datasetId: dataset.id,
+          objectKey,
+          fileName,
+          contentHash: hashBuffer(buffer),
+        },
+      },
+    });
     await ctx.store.audit(
-            req.actor.workspaceId,
-            req.actor.subject,
-            "dataset.import",
-            dataset.id,
-            "success",
-            { fileName },
-          );
+      req.actor.workspaceId,
+      req.actor.subject,
+      "dataset.import",
+      dataset.id,
+      "success",
+      { fileName },
+    );
     return reply.code(202).send({ dataset, task });
   });
 
@@ -145,13 +150,13 @@ export function registerDatasets(app: FastifyInstance): void {
       })
       .parse(req.body);
     return await ctx.store.createChartSpec(req.actor, id, {
-          name: body.name,
-          chartType: body.chartType,
-          x: body.x ?? null,
-          y: body.y ?? null,
-          groupBy: body.groupBy ?? null,
-          aggregation: body.aggregation,
-        });
+      name: body.name,
+      chartType: body.chartType,
+      x: body.x ?? null,
+      y: body.y ?? null,
+      groupBy: body.groupBy ?? null,
+      aggregation: body.aggregation,
+    });
   });
 
   app.get("/api/v1/datasets/:id/charts", async (req) => {

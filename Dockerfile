@@ -13,6 +13,7 @@ COPY apps/web/package.json apps/web/package.json
 COPY apps/worker/package.json apps/worker/package.json
 COPY apps/compute-worker/package.json apps/compute-worker/package.json
 COPY apps/public-gateway/package.json apps/public-gateway/package.json
+COPY apps/ssr/package.json apps/ssr/package.json
 COPY packages/ai-core/package.json packages/ai-core/package.json
 COPY packages/config/package.json packages/config/package.json
 COPY packages/content/package.json packages/content/package.json
@@ -21,12 +22,14 @@ COPY packages/database/package.json packages/database/package.json
 COPY packages/event-channel/package.json packages/event-channel/package.json
 COPY packages/observability/package.json packages/observability/package.json
 COPY packages/ui/package.json packages/ui/package.json
+COPY packages/markdown-viewer/package.json packages/markdown-viewer/package.json
 RUN pnpm config set registry "${NPM_REGISTRY}" && pnpm install --frozen-lockfile
 
 FROM node-deps AS node-source
 COPY apps/api apps/api
 COPY apps/web apps/web
 COPY apps/worker apps/worker
+COPY apps/ssr apps/ssr
 COPY packages packages
 
 FROM node-source AS api-build
@@ -57,6 +60,18 @@ RUN mkdir -p /var/lib/shiguang/worker && chown -R node:node /var/lib/shiguang/wo
 USER node
 ENTRYPOINT ["/usr/bin/dumb-init", "--"]
 CMD ["node", "dist/main.js"]
+
+FROM node-source AS ssr-build
+RUN pnpm --filter @shiguang/ssr... build
+
+FROM node:${NODE_VERSION}-alpine AS ssr
+WORKDIR /app
+ENV NODE_ENV=production
+COPY --from=ssr-build /app/apps/ssr/.next/standalone ./
+COPY --from=ssr-build /app/apps/ssr/.next/static ./apps/ssr/.next/static
+USER node
+EXPOSE 3005
+CMD ["node", "apps/ssr/server.js"]
 
 FROM node-source AS web-build
 ARG VITE_UNIFIED_LOGIN_ORIGIN=https://shiguanglab.com

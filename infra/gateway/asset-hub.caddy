@@ -4,6 +4,22 @@
 
 @assetHub host doc.shiguanglab.com
 handle @assetHub {
+	# Next.js server-rendered publish pages reference their build assets from
+	# the origin root. Keep these requests on the SSR proxy instead of the
+	# SPA fallback, which would return index.html with the wrong MIME type.
+	@assetHubSSRStatic path /_next/*
+	handle @assetHubSSRStatic {
+		route {
+			request_header -X-SG-Identity
+			request_header -X-SG-*
+			request_header -X-User-*
+			reverse_proxy asset-hub-public-gateway:3004 {
+				header_up -Cookie
+				header_up -Authorization
+			}
+		}
+	}
+
 	@assetHubPublish path /p/* /s/*
 	handle @assetHubPublish {
 		route {

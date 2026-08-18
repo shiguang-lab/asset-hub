@@ -326,7 +326,7 @@ export function Shell() {
         <input
           ref={documentImportInputRef}
           type="file"
-          accept=".md,.markdown,.txt,text/markdown,text/plain"
+          accept=".md,.markdown,.txt,.zip,text/markdown,text/plain,application/zip"
           hidden
           onChange={(event) => {
             void importDocument(event.target.files?.[0]);
@@ -432,7 +432,7 @@ export function Shell() {
                     icon={<CloudUpload size={17} />}
                     onClick={() => documentImportInputRef.current?.click()}
                     aria-label="导入 Markdown 文档"
-                    title="导入 Markdown 文档"
+                    title="导入 Markdown / ZIP 文档（ZIP 内的图片与资源会自动提取上传）"
                   />
                 ) : null}
                 {canWrite && contextCreate ? (
@@ -489,7 +489,14 @@ export function Shell() {
             </div>
           </Header>
           <Content className={cx(styles.content, "sg-content-shell")}>
-            <Scrollbar className={styles.viewport}>
+            <Scrollbar
+              className={cx(
+                styles.viewport,
+                !paletteOpen &&
+                  /^\/documents\/[^/]+/.test(location.pathname) &&
+                  "sg-content-viewport-document-editor",
+              )}
+            >
               <div className={cx("sg-content", paletteOpen && "sg-search-content")}>
                 {paletteOpen ? (
                   <SearchWorkspace

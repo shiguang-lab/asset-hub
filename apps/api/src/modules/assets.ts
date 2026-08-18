@@ -1,4 +1,13 @@
 import {
+  extractMarkdownReferences,
+  isLocalReference,
+  parseAssetReferences,
+  rewriteMarkdownReferences,
+  structuredDiff,
+} from "@shiguang/content";
+import {
+  type ActorContext,
+  type Asset,
   type AssetContent,
   aiDocumentActionSchema,
   createAssetInputSchema,
@@ -10,13 +19,15 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { requireAssetAccess } from "../platform/authorization.js";
 import { badRequest, notFound } from "../platform/errors.js";
+import { readZipEntries } from "../platform/zip.js";
 import type { AppContext } from "../types.js";
+
+function safeFileName(name: string): string {
+  return name.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "file";
+}
 
 export function registerAssets(app: FastifyInstance): void {
   const ctx: AppContext = app.ctx;
-
-  const safeFileName = (name: string): string =>
-    name.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "file";
 
   app.get("/api/v1/assets", async (req) => {
     const query = listAssetsQuerySchema.parse(req.query);
@@ -33,6 +44,10 @@ export function registerAssets(app: FastifyInstance): void {
       workspaceRole: req.actor.workspaceRole,
     });
     return page;
+  });
+
+  app.get("/api/v1/assets/storage", async (req) => {
+    return await ctx.store.getStorageUsage(req.actor.workspaceId);
   });
 
   app.post("/api/v1/assets", async (req) => {
@@ -112,8 +127,8 @@ export function registerAssets(app: FastifyInstance): void {
     const part = await req.file();
     if (!part) throw badRequest("FILE_REQUIRED", "请上传文件");
     const buffer = Buffer.from(await part.toBuffer());
-    if (buffer.byteLength > 200 * 1024 * 1024) {
-      throw badRequest("FILE_TOO_LARGE", "文件不能超过 200MB");
+    if (buffer.byteLength > 100 * 1024 * 1024) {
+      throw badRequest("FILE_TOO_LARGE", "文件不能超过 100MB");
     }
     const fileName = part.filename || "file";
     const mediaType = part.mimetype || "application/octet-stream";
@@ -163,18 +178,25 @@ export function registerAssets(app: FastifyInstance): void {
     const part = await req.file();
     if (!part) throw badRequest("FILE_REQUIRED", "请选择要导入的文档");
     const buffer = Buffer.from(await part.toBuffer());
-    const imported = parseImportedDocumentFile(part.filename || "document.md", buffer);
+    const fileName = part.filename || "document.md";
+
+    const { title, markdown, resources } = parseImportedArchive(fileName, buffer);
+    const extracted = await extractAndUploadResources(markdown, resources, (name, data) =>
+      uploadResourceAsset(ctx, req.actor, name, data),
+    );
+
     const asset = await ctx.store.createAsset(req.actor, {
       type: "document",
-      title: imported.title,
+      title,
       sourceType: "upload",
       content: {
         kind: "markdown",
-        text: imported.markdown,
+        text: extracted.markdown,
         manifest: null,
         refs: [],
       },
     });
+    await syncContentLinkRelations(ctx, req.actor.workspaceId, asset.id, extracted.markdown);
     await ctx.bus.emit({
       eventId: nextId("evt"),
       eventType: "asset.created",
@@ -192,7 +214,7 @@ export function registerAssets(app: FastifyInstance): void {
       "asset.document_import",
       asset.id,
       "success",
-      { fileName: part.filename, size: buffer.byteLength },
+      { fileName, size: buffer.byteLength, extractedResources: extracted.uploaded },
     );
     return reply.code(201).send(asset);
   });
@@ -210,15 +232,22 @@ export function registerAssets(app: FastifyInstance): void {
     const asset = await ctx.store.getAsset(req.actor.workspaceId, id);
     if (!asset) throw notFound("资产");
     const blob = await ctx.store.getAssetBlob(req.actor.workspaceId, id);
-    if (!blob) throw notFound("文件内容");
-    const data = await ctx.storage.get(blob.objectKey);
-    if (!data) throw notFound("文件内容");
-    const fileName = encodeURIComponent(asset.title || "download");
+    let payload: { data: Buffer; mediaType: string; fileName: string } | null = null;
+    if (blob) {
+      const data = await ctx.storage.get(blob.objectKey);
+      if (data) {
+        payload = { data, mediaType: blob.mediaType, fileName: asset.title || "download" };
+      }
+    } else {
+      payload = downloadableAssetContent(asset, await ctx.store.readContent(id));
+    }
+    if (!payload) throw notFound("文件内容");
+    const fileName = encodeURIComponent(payload.fileName);
     return reply
-      .type(blob.mediaType)
-      .header("content-length", String(data.byteLength))
+      .type(payload.mediaType)
+      .header("content-length", String(payload.data.byteLength))
       .header("content-disposition", `attachment; filename*=UTF-8''${fileName}`)
-      .send(data);
+      .send(payload.data);
   });
 
   app.patch("/api/v1/assets/:id", async (req, _reply) => {
@@ -243,6 +272,9 @@ export function registerAssets(app: FastifyInstance): void {
         title: body.title,
         expectedLockVersion: expectedVersion,
       });
+      if (asset.type === "document" || asset.type === "report") {
+        await syncContentLinkRelations(ctx, req.actor.workspaceId, id, content.text ?? "");
+      }
       await ctx.bus.emit({
         eventId: nextId("evt"),
         eventType: "asset.version.created",
@@ -352,6 +384,32 @@ export function registerAssets(app: FastifyInstance): void {
     return saved.asset;
   });
 
+  app.get("/api/v1/assets/:id/versions/:versionId/diff", async (req) => {
+    const { id, versionId } = req.params as { id: string; versionId: string };
+    const query = req.query as { base?: string };
+    const asset = await ctx.store.getAsset(req.actor.workspaceId, id);
+    if (!asset) throw notFound("资产");
+    const target = await ctx.store.readContent(id, versionId);
+    if (!target) throw notFound("版本内容");
+
+    const baseVersionId = query.base ?? (await previousVersionId(ctx, id, versionId));
+    if (!baseVersionId) throw notFound("对比基准版本");
+    const base = await ctx.store.readContent(id, baseVersionId);
+    if (!base) throw notFound("对比基准内容");
+
+    const kind =
+      target.kind === "html"
+        ? ("html" as const)
+        : target.kind === "manifest" || target.kind === "presentation" || target.kind === "source"
+          ? ("manifest" as const)
+          : ("markdown" as const);
+    const baseText = contentText(base);
+    const targetText = contentText(target);
+    const diff = structuredDiff(kind, baseText, targetText);
+
+    return { baseVersionId, targetVersionId: versionId, diff };
+  });
+
   app.get("/api/v1/assets/:id/relations", async (req) => {
     const { id } = req.params as { id: string };
     const asset = await ctx.store.getAsset(req.actor.workspaceId, id);
@@ -380,7 +438,7 @@ export function registerAssets(app: FastifyInstance): void {
       id,
       body.targetAssetId,
       body.relationType,
-      {},
+      { sources: ["attachment"] },
     );
     return relation;
   });
@@ -506,6 +564,86 @@ export function registerAssets(app: FastifyInstance): void {
   });
 }
 
+function isPureContentLink(provenance: Record<string, unknown>): boolean {
+  const sources = provenance.sources;
+  if (!Array.isArray(sources)) return false;
+  const list = sources.filter((source): source is string => typeof source === "string");
+  return list.includes("content-link") && !list.includes("attachment");
+}
+
+async function syncContentLinkRelations(
+  ctx: AppContext,
+  workspaceId: string,
+  assetId: string,
+  markdown: string,
+): Promise<void> {
+  const targetIds = new Set(parseAssetReferences(markdown).map((ref) => ref.assetId));
+  const existing = await ctx.store.listRelations(assetId);
+  const stale = existing.filter(
+    (entry) =>
+      entry.direction === "out" &&
+      entry.relation.relationType === "references" &&
+      isPureContentLink(entry.relation.provenance),
+  );
+
+  for (const targetId of targetIds) {
+    const target = await ctx.store.getAsset(workspaceId, targetId);
+    if (!target) continue; // 目标不存在（已永久删除）时跳过，避免外键约束失败
+    await ctx.store.addRelation(workspaceId, assetId, targetId, "references", {
+      sources: ["content-link"],
+    });
+  }
+
+  for (const entry of stale) {
+    if (!targetIds.has(entry.relation.targetAssetId)) {
+      await ctx.store.deleteRelation(assetId, entry.relation.targetAssetId, "references");
+    }
+  }
+}
+
+export function downloadableAssetContent(
+  asset: Pick<Asset, "type" | "title">,
+  content: AssetContent | null,
+): { data: Buffer; mediaType: string; fileName: string } | null {
+  if (!content) return null;
+  const baseName = asset.title.trim() || "download";
+  if (content.kind === "markdown" || asset.type === "document" || asset.type === "report") {
+    if (content.text === null) return null;
+    return {
+      data: Buffer.from(content.text, "utf8"),
+      mediaType: "text/markdown; charset=utf-8",
+      fileName: withExtension(baseName, ".md"),
+    };
+  }
+  if (content.kind === "html" || asset.type === "html") {
+    if (content.text === null) return null;
+    return {
+      data: Buffer.from(content.text, "utf8"),
+      mediaType: "text/html; charset=utf-8",
+      fileName: withExtension(baseName, ".html"),
+    };
+  }
+  if (content.manifest) {
+    return {
+      data: Buffer.from(JSON.stringify(content.manifest, null, 2), "utf8"),
+      mediaType: "application/json; charset=utf-8",
+      fileName: withExtension(baseName, ".json"),
+    };
+  }
+  if (content.text !== null) {
+    return {
+      data: Buffer.from(content.text, "utf8"),
+      mediaType: "text/plain; charset=utf-8",
+      fileName: withExtension(baseName, ".txt"),
+    };
+  }
+  return null;
+}
+
+function withExtension(fileName: string, extension: string): string {
+  return fileName.toLowerCase().endsWith(extension) ? fileName : `${fileName}${extension}`;
+}
+
 function contentFromInput(
   type: string,
   content?: Record<string, unknown>,
@@ -556,6 +694,195 @@ export function parseImportedDocumentFile(
     .replace(/^\uFEFF/, "")
     .replace(/\r\n?/g, "\n");
   return { title, markdown };
+}
+
+const MAX_IMPORTED_ARCHIVE_SIZE = 50 * 1024 * 1024;
+const MARKDOWN_EXTENSIONS = new Set(["md", "markdown"]);
+/** 正文里指向这些文本格式的相对链接视为「文档引用」，不自动导入为 file 资产。 */
+const TEXT_DOCUMENT_EXTENSIONS = new Set(["md", "markdown", "txt"]);
+
+interface ParsedImport {
+  title: string;
+  markdown: string;
+  resources?: Map<string, Buffer>;
+}
+
+/** 支持单文件（md/markdown/txt）与 ZIP 归档（md + 图片/资源目录）。 */
+function parseImportedArchive(fileName: string, buffer: Buffer): ParsedImport {
+  const extension = fileName.split(".").at(-1)?.toLowerCase() ?? "";
+  if (extension === "zip") {
+    if (buffer.byteLength > MAX_IMPORTED_ARCHIVE_SIZE) {
+      throw badRequest("DOCUMENT_TOO_LARGE", "导入压缩包不能超过 50MB");
+    }
+    const entries = readZipEntries(buffer);
+    const markdownName = pickMarkdownEntry(entries);
+    if (!markdownName) throw badRequest("NO_MARKDOWN_IN_ZIP", "ZIP 中未找到 Markdown 文档");
+    const doc = entries.get(markdownName);
+    if (!doc) throw badRequest("NO_MARKDOWN_IN_ZIP", "ZIP 中未找到 Markdown 文档");
+    const parsed = parseImportedDocumentFile(markdownName, doc);
+    return { title: parsed.title, markdown: parsed.markdown, resources: entries };
+  }
+  const parsed = parseImportedDocumentFile(fileName, buffer);
+  return { title: parsed.title, markdown: parsed.markdown };
+}
+
+function pickMarkdownEntry(entries: Map<string, Buffer>): string | null {
+  const candidates = [...entries.keys()].filter((name) => {
+    const ext = name.split(".").at(-1)?.toLowerCase() ?? "";
+    return MARKDOWN_EXTENSIONS.has(ext);
+  });
+  if (candidates.length === 0) return null;
+  const priority = (name: string): number => {
+    const base = normalizeResourcePath(name).toLowerCase();
+    if (base === "index.md" || base === "index.markdown") return 0;
+    if (base === "readme.md" || base === "readme.markdown") return 1;
+    return base.includes("/") ? 3 : 2;
+  };
+  return candidates.sort((a, b) => priority(a) - priority(b))[0] ?? null;
+}
+
+/**
+ * 提取正文里引用的相对资源，逐一交给 `upload` 上传为 file 资产，并把正文重写为 `asset:<id>`。
+ * 纯逻辑与存储解耦：`upload` 只需返回新资产 id，便于单测。
+ */
+export async function extractAndUploadResources(
+  markdown: string,
+  resources: Map<string, Buffer> | undefined,
+  upload: (name: string, data: Buffer) => Promise<{ id: string }>,
+): Promise<{ markdown: string; uploaded: number }> {
+  const refs = extractMarkdownReferences(markdown);
+  if (refs.length === 0 || !resources) return { markdown, uploaded: 0 };
+  const index = buildResourceIndex(resources);
+  const srcToAsset = new Map<string, string>();
+
+  for (const ref of refs) {
+    if (srcToAsset.has(ref.src)) continue;
+    if (!isLocalReference(ref.src)) continue;
+    const data = resolveResource(index, ref.src);
+    if (!data) continue;
+    const ext = ref.src.split(".").at(-1)?.toLowerCase() ?? "";
+    if (TEXT_DOCUMENT_EXTENSIONS.has(ext)) continue; // 文档间引用不自动导入
+    const asset = await upload(ref.src, data);
+    srcToAsset.set(ref.src, asset.id);
+  }
+
+  if (srcToAsset.size === 0) return { markdown, uploaded: 0 };
+  const rewritten = rewriteMarkdownReferences(markdown, (ref) => {
+    const assetId = srcToAsset.get(ref.src);
+    return assetId ? `asset:${assetId}` : null;
+  });
+  return { markdown: rewritten, uploaded: srcToAsset.size };
+}
+
+async function uploadResourceAsset(
+  ctx: AppContext,
+  actor: ActorContext,
+  name: string,
+  data: Buffer,
+): Promise<Asset> {
+  const mediaType = mimeFromName(name);
+  const baseName = name.split("/").at(-1) || "resource";
+  const objectKey = `assets/${actor.workspaceId}/files/${Date.now()}-${safeFileName(baseName)}`;
+  const stored = await ctx.storage.put(objectKey, data, mediaType);
+  return ctx.store.createAsset(actor, {
+    type: "file",
+    title: baseName,
+    sourceType: "upload",
+    content: {
+      kind: "blob",
+      text: null,
+      manifest: null,
+      refs: [
+        {
+          role: "content",
+          objectKey: stored.key,
+          contentHash: stored.hash,
+          size: stored.size,
+          mediaType,
+        },
+      ],
+    },
+  });
+}
+
+function buildResourceIndex(resources: Map<string, Buffer>): Map<string, Buffer> {
+  const index = new Map<string, Buffer>();
+  for (const [name, data] of resources) {
+    const normalized = normalizeResourcePath(name);
+    if (!normalized) continue;
+    if (!index.has(normalized)) index.set(normalized, data);
+  }
+  return index;
+}
+
+function resolveResource(index: Map<string, Buffer>, src: string): Buffer | null {
+  const normalized = normalizeResourcePath(src);
+  if (!normalized) return null;
+  return index.get(normalized) ?? null;
+}
+
+/** 归一化归档内路径：反斜杠转正斜杠、剥掉 `./` 与 `/` 前缀、折叠重复斜杠、安全解码百分号。 */
+function normalizeResourcePath(path: string): string {
+  let out = path.trim().replaceAll("\\", "/");
+  try {
+    out = decodeURIComponent(out);
+  } catch {
+    // 保留原样
+  }
+  while (out.startsWith("./")) out = out.slice(2);
+  out = out.replace(/\/+/g, "/");
+  while (out.startsWith("/")) out = out.slice(1);
+  return out;
+}
+
+function mimeFromName(name: string): string {
+  const ext = name.split(".").at(-1)?.toLowerCase() ?? "";
+  const table: Record<string, string> = {
+    png: "image/png",
+    jpg: "image/jpeg",
+    jpeg: "image/jpeg",
+    gif: "image/gif",
+    webp: "image/webp",
+    svg: "image/svg+xml",
+    bmp: "image/bmp",
+    ico: "image/x-icon",
+    pdf: "application/pdf",
+    csv: "text/csv",
+    json: "application/json",
+    xml: "application/xml",
+    html: "text/html",
+    css: "text/css",
+    js: "text/javascript",
+    zip: "application/zip",
+    mp4: "video/mp4",
+    webm: "video/webm",
+    mp3: "audio/mpeg",
+    wav: "audio/wav",
+    woff: "font/woff",
+    woff2: "font/woff2",
+    ttf: "font/ttf",
+    xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  };
+  return table[ext] ?? "application/octet-stream";
+}
+
+async function previousVersionId(
+  ctx: AppContext,
+  assetId: string,
+  versionId: string,
+): Promise<string | null> {
+  const versions = await ctx.store.listVersions(assetId);
+  const target = versions.find((v) => v.id === versionId);
+  if (!target) return null;
+  return versions.find((v) => v.sequence === target.sequence - 1)?.id ?? null;
+}
+
+function contentText(content: AssetContent): string {
+  if (content.text !== null) return content.text;
+  if (content.manifest) return JSON.stringify(content.manifest, null, 2);
+  return "";
 }
 
 function ifMatchVersion(

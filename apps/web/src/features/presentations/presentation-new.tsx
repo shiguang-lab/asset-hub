@@ -4,18 +4,111 @@ import { useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { type Asset, api } from "../../entities/api.js";
 
-interface Slide {
+interface DataPoint {
   id: string;
-  layout: string;
+  label: string;
+  value: string;
+  note?: string;
+}
+interface Section {
+  id: string;
   title: string;
-  blocks: Array<{ id: string; type: string; content: string }>;
+  summary: string;
+  points: string[];
+  data: DataPoint[];
+  visual: string;
 }
 interface Outline {
   title: string;
   theme: string;
   aspectRatio: string;
-  slides: Slide[];
+  sections: Section[];
 }
+
+function stringValue(value: unknown, fallback = ""): string {
+  return typeof value === "string" ? value : fallback;
+}
+
+/** Normalize API/model output so an incomplete or legacy outline never crashes the editor. */
+export function normalizeOutline(value: unknown): Outline | null {
+  if (!value || typeof value !== "object") return null;
+  const raw = value as Record<string, unknown>;
+  const rawSections = Array.isArray(raw.sections) ? raw.sections : [];
+  const sections: Section[] = rawSections.flatMap((item, index) => {
+    if (!item || typeof item !== "object") return [];
+    const section = item as Record<string, unknown>;
+    return [
+      {
+        id: stringValue(section.id, `sec-${index + 1}`),
+        title: stringValue(section.title, `要点 ${index + 1}`),
+        summary: stringValue(section.summary),
+        points: Array.isArray(section.points)
+          ? section.points.filter((point): point is string => typeof point === "string")
+          : [],
+        data: Array.isArray(section.data)
+          ? section.data.flatMap((point, pointIndex) => {
+              if (!point || typeof point !== "object") return [];
+              const dataPoint = point as Record<string, unknown>;
+              return [
+                {
+                  id: stringValue(dataPoint.id, `d-${pointIndex + 1}`),
+                  label: stringValue(dataPoint.label),
+                  value: stringValue(dataPoint.value),
+                  ...(typeof dataPoint.note === "string" ? { note: dataPoint.note } : {}),
+                },
+              ];
+            })
+          : [],
+        visual: VISUAL_OPTIONS.some((option) => option.value === section.visual)
+          ? String(section.visual)
+          : "default",
+      },
+    ];
+  });
+
+  // Older API versions returned slides here. Convert them into editable sections.
+  if (sections.length === 0 && Array.isArray(raw.slides)) {
+    for (const [index, item] of raw.slides.entries()) {
+      if (!item || typeof item !== "object") continue;
+      const slide = item as Record<string, unknown>;
+      const blocks = Array.isArray(slide.blocks) ? slide.blocks : [];
+      const points = blocks.flatMap((block) => {
+        if (!block || typeof block !== "object") return [];
+        const value = block as Record<string, unknown>;
+        if (value.type !== "bullet" && value.type !== "text") return [];
+        return stringValue(value.content)
+          .split(/\r?\n/)
+          .map((point) => point.trim())
+          .filter(Boolean);
+      });
+      sections.push({
+        id: stringValue(slide.id, `sec-${index + 1}`),
+        title: stringValue(slide.title, `要点 ${index + 1}`),
+        summary: points[0] ?? "",
+        points: points.slice(0, 4),
+        data: [],
+        visual: "default",
+      });
+    }
+  }
+
+  if (sections.length === 0) return null;
+  return {
+    title: stringValue(raw.title, "演示文稿"),
+    theme: stringValue(raw.theme, "light"),
+    aspectRatio: stringValue(raw.aspectRatio, "16:9"),
+    sections,
+  };
+}
+
+const VISUAL_OPTIONS = [
+  { value: "default", label: "通用" },
+  { value: "metrics", label: "指标卡" },
+  { value: "chart", label: "图表" },
+  { value: "two-column", label: "双栏对比" },
+  { value: "quote", label: "金句" },
+  { value: "timeline", label: "时间轴" },
+];
 
 export function PresentationNewPage() {
   const [params] = useSearchParams();
@@ -33,15 +126,21 @@ export function PresentationNewPage() {
   });
   const outlineMutation = useMutation({
     mutationFn: () =>
-      api<{ outline: Outline }>("/presentations/outline", {
+      api<{ outline?: unknown }>("/presentations/outline", {
         method: "POST",
         body: { assetId: assetId || undefined, title: title || undefined, theme },
       }),
     onSuccess: (data) => {
-      setOutline(data.outline);
-      if (!title) setTitle(data.outline.title);
+      // Accept both the current `{ outline }` envelope and older direct-outline responses.
+      const normalized = normalizeOutline(data.outline ?? data);
+      if (!normalized) {
+        toast("error", "服务返回了空的大纲，请重试");
+        return;
+      }
+      setOutline(normalized);
+      if (!title) setTitle(normalized.title);
       setStep(2);
-      toast("success", "AI 大纲已生成，可编辑后确认");
+      toast("success", "章节大纲已生成，可编辑后确认");
     },
     onError: (e: Error) => toast("error", e.message),
   });
@@ -54,7 +153,7 @@ export function PresentationNewPage() {
           title: outline?.title ?? title,
           theme: outline?.theme ?? theme,
           aspectRatio: outline?.aspectRatio ?? "16:9",
-          slides: outline?.slides ?? [],
+          sections: outline?.sections ?? [],
           sourceAssetId: assetId || undefined,
         },
       }),
@@ -69,31 +168,61 @@ export function PresentationNewPage() {
   const docAssets = (assets?.items ?? []).filter((a) => ["document", "report"].includes(a.type));
   const recentAssets = (assets?.items ?? []).slice(0, 4);
 
-  const updateSlide = (index: number, patch: Partial<Slide>) => {
+  const updateSection = (index: number, patch: Partial<Section>) => {
     setOutline((o) =>
-      o ? { ...o, slides: o.slides.map((s, i) => (i === index ? { ...s, ...patch } : s)) } : o,
+      o ? { ...o, sections: o.sections.map((s, i) => (i === index ? { ...s, ...patch } : s)) } : o,
     );
   };
-
-  const updateBlock = (slideIndex: number, blockIndex: number, value: string) => {
+  const updatePoints = (index: number, value: string) => {
+    updateSection(index, {
+      points: value
+        .split("\n")
+        .map((p) => p.trim())
+        .filter(Boolean),
+    });
+  };
+  const updateData = (index: number, value: string) => {
+    // 每行格式：标签|数值|备注
+    const data: DataPoint[] = value
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line, i) => {
+        const [label = "", val = "", note] = line.split("|");
+        return {
+          id: `d-${i}`,
+          label: label.trim(),
+          value: val.trim(),
+          note: note?.trim() || undefined,
+        };
+      });
+    updateSection(index, { data });
+  };
+  const removeSection = (index: number) => {
+    setOutline((o) => o && { ...o, sections: o.sections.filter((_, i) => i !== index) });
+  };
+  const addSection = () => {
     setOutline((o) =>
       o
         ? {
             ...o,
-            slides: o.slides.map((s, si) =>
-              si === slideIndex
-                ? {
-                    ...s,
-                    blocks: s.blocks.map((b, bj) =>
-                      bj === blockIndex ? { ...b, content: value } : b,
-                    ),
-                  }
-                : s,
-            ),
+            sections: [
+              ...o.sections,
+              {
+                id: `sec-${Date.now().toString(36)}`,
+                title: "新章节",
+                summary: "",
+                points: [],
+                data: [],
+                visual: "default",
+              },
+            ],
           }
         : o,
     );
   };
+  const dataText = (s: Section) =>
+    s.data.map((d) => [d.label, d.value, d.note ?? ""].join("|")).join("\n");
 
   return (
     <div className="sg-workflow-page">
@@ -120,30 +249,10 @@ export function PresentationNewPage() {
           <p className="sg-subtle">选择现有内容或从空白开始，AI 将帮助您生成演示大纲</p>
           <div className="sg-grid" style={{ gridTemplateColumns: "repeat(4, 1fr)" }}>
             {[
-              {
-                label: "从文档选择",
-                sub: "从文档中提取内容，智能生成演示",
-                count: "我的文档 128",
-                icon: "📄",
-              },
-              {
-                label: "从报告选择",
-                sub: "基于研究报告快速生成专业演示",
-                count: "我的报告 36",
-                icon: "📊",
-              },
-              {
-                label: "从模板创建",
-                sub: "使用精选模板，快速创建演示",
-                count: "模板中心 64",
-                icon: "▣",
-              },
-              {
-                label: "AI 智能生成",
-                sub: "输入主题，AI 帮你生成完整演示",
-                count: "智能创作",
-                icon: "✦",
-              },
+              { label: "从文档选择", sub: "从文档中提取内容，智能生成演示", icon: "📄" },
+              { label: "从报告选择", sub: "基于研究报告快速生成专业演示", icon: "📊" },
+              { label: "从模板创建", sub: "使用精选模板，快速创建演示", icon: "▣" },
+              { label: "AI 智能生成", sub: "输入主题，AI 帮你生成完整演示", icon: "✦" },
             ].map((item) => (
               <Card key={item.label} onClick={() => setStep(2)}>
                 <div style={{ fontSize: 26, marginBottom: 8 }}>{item.icon}</div>
@@ -151,7 +260,6 @@ export function PresentationNewPage() {
                 <p className="sg-subtle" style={{ margin: "6px 0" }}>
                   {item.sub}
                 </p>
-                <span className="sg-badge">{item.count}</span>
               </Card>
             ))}
           </div>
@@ -190,14 +298,15 @@ export function PresentationNewPage() {
               <div>
                 <h2 className="sg-h3">AI 生成演示大纲</h2>
                 <p className="sg-subtle">
-                  基于文档内容，提炼核心观点，生成结构化演示大纲。您可以编辑后再生成演示。
+                  基于文档内容提炼「章节大纲」（断言式标题 + 要点 + 数据 +
+                  视觉类型）。一个章节在生成时会展开为一页或多页。
                 </p>
               </div>
               <div className="sg-row">
                 <Button size="sm" onClick={() => setStep(1)}>
                   返回
                 </Button>
-                <Button size="sm" variant="primary" onClick={() => setStep(3)}>
+                <Button size="sm" variant="primary" disabled={!outline} onClick={() => setStep(3)}>
                   下一步：确认并生成
                 </Button>
               </div>
@@ -210,7 +319,6 @@ export function PresentationNewPage() {
                   { value: "", label: "选择来源文档…" },
                   ...docAssets.map((a) => ({ value: a.id, label: a.title })),
                 ]}
-                className=""
                 style={{ maxWidth: 300 }}
               />
               <Input
@@ -229,7 +337,6 @@ export function PresentationNewPage() {
                   { value: "minimal", label: "简约" },
                   { value: "gradient", label: "创意" },
                 ]}
-                className=""
                 style={{ width: 120 }}
               />
               <Button
@@ -243,86 +350,73 @@ export function PresentationNewPage() {
           </Card>
 
           {outline && (
-            <div className="sg-grid" style={{ gridTemplateColumns: "1.2fr 1fr" }}>
-              <Card>
-                <div className="sg-row-between sg-mb">
-                  <strong>AI 生成的大纲（共 {outline.slides.length} 页）</strong>
+            <Card>
+              <div className="sg-row-between sg-mb">
+                <strong>AI 生成的章节大纲（共 {outline.sections.length} 章）</strong>
+                <div className="sg-row">
+                  <Button size="sm" onClick={addSection}>
+                    + 章节
+                  </Button>
                   <Button size="sm" onClick={() => outlineMutation.mutate()}>
                     重新生成
                   </Button>
                 </div>
-                <div className="sg-col">
-                  {outline.slides.map((slide, i) => (
-                    <div key={slide.id} className="sg-card" style={{ padding: 12 }}>
-                      <div className="sg-row-between sg-mb-sm">
-                        <span className="sg-badge">
-                          {i + 1}. {slide.layout}
-                        </span>
-                        <Button
-                          size="sm"
-                          variant="danger"
-                          onClick={() =>
-                            setOutline(
-                              (o) => o && { ...o, slides: o.slides.filter((_, j) => j !== i) },
-                            )
-                          }
-                        >
+              </div>
+              <div className="sg-col">
+                {outline.sections.map((section, i) => (
+                  <div key={section.id} className="sg-card" style={{ padding: 14 }}>
+                    <div className="sg-row-between sg-mb-sm">
+                      <span className="sg-badge">{i + 1}</span>
+                      <div className="sg-row">
+                        <Select
+                          value={section.visual}
+                          onChange={(v) => updateSection(i, { visual: v })}
+                          options={VISUAL_OPTIONS}
+                          style={{ width: 110 }}
+                        />
+                        <Button size="sm" variant="danger" onClick={() => removeSection(i)}>
                           删除
                         </Button>
                       </div>
-                      <Input
-                        value={slide.title}
-                        onChange={(e) => updateSlide(i, { title: e.target.value })}
-                        className="sg-mb-sm"
-                      />
-                      {slide.blocks.map((block, bi) => (
-                        <Textarea
-                          key={block.id}
-                          value={block.content}
-                          onChange={(e) => updateBlock(i, bi, e.target.value)}
-                          style={{ minHeight: 52, marginBottom: 6 }}
-                        />
-                      ))}
                     </div>
-                  ))}
-                </div>
-                <p className="sg-hint sg-mt">
-                  提示：您可以编辑章节标题与内容，点击章节内容进行编辑。
-                </p>
-              </Card>
-              <div className="sg-col">
-                <Card>
-                  <h3 className="sg-h3">大纲预览</h3>
-                  <div className="sg-col sg-mt-sm">
-                    {outline.slides.slice(0, 8).map((slide, i) => (
-                      <div key={slide.id} className="sg-row">
-                        <span className="sg-badge sg-badge-accent">{i + 1}</span>
-                        <span style={{ fontSize: 13 }}>{slide.title || "未命名"}</span>
+                    <Input
+                      value={section.title}
+                      onChange={(e) => updateSection(i, { title: e.target.value })}
+                      placeholder="断言式章节标题"
+                      className="sg-mb-sm"
+                    />
+                    <Input
+                      value={section.summary}
+                      onChange={(e) => updateSection(i, { summary: e.target.value })}
+                      placeholder="一句话概述（可选）"
+                      className="sg-mb-sm"
+                    />
+                    <div className="sg-grid sg-mb-sm" style={{ gridTemplateColumns: "1fr 1fr" }}>
+                      <div>
+                        <small className="sg-subtle">要点（每行一条）</small>
+                        <Textarea
+                          value={section.points.join("\n")}
+                          onChange={(e) => updatePoints(i, e.target.value)}
+                          style={{ minHeight: 72, marginTop: 4 }}
+                        />
                       </div>
-                    ))}
+                      <div>
+                        <small className="sg-subtle">数据点（每行：标签|数值|备注）</small>
+                        <Textarea
+                          value={dataText(section)}
+                          onChange={(e) => updateData(i, e.target.value)}
+                          style={{ minHeight: 72, marginTop: 4 }}
+                        />
+                      </div>
+                    </div>
                   </div>
-                </Card>
-                <Card>
-                  <h3 className="sg-h3">演示风格</h3>
-                  <div className="sg-option-row">
-                    <span>模板主题</span>
-                    <span className="sg-badge sg-badge-accent">{theme}</span>
-                  </div>
-                  <div className="sg-option-row">
-                    <span>配色方案</span>
-                    <span>Tech Purple</span>
-                  </div>
-                  <div className="sg-option-row">
-                    <span>字体风格</span>
-                    <span>思源黑体 / Source Han Sans</span>
-                  </div>
-                  <div className="sg-option-row">
-                    <span>页面比例</span>
-                    <span>16:9</span>
-                  </div>
-                </Card>
+                ))}
               </div>
-            </div>
+              <p className="sg-hint sg-mt">
+                提示：章节标题建议用「结论先行」的完整句（如「AI 正加速渗透传统行业」）。
+                一个章节在生成阶段会自动展开为一页或多页。
+              </p>
+            </Card>
           )}
         </div>
       )}
@@ -332,7 +426,8 @@ export function PresentationNewPage() {
           <Card>
             <h2 className="sg-h3">确认生成内容</h2>
             <p className="sg-subtle">
-              请确认以下演示大纲与风格设置，确认后将自动生成 H5 演示，预计 1-2 分钟完成。
+              请确认以下章节大纲与风格设置，确认后将按大纲自动生成 H5 演示（章节可展开为多页），预计
+              1-2 分钟完成。
             </p>
             <div className="sg-grid sg-mt" style={{ gridTemplateColumns: "1fr 1.4fr" }}>
               <div className="sg-col">
@@ -341,8 +436,8 @@ export function PresentationNewPage() {
                   <strong>{outline.title}</strong>
                 </div>
                 <div className="sg-option-row">
-                  <span>大纲页数</span>
-                  <strong>{outline.slides.length} 页</strong>
+                  <span>章节数</span>
+                  <strong>{outline.sections.length} 章</strong>
                 </div>
                 <div className="sg-option-row">
                   <span>演示风格</span>
@@ -353,21 +448,17 @@ export function PresentationNewPage() {
                   <strong>16:9</strong>
                 </div>
                 <div className="sg-option-row">
-                  <span>预计生成时间</span>
-                  <strong>1-2 分钟</strong>
-                </div>
-                <div className="sg-option-row">
                   <span>内容来源</span>
                   <strong>{docAssets.find((a) => a.id === assetId)?.title ?? title}</strong>
                 </div>
               </div>
               <Card>
-                <h3 className="sg-h3">大纲预览（共 {outline.slides.length} 页）</h3>
+                <h3 className="sg-h3">章节预览（共 {outline.sections.length} 章）</h3>
                 <div className="sg-col sg-mt-sm">
-                  {outline.slides.slice(0, 10).map((slide, i) => (
-                    <div key={slide.id} className="sg-row">
+                  {outline.sections.map((section, i) => (
+                    <div key={section.id} className="sg-row">
                       <span className="sg-badge">{String(i + 1).padStart(2, "0")}</span>
-                      <span style={{ fontSize: 13 }}>{slide.title || "未命名"}</span>
+                      <span style={{ fontSize: 13 }}>{section.title || "未命名"}</span>
                     </div>
                   ))}
                 </div>

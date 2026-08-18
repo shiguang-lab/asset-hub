@@ -44,7 +44,7 @@ export function AssistantPage() {
     }
   };
 
-  const credits = home?.credits ?? 6_820;
+  const credits = home?.credits ?? 0;
 
   return (
     <div className="sg-assistant">
@@ -141,17 +141,12 @@ export function AssistantPage() {
           <h3 className="sg-h3">使用概览</h3>
           <div className="sg-row-between" style={{ marginBottom: 6 }}>
             <span className="sg-subtle">本月剩余 AI Credits</span>
-            <strong>{Math.round((credits / 10_000) * 100)}%</strong>
+            <strong>{credits.toLocaleString("zh-CN")}</strong>
           </div>
-          <Progress value={(credits / 10_000) * 100} />
+          <Progress value={Math.min(100, Math.max(0, (credits / 10_000) * 100))} />
           <div className="sg-subtle" style={{ fontSize: 12, marginTop: 6 }}>
-            {credits.toLocaleString()} / 10,000
+            额度上限 10,000
           </div>
-          <div className="sg-row-between" style={{ margin: "18px 0 6px" }}>
-            <span className="sg-subtle">存储空间</span>
-            <strong>12.4 GB / 50 GB</strong>
-          </div>
-          <Progress value={24.8} />
         </div>
       </aside>
     </div>

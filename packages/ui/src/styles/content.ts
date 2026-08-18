@@ -76,6 +76,8 @@ export const UiContentGlobalStyles = createGlobalStyle(css`
   flex-wrap: wrap;
 }
 .sg-editor-toolbar .mode {
+  margin-left: auto;
+  flex: none;
   display: flex;
   border: 1px solid var(--sg-border);
   border-radius: 7px;

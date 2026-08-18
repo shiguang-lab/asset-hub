@@ -17,7 +17,7 @@ import {
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Download } from "lucide-react";
 import { useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import { canWriteWorkspace, getAuthSession, isWorkspaceAdmin } from "../../auth/session.js";
 import {
   type Asset,
@@ -26,7 +26,7 @@ import {
   type KnowledgeBase,
   type Publish,
 } from "../../entities/api.js";
-import { Markdown } from "../../shared/markdown.js";
+import { DocumentMarkdown } from "../../shared/document-markdown.js";
 import { SandboxHtmlPreview } from "../../shared/sandbox-preview.js";
 import { PublishDialog } from "../publishing/publish-dialog.js";
 
@@ -149,10 +149,7 @@ export function AssetDetailPage() {
     <div>
       <div className="sg-row-between sg-mb">
         <div>
-          <Link to="/assets" className="sg-subtle">
-            ← 资产中心
-          </Link>
-          <h1 className="sg-h1" style={{ marginTop: 6 }}>
+          <h1 className="sg-h1" style={{ marginTop: 0 }}>
             {asset.title}
           </h1>
           <div className="sg-row sg-mt-sm">
@@ -186,6 +183,17 @@ export function AssetDetailPage() {
               }
             >
               <Download size={15} /> 下载文件
+            </Button>
+          ) : null}
+          {["document", "report", "html", "presentation", "dataset"].includes(asset.type) ? (
+            <Button
+              onClick={() =>
+                void downloadFile(`/assets/${asset.id}/download`, asset.title).catch((error) =>
+                  toast("error", error instanceof Error ? error.message : "下载失败"),
+                )
+              }
+            >
+              <Download size={15} /> 下载
             </Button>
           ) : null}
           {workspaceWritable && <Button onClick={() => setKbModal(true)}>加入知识库</Button>}
@@ -247,7 +255,7 @@ export function AssetDetailPage() {
               </Button>
             </div>
           ) : content?.kind === "markdown" || asset.type === "report" ? (
-            <Markdown source={content?.text ?? ""} />
+            <DocumentMarkdown source={content?.text ?? ""} />
           ) : content?.kind === "html" ? (
             <SandboxHtmlPreview source={content?.text ?? ""} />
           ) : content?.kind === "manifest" ? (

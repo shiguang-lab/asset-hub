@@ -2,8 +2,8 @@ import { nextId, nowIso } from "@shiguang/contracts";
 import { hashBuffer } from "@shiguang/database";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { badRequest, notFound } from "../platform/errors.js";
 import { requireAssetAccess } from "../platform/authorization.js";
+import { badRequest, notFound } from "../platform/errors.js";
 import type { AppContext } from "../types.js";
 
 export function registerKnowledge(app: FastifyInstance): void {
@@ -15,18 +15,19 @@ export function registerKnowledge(app: FastifyInstance): void {
       .parse(req.body);
     const kb = await ctx.store.createKnowledgeBase(req.actor, body);
     await ctx.store.audit(
-            req.actor.workspaceId,
-            req.actor.subject,
-            "knowledge.create",
-            kb.id,
-            "success",
-            {},
-          );
+      req.actor.workspaceId,
+      req.actor.subject,
+      "knowledge.create",
+      kb.id,
+      "success",
+      {},
+    );
     return kb;
   });
 
-  app.get("/api/v1/knowledge-bases", async (req) =>
-    await ctx.store.listKnowledgeBases(req.actor.workspaceId),
+  app.get(
+    "/api/v1/knowledge-bases",
+    async (req) => await ctx.store.listKnowledgeBases(req.actor.workspaceId),
   );
 
   app.get("/api/v1/knowledge-bases/:id", async (req, reply) => {
@@ -49,29 +50,29 @@ export function registerKnowledge(app: FastifyInstance): void {
       const objectKey = `knowledge-sources/${req.actor.workspaceId}/${kbId}/${Date.now()}-${part.filename}`;
       await ctx.storage.put(objectKey, buffer, part.mimetype);
       const source = await ctx.store.addKnowledgeSource(req.actor.workspaceId, kbId, {
-              sourceType: "upload",
-              title: part.filename,
-              contentHash: hash,
-            });
+        sourceType: "upload",
+        title: part.filename,
+        contentHash: hash,
+      });
       await ctx.store.audit(
-                req.actor.workspaceId,
-                req.actor.subject,
-                "knowledge.source.add",
-                source.id,
-                "success",
-                { kind: "upload" },
-              );
+        req.actor.workspaceId,
+        req.actor.subject,
+        "knowledge.source.add",
+        source.id,
+        "success",
+        { kind: "upload" },
+      );
       await ctx.bus.emit({
-                eventId: nextId("evt"),
-                eventType: "knowledge.source.added",
-                schemaVersion: 1,
-                occurredAt: nowIso(),
-                producer: "api",
-                tenantId: req.actor.workspaceId,
-                aggregate: { type: "knowledge_source", id: source.id, version: 1 },
-                trace: {},
-                data: { sourceId: source.id, kbId, objectKey, fileName: part.filename, contentHash: hash },
-              });
+        eventId: nextId("evt"),
+        eventType: "knowledge.source.added",
+        schemaVersion: 1,
+        occurredAt: nowIso(),
+        producer: "api",
+        tenantId: req.actor.workspaceId,
+        aggregate: { type: "knowledge_source", id: source.id, version: 1 },
+        trace: {},
+        data: { sourceId: source.id, kbId, objectKey, fileName: part.filename, contentHash: hash },
+      });
       return source;
     }
     const body = z
@@ -90,63 +91,63 @@ export function registerKnowledge(app: FastifyInstance): void {
       const objectKey = `knowledge-sources/${req.actor.workspaceId}/${kbId}/${asset.id}-${asset.currentVersionId}`;
       await ctx.storage.put(objectKey, Buffer.from(text, "utf8"), "text/plain");
       const source = await ctx.store.addKnowledgeSource(req.actor.workspaceId, kbId, {
-              sourceType: "asset",
-              assetVersionId: asset.currentVersionId,
-              title: body.title ?? asset.title,
-              contentHash: hashBuffer(Buffer.from(text, "utf8")),
-            });
+        sourceType: "asset",
+        assetVersionId: asset.currentVersionId,
+        title: body.title ?? asset.title,
+        contentHash: hashBuffer(Buffer.from(text, "utf8")),
+      });
       await ctx.store.audit(
-                req.actor.workspaceId,
-                req.actor.subject,
-                "knowledge.source.add",
-                source.id,
-                "success",
-                { kind: "asset" },
-              );
+        req.actor.workspaceId,
+        req.actor.subject,
+        "knowledge.source.add",
+        source.id,
+        "success",
+        { kind: "asset" },
+      );
       await ctx.bus.emit({
-                eventId: nextId("evt"),
-                eventType: "knowledge.source.added",
-                schemaVersion: 1,
-                occurredAt: nowIso(),
-                producer: "api",
-                tenantId: req.actor.workspaceId,
-                aggregate: { type: "knowledge_source", id: source.id, version: 1 },
-                trace: {},
-                data: {
-                  sourceId: source.id,
-                  kbId,
-                  objectKey,
-                  fileName: asset.title,
-                  contentHash: source.contentHash,
-                },
-              });
+        eventId: nextId("evt"),
+        eventType: "knowledge.source.added",
+        schemaVersion: 1,
+        occurredAt: nowIso(),
+        producer: "api",
+        tenantId: req.actor.workspaceId,
+        aggregate: { type: "knowledge_source", id: source.id, version: 1 },
+        trace: {},
+        data: {
+          sourceId: source.id,
+          kbId,
+          objectKey,
+          fileName: asset.title,
+          contentHash: source.contentHash,
+        },
+      });
       return source;
     }
     if (!body.url) throw badRequest("URL_REQUIRED", "需要 URL");
     const source = await ctx.store.addKnowledgeSource(req.actor.workspaceId, kbId, {
-          sourceType: "url",
-          url: body.url,
-          title: body.title ?? body.url,
-        });
+      sourceType: "url",
+      url: body.url,
+      title: body.title ?? body.url,
+    });
     await ctx.store.audit(
-            req.actor.workspaceId,
-            req.actor.subject,
-            "knowledge.source.add",
-            source.id,
-            "success",
-            { kind: "url" },
-          );
+      req.actor.workspaceId,
+      req.actor.subject,
+      "knowledge.source.add",
+      source.id,
+      "success",
+      { kind: "url" },
+    );
     await ctx.bus.emit({
-            eventId: nextId("evt"),
-            eventType: "knowledge.source.added",
-            schemaVersion: 1,
-            occurredAt: nowIso(),
-            producer: "api",
-            tenantId: req.actor.workspaceId,
-            aggregate: { type: "knowledge_source", id: source.id, version: 1 },
-            trace: {},
-            data: { sourceId: source.id, kbId, url: body.url },
-          });
+      eventId: nextId("evt"),
+      eventType: "knowledge.source.added",
+      schemaVersion: 1,
+      occurredAt: nowIso(),
+      producer: "api",
+      tenantId: req.actor.workspaceId,
+      aggregate: { type: "knowledge_source", id: source.id, version: 1 },
+      trace: {},
+      data: { sourceId: source.id, kbId, url: body.url },
+    });
     return source;
   });
 
@@ -155,16 +156,16 @@ export function registerKnowledge(app: FastifyInstance): void {
     const source = await ctx.store.retryKnowledgeSource(kbId, sid);
     if (!source) throw notFound("知识库来源");
     await ctx.bus.emit({
-            eventId: nextId("evt"),
-            eventType: "knowledge.source.added",
-            schemaVersion: 1,
-            occurredAt: nowIso(),
-            producer: "api",
-            tenantId: req.actor.workspaceId,
-            aggregate: { type: "knowledge_source", id: sid, version: source.retryCount + 1 },
-            trace: {},
-            data: { sourceId: sid, kbId },
-          });
+      eventId: nextId("evt"),
+      eventType: "knowledge.source.added",
+      schemaVersion: 1,
+      occurredAt: nowIso(),
+      producer: "api",
+      tenantId: req.actor.workspaceId,
+      aggregate: { type: "knowledge_source", id: sid, version: source.retryCount + 1 },
+      trace: {},
+      data: { sourceId: sid, kbId },
+    });
     return source;
   });
 
@@ -230,9 +231,16 @@ export function registerKnowledge(app: FastifyInstance): void {
       excerpt: r.chunk.text.slice(0, 200),
       kbId,
     }));
-    await ctx.store.audit(req.actor.workspaceId, req.actor.subject, "knowledge.ask", kbId, "success", {
-            query: body.query,
-          });
+    await ctx.store.audit(
+      req.actor.workspaceId,
+      req.actor.subject,
+      "knowledge.ask",
+      kbId,
+      "success",
+      {
+        query: body.query,
+      },
+    );
     return {
       answer: parsed.answer,
       insufficient: parsed.insufficient ?? results.length === 0,

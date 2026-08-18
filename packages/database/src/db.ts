@@ -163,7 +163,9 @@ export async function seedDemoAssets(db: Db, storage: ObjectStore, subject: stri
   if (!wsRow) return;
   const workspaceId = String(wsRow.id);
   const seeded = await db
-    .prepare("SELECT id FROM assets WHERE workspace_id = ? AND title = '2024 新能源汽车行业研究报告'")
+    .prepare(
+      "SELECT id FROM assets WHERE workspace_id = ? AND title = '2024 新能源汽车行业研究报告'",
+    )
     .get(workspaceId);
   if (seeded) return;
 
@@ -338,7 +340,13 @@ AI 原生知识与数字资产工作空间。
       `INSERT INTO asset_versions (id, asset_id, sequence, change_kind, content_hash, size, media_type, metadata_json, created_at)
        VALUES (?, ?, 1, 'create', ?, ?, 'application/json', '{}', ?)`,
     )
-    .run(presVersionId, presId, hashBuffer(Buffer.from(presManifest)), Buffer.byteLength(presManifest), presUpdated);
+    .run(
+      presVersionId,
+      presId,
+      hashBuffer(Buffer.from(presManifest)),
+      Buffer.byteLength(presManifest),
+      presUpdated,
+    );
   const presKey = `assets/${presId}/versions/${presVersionId}/content`;
   await storage.put(presKey, Buffer.from(presManifest), "application/json");
   await db
@@ -346,7 +354,13 @@ AI 原生知识与数字资产工作空间。
       `INSERT INTO asset_blobs (id, version_id, role, object_key, content_hash, size, media_type)
        VALUES (?, ?, 'content', ?, ?, ?, 'application/json')`,
     )
-    .run(nextId("blob"), presVersionId, presKey, hashBuffer(Buffer.from(presManifest)), Buffer.byteLength(presManifest));
+    .run(
+      nextId("blob"),
+      presVersionId,
+      presKey,
+      hashBuffer(Buffer.from(presManifest)),
+      Buffer.byteLength(presManifest),
+    );
 
   // Relations matching the design's "关联" column:
   // doc1/doc5 -> presentation (generated_from); doc2/doc3 -> knowledge (knowledge_source_of).
@@ -403,7 +417,15 @@ AI 原生知识与数字资产工作空间。
         `INSERT INTO publishes (id, workspace_id, asset_id, slug, short_slug, visibility, allow_download, allow_copy, status, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, 'public', true, true, 'active', ?, ?)`,
       )
-      .run(nextId("pub"), workspaceId, docIds[i]!.id, `doc-${i + 1}`, `d${i + 1}`, ago(2 * D), ago(2 * D));
+      .run(
+        nextId("pub"),
+        workspaceId,
+        docIds[i]!.id,
+        `doc-${i + 1}`,
+        `d${i + 1}`,
+        ago(2 * D),
+        ago(2 * D),
+      );
   }
 
   // A running task and a completed task for the home/task pages.
@@ -486,7 +508,9 @@ async function cleanupUntitledDocs(db: Db, workspaceId: string): Promise<void> {
   ).map((r) => String(r.id));
   for (const id of ids) {
     await db
-      .prepare("DELETE FROM asset_blobs WHERE version_id IN (SELECT id FROM asset_versions WHERE asset_id = ?)")
+      .prepare(
+        "DELETE FROM asset_blobs WHERE version_id IN (SELECT id FROM asset_versions WHERE asset_id = ?)",
+      )
       .run(id);
     await db.prepare("DELETE FROM asset_versions WHERE asset_id = ?").run(id);
     await db

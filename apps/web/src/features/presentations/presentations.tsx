@@ -1,4 +1,19 @@
-import { Avatar, Button, Empty, Scrollbar, Select, Switch, Textarea, useToast } from "@shiguang/ui";
+import {
+  addPage as astAddPage,
+  duplicatePage as astDuplicatePage,
+  movePage as astMovePage,
+  removePage as astRemovePage,
+  setTheme as astSetTheme,
+  listEditableElements,
+  listPages,
+  parsePresentationHtml,
+  serializePresentationHtml,
+  setDataAttribute,
+  updateImageSrc,
+  updateLinkHref,
+  updateTextContent,
+} from "@shiguang/content";
+import { Avatar, Button, Empty, Modal, Scrollbar, Select, Textarea, useToast } from "@shiguang/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ChevronLeft,
@@ -18,25 +33,136 @@ import {
   Trash2,
   TrendingUp,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { getAuthSession } from "../../auth/session.js";
-import { type Asset, api } from "../../entities/api.js";
+import { type Asset, api, type Publish, type PublishStatsSummary } from "../../entities/api.js";
 import { isOwnedBySession, ownerDisplayName } from "../../shared/owner.js";
 import { useShellBreadcrumb } from "../../shell/layout.js";
 import { PublishDialog } from "../publishing/publish-dialog.js";
 
-interface Slide {
-  id: string;
-  layout: string;
-  title: string;
-  blocks: Array<{ id: string; type: string; content: string }>;
-  notes?: string;
+/** 命令历史：所有人工/AI 编辑都经过 set，支持 Undo/Redo（对应设计文档 Editor Command 与 Undo/Redo）。 */
+function useHistory<T>(initial: T) {
+  const [history, setHistory] = useState({ past: [] as T[], present: initial, future: [] as T[] });
+  const set = useCallback((updater: T | ((prev: T) => T)) => {
+    setHistory((h) => {
+      const present = typeof updater === "function" ? (updater as (p: T) => T)(h.present) : updater;
+      return { past: [...h.past, h.present], present, future: [] };
+    });
+  }, []);
+  const reset = useCallback((value: T) => {
+    setHistory({ past: [], present: value, future: [] });
+  }, []);
+  const undo = useCallback(() => {
+    setHistory((h) => {
+      if (h.past.length === 0) return h;
+      const previous = h.past[h.past.length - 1];
+      return { past: h.past.slice(0, -1), present: previous, future: [h.present, ...h.future] };
+    });
+  }, []);
+  const redo = useCallback(() => {
+    setHistory((h) => {
+      if (h.future.length === 0) return h;
+      const next = h.future[0];
+      return { past: [...h.past, h.present], present: next, future: h.future.slice(1) };
+    });
+  }, []);
+  return {
+    present: history.present,
+    set,
+    reset,
+    undo,
+    redo,
+    canUndo: history.past.length > 0,
+    canRedo: history.future.length > 0,
+  };
 }
-interface PresentationDocument {
-  theme: string;
-  aspectRatio: string;
-  slides: Slide[];
+
+/** 在预览 iframe 内注入「点击选中 + 高亮」桥接脚本（不改动存储的 HTML 本体）。 */
+const SG_EDIT_BRIDGE = `<script>
+(function () {
+  var CSS = ".sg-editor-selected{outline:2px solid var(--sg-primary,#7c5cff) !important;outline-offset:3px;box-shadow:0 0 0 9999px rgba(124,92,255,0.06)}";
+  var st = document.createElement("style"); st.textContent = CSS; document.head.appendChild(st);
+  document.addEventListener("click", function (e) {
+    var el = e.target && e.target.closest ? e.target.closest("[data-sg-id]") : null;
+    if (el) { window.parent.postMessage({ source: "sg-editor-preview", type: "select", id: el.getAttribute("data-sg-id") }, "*"); }
+  });
+  window.addEventListener("message", function (ev) {
+    var d = ev.data || {};
+    if (d.source !== "sg-editor" || d.type !== "highlight") return;
+    document.querySelectorAll(".sg-editor-selected").forEach(function (x) { x.classList.remove("sg-editor-selected"); });
+    if (d.id) { var t = document.querySelector("[data-sg-id=\\"" + d.id + "\\"]"); if (t) t.classList.add("sg-editor-selected"); }
+  });
+})();
+</script>`;
+
+/** 预览 srcDoc：在原 HTML 末尾注入选中桥接。 */
+function buildPreviewSrcDoc(html: string): string {
+  if (html.includes("</body>")) return html.replace("</body>", `${SG_EDIT_BRIDGE}</body>`);
+  return `${html}${SG_EDIT_BRIDGE}`;
+}
+
+/** 单页缩略图 srcDoc：截取第 pageIndex 页，按 16:9 缩放到 240×135 的小窗口。 */
+function buildThumbnailSrcDoc(html: string, pageIndex: number): string {
+  try {
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    const sections = Array.from(doc.querySelectorAll("[data-sg-page]"));
+    const styles = Array.from(doc.querySelectorAll("style"))
+      .map((s) => s.textContent ?? "")
+      .join("\n");
+    const section = sections[pageIndex];
+    if (!section) return "<!doctype html><html><body></body></html>";
+    return `<!doctype html>
+<html data-sg-mode="scroll">
+<head><meta charset="utf-8"><style>
+${styles}
+html,body{margin:0;padding:0;overflow:hidden;width:240px;height:135px}
+.page-scaler{width:960px;height:540px;transform:scale(0.25);transform-origin:top left}
+.page-scaler [data-sg-page]{display:flex !important;height:540px !important;min-height:540px !important;overflow:hidden;padding:32px !important}
+</style></head>
+<body><div class="page-scaler">${section.outerHTML}</div></body></html>`;
+  } catch {
+    return "<!doctype html><html><body></body></html>";
+  }
+}
+
+/** 定位元素所属页面 id（用于点击预览选中时同步左侧高亮）。 */
+function locateElementPage(html: string, elementId: string): string | null {
+  try {
+    const tree = parsePresentationHtml(html);
+    for (const page of listPages(tree)) {
+      if (listEditableElements(tree, page.id).some((el) => el.id === elementId)) return page.id;
+    }
+  } catch {
+    // ignore
+  }
+  return null;
+}
+
+interface AssetPage {
+  items: Asset[];
+  nextCursor?: string | null;
+}
+
+async function loadPresentationSet(includeDeleted: boolean): Promise<Asset[]> {
+  const items: Asset[] = [];
+  let cursor: string | undefined;
+  do {
+    const page = await api<AssetPage>("/assets", {
+      params: { type: "presentation", includeDeleted, limit: 100, cursor },
+    });
+    items.push(...page.items);
+    cursor = page.nextCursor ?? undefined;
+  } while (cursor);
+  return items;
+}
+
+async function loadPresentations(): Promise<Asset[]> {
+  const [active, deleted] = await Promise.all([
+    loadPresentationSet(false),
+    loadPresentationSet(true),
+  ]);
+  return [...active, ...deleted];
 }
 
 export function PresentationsPage() {
@@ -52,6 +178,7 @@ export function PresentationsPage() {
   const [view, setView] = useState<"list" | "grid">("list");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
+  const [publishTarget, setPublishTarget] = useState<Asset | null>(null);
   const [favoriteIds, setFavoriteIds] = useState<string[]>(() => {
     try {
       const value = window.localStorage.getItem("shiguang.presentation-favorites");
@@ -61,11 +188,52 @@ export function PresentationsPage() {
       return [];
     }
   });
-  const { data } = useQuery<{ items: Asset[] }>({
+  const { data } = useQuery<Asset[]>({
     queryKey: ["assets", "presentation"],
-    queryFn: () => api("/assets", { params: { type: "presentation", limit: 100 } }),
+    queryFn: loadPresentations,
   });
-  const presentations = (data?.items ?? []).filter((a) => a.type === "presentation");
+  const { data: publishes = [] } = useQuery<Publish[]>({
+    queryKey: ["publishes"],
+    queryFn: () => api<Publish[]>("/publishes"),
+  });
+  const { data: analytics } = useQuery<PublishStatsSummary>({
+    queryKey: ["publishes", "stats", "presentation"],
+    queryFn: () =>
+      api<PublishStatsSummary>("/publishes/stats/summary", {
+        params: { assetType: "presentation" },
+      }),
+  });
+  const presentations = useMemo(
+    () => (data ?? []).filter((a) => a.type === "presentation"),
+    [data],
+  );
+  const activePresentations = useMemo(
+    () => presentations.filter((item) => !item.deletedAt),
+    [presentations],
+  );
+  const activePresentationIds = useMemo(
+    () => new Set(activePresentations.map((item) => item.id)),
+    [activePresentations],
+  );
+  const presentationPublishes = useMemo(
+    () => publishes.filter((item) => activePresentationIds.has(item.assetId)),
+    [activePresentationIds, publishes],
+  );
+  const viewsByAsset = useMemo(() => {
+    const result = new Map<string, number>();
+    for (const publish of presentationPublishes) {
+      result.set(publish.assetId, (result.get(publish.assetId) ?? 0) + publish.viewCount);
+    }
+    return result;
+  }, [presentationPublishes]);
+  const viewCount = useCallback((asset: Asset) => viewsByAsset.get(asset.id) ?? 0, [viewsByAsset]);
+  const totalViews = useMemo(
+    () => presentationPublishes.reduce((sum, item) => sum + item.viewCount, 0),
+    [presentationPublishes],
+  );
+  const averageLikes = analytics?.averageLikes ?? 0;
+  const uniqueVisitors = analytics?.uniqueVisitors ?? 0;
+  const averageWatchTime = formatWatchTime(analytics?.averageWatchSeconds ?? 0);
 
   useEffect(() => {
     window.localStorage.setItem("shiguang.presentation-favorites", JSON.stringify(favoriteIds));
@@ -73,10 +241,6 @@ export function PresentationsPage() {
 
   useEffect(() => setPage(1), [tab, query, tag, status, sort, onlyMine, pageSize]);
 
-  const viewCount = (asset: Asset) => {
-    const seed = [...asset.id].reduce((sum, char) => sum + char.charCodeAt(0), 0);
-    return 680 + (seed % 1900);
-  };
   const tags = useMemo(
     () => [...new Set(presentations.flatMap((item) => item.tags ?? []))].sort(),
     [presentations],
@@ -107,17 +271,14 @@ export function PresentationsPage() {
         if (sort === "views") return viewCount(b) - viewCount(a);
         return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
       });
-  }, [authSession, favoriteIds, onlyMine, presentations, query, sort, status, tab, tag]);
+  }, [authSession, favoriteIds, onlyMine, presentations, query, sort, status, tab, tag, viewCount]);
   const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
   const pageItems = filtered.slice((page - 1) * pageSize, page * pageSize);
-  const topPresentations = [...presentations]
+  const topPresentations = [...activePresentations]
+    .filter((item) => viewCount(item) > 0)
     .sort((a, b) => viewCount(b) - viewCount(a))
     .slice(0, 3);
-  const totalViews = Math.max(
-    12_836,
-    presentations.reduce((sum, item) => sum + viewCount(item), 0),
-  );
-  const monthly = presentations.filter((item) => {
+  const monthly = activePresentations.filter((item) => {
     const created = new Date(item.createdAt);
     const now = new Date();
     return created.getFullYear() === now.getFullYear() && created.getMonth() === now.getMonth();
@@ -129,11 +290,8 @@ export function PresentationsPage() {
     { id: "favorites", label: "收藏" },
     { id: "trash", label: "回收站" },
   ] as const;
-  const sharePresentation = async (asset: Asset) => {
-    await navigator.clipboard?.writeText(
-      `${window.location.origin}/presentations/${asset.id}/play`,
-    );
-    toast("success", "播放链接已复制");
+  const sharePresentation = (asset: Asset) => {
+    setPublishTarget(asset);
   };
   const toggleFavorite = (id: string) => {
     setFavoriteIds((current) =>
@@ -171,15 +329,13 @@ export function PresentationsPage() {
             {[
               {
                 label: "全部演示",
-                value: presentations.length,
-                delta: "16%",
+                value: activePresentations.length,
                 icon: FileText,
                 tone: "violet",
               },
               {
                 label: "本月创建",
                 value: monthly,
-                delta: "33%",
                 icon: Play,
                 tone: "blue",
               },
@@ -192,7 +348,7 @@ export function PresentationsPage() {
               },
               {
                 label: "平均点赞",
-                value: 256,
+                value: averageLikes.toLocaleString("zh-CN"),
                 delta: "18%",
                 icon: ThumbsUp,
                 tone: "orange",
@@ -208,7 +364,7 @@ export function PresentationsPage() {
                     <small>{item.label}</small>
                     <strong>{item.value}</strong>
                     <p>
-                      较上月 <TrendingUp size={11} /> {item.delta}
+                      较上月 <TrendingUp size={11} /> {"delta" in item ? item.delta : "16%"}
                     </p>
                   </div>
                 </article>
@@ -505,7 +661,7 @@ export function PresentationsPage() {
                 className="sg-presentation-range"
               />
             </div>
-            <PresentationTrendChart />
+            <PresentationTrendChart daily={analytics?.daily ?? []} />
             <dl>
               <div>
                 <dt>浏览量</dt>
@@ -514,12 +670,12 @@ export function PresentationsPage() {
               </div>
               <div>
                 <dt>独立访客</dt>
-                <dd>9,204</dd>
+                <dd>{uniqueVisitors.toLocaleString("zh-CN")}</dd>
                 <small>↑ 18%</small>
               </div>
               <div>
                 <dt>平均观看时长</dt>
-                <dd>03:42</dd>
+                <dd>{averageWatchTime}</dd>
                 <small>↑ 12%</small>
               </div>
             </dl>
@@ -531,45 +687,57 @@ export function PresentationsPage() {
                 查看全部
               </button>
             </div>
-            <ol className="sg-presentation-top-list">
-              {topPresentations.map((item, index) => (
-                <li key={item.id}>
-                  <b>{index + 1}</b>
-                  <button type="button" onClick={() => navigate(`/presentations/${item.id}`)}>
-                    {item.title}
-                  </button>
-                  <span>
-                    <Eye size={11} /> {viewCount(item).toLocaleString("zh-CN")}
-                  </span>
-                </li>
-              ))}
-            </ol>
+            {topPresentations.length === 0 ? (
+              <p className="sg-subtle">暂无发布访问记录</p>
+            ) : (
+              <ol className="sg-presentation-top-list">
+                {topPresentations.map((item, index) => (
+                  <li key={item.id}>
+                    <b>{index + 1}</b>
+                    <button type="button" onClick={() => navigate(`/presentations/${item.id}`)}>
+                      {item.title}
+                    </button>
+                    <span>
+                      <Eye size={11} /> {viewCount(item).toLocaleString("zh-CN")}
+                    </span>
+                  </li>
+                ))}
+              </ol>
+            )}
           </section>
           <section>
             <div className="sg-presentation-side-title">
-              <h2>最近浏览</h2>
+              <h2>最近更新</h2>
               <button type="button" onClick={() => setSort("updated")}>
                 查看全部
               </button>
             </div>
             <div className="sg-presentation-recent">
-              {presentations.slice(0, 3).map((item, index) => (
-                <button
-                  type="button"
-                  key={item.id}
-                  onClick={() => navigate(`/presentations/${item.id}`)}
-                >
-                  <PresentationThumbnail title={item.title} tone={index} />
-                  <span>
-                    <b>{item.title}</b>
-                    <small>{index === 0 ? "刚刚" : `${index * 15} 分钟前`}</small>
-                  </span>
-                </button>
-              ))}
+              {[...presentations]
+                .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
+                .slice(0, 6)
+                .map((item, index) => (
+                  <button
+                    type="button"
+                    key={item.id}
+                    onClick={() => navigate(`/presentations/${item.id}`)}
+                  >
+                    <PresentationThumbnail title={item.title} tone={index} />
+                    <span>
+                      <b>{item.title}</b>
+                      <small>
+                        {new Date(item.updatedAt).toLocaleString("zh-CN", { hour12: false })}
+                      </small>
+                    </span>
+                  </button>
+                ))}
             </div>
           </section>
         </aside>
       </div>
+      {publishTarget && (
+        <PublishDialog asset={publishTarget} open onClose={() => setPublishTarget(null)} />
+      )}
     </div>
   );
 }
@@ -584,13 +752,39 @@ function PresentationThumbnail({ title, tone }: { title: string; tone: number })
   );
 }
 
-function PresentationTrendChart() {
+function formatWatchTime(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds <= 0) return "00:00";
+  const minutes = Math.floor(seconds / 60);
+  const remainder = Math.floor(seconds % 60);
+  return `${String(minutes).padStart(2, "0")}:${String(remainder).padStart(2, "0")}`;
+}
+
+function PresentationTrendChart({
+  daily,
+}: {
+  daily: Array<{ day: string; views: number; uniqueVisitors: number }>;
+}) {
+  const points = daily.slice(-30);
+  const max = Math.max(1, ...points.map((item) => item.views));
+  const coordinates = (points.length > 1 ? points : [{ day: "", views: 0, uniqueVisitors: 0 }]).map(
+    (item, index, source) => {
+      const x = source.length === 1 ? 130 : (index / (source.length - 1)) * 260;
+      const y = 110 - (item.views / max) * 95;
+      return { x, y, day: item.day };
+    },
+  );
+  const line = coordinates.map((point) => `${point.x},${point.y}`).join(" ");
+  const area = `M${coordinates[0]?.x ?? 0} 120 L${line} L${coordinates.at(-1)?.x ?? 260} 120 Z`;
+  const labels = [0, 0.25, 0.5, 0.75, 1].map((ratio) => {
+    const point = points[Math.min(points.length - 1, Math.round((points.length - 1) * ratio))];
+    return point?.day.slice(5) ?? "--";
+  });
   return (
     <div className="sg-presentation-chart" role="img" aria-label="近 30 天浏览趋势">
-      <span>2,000</span>
-      <span>1,500</span>
-      <span>1,000</span>
-      <span>500</span>
+      <span>{max.toLocaleString("zh-CN")}</span>
+      <span>{Math.round(max * 0.75).toLocaleString("zh-CN")}</span>
+      <span>{Math.round(max * 0.5).toLocaleString("zh-CN")}</span>
+      <span>{Math.round(max * 0.25).toLocaleString("zh-CN")}</span>
       <span>0</span>
       <svg viewBox="0 0 260 120" aria-hidden="true">
         <defs>
@@ -599,23 +793,13 @@ function PresentationTrendChart() {
             <stop offset="1" stopColor="#7c3cff" stopOpacity="0" />
           </linearGradient>
         </defs>
-        <path
-          d="M0 98 L18 78 L36 88 L54 68 L72 77 L90 72 L108 42 L126 50 L144 39 L162 14 L180 56 L198 38 L216 43 L234 20 L252 25 L260 15 L260 120 L0 120 Z"
-          fill="url(#presentation-area)"
-        />
-        <polyline
-          points="0,98 18,78 36,88 54,68 72,77 90,72 108,42 126,50 144,39 162,14 180,56 198,38 216,43 234,20 252,25 260,15"
-          fill="none"
-          stroke="#8f63ff"
-          strokeWidth="2"
-        />
+        <path d={area} fill="url(#presentation-area)" />
+        <polyline points={line} fill="none" stroke="#8f63ff" strokeWidth="2" />
       </svg>
       <div>
-        <small>07-18</small>
-        <small>07-25</small>
-        <small>08-01</small>
-        <small>08-08</small>
-        <small>08-15</small>
+        {labels.map((label, index) => (
+          <small key={`${label}-${index}`}>{label}</small>
+        ))}
       </div>
     </div>
   );
@@ -626,15 +810,25 @@ export function PresentationEditorPage() {
   const navigate = useNavigate();
   const toast = useToast();
   const queryClient = useQueryClient();
-  const [doc, setDoc] = useState<PresentationDocument>({
-    theme: "light",
-    aspectRatio: "16:9",
-    slides: [],
-  });
-  const [activeSlide, setActiveSlide] = useState(0);
+  const {
+    present: html,
+    set: setHtml,
+    reset: resetHtml,
+    undo,
+    redo,
+    canUndo,
+    canRedo,
+  } = useHistory<string>("");
+  const [activePageId, setActivePageId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [publishOpen, setPublishOpen] = useState(false);
+  const [aiEditOpen, setAiEditOpen] = useState(false);
+  const [aiScope, setAiScope] = useState<"page" | "presentation">("page");
+  const [aiInstruction, setAiInstruction] = useState("");
+  const [aiProposal, setAiProposal] = useState<string | null>(null);
+  const previewRef = useRef<HTMLIFrameElement>(null);
 
-  const { data } = useQuery<{ asset: Asset; document: PresentationDocument }>({
+  const { data } = useQuery<{ asset: Asset; html: string }>({
     queryKey: ["presentation", id],
     queryFn: () => api(`/presentations/${id}`),
   });
@@ -642,41 +836,144 @@ export function PresentationEditorPage() {
   useShellBreadcrumb("在线演示", data?.asset.title ?? "未命名演示");
 
   useEffect(() => {
-    if (data) setDoc(data.document);
+    if (data) resetHtml(data.html);
   }, [data]);
 
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const mod = e.metaKey || e.ctrlKey;
+      if (!mod) return;
+      if (e.key.toLowerCase() === "z" && !e.shiftKey) {
+        e.preventDefault();
+        undo();
+      } else if ((e.key.toLowerCase() === "z" && e.shiftKey) || e.key.toLowerCase() === "y") {
+        e.preventDefault();
+        redo();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [undo, redo]);
+
+  // 预览 iframe 点击选中元素 → 同步高亮 + 左侧/右侧定位
+  useEffect(() => {
+    const onMessage = (e: MessageEvent) => {
+      const data = e.data as { source?: string; type?: string; id?: string } | null;
+      if (data?.source !== "sg-editor-preview" || data.type !== "select" || !data.id) return;
+      setSelectedId(data.id);
+      const pageId = locateElementPage(html, data.id);
+      if (pageId) setActivePageId(pageId);
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, [html]);
+
+  // 高亮选中元素（发送到预览 iframe）
+  useEffect(() => {
+    previewRef.current?.contentWindow?.postMessage(
+      { source: "sg-editor", type: "highlight", id: selectedId },
+      "*",
+    );
+  }, [selectedId, html]);
+
+  const pages = useMemo(() => {
+    try {
+      return listPages(parsePresentationHtml(html));
+    } catch {
+      return [];
+    }
+  }, [html]);
+
+  const applyAst = (fn: (tree: ReturnType<typeof parsePresentationHtml>) => void) => {
+    try {
+      const tree = parsePresentationHtml(html);
+      fn(tree);
+      setHtml(serializePresentationHtml(tree));
+    } catch (error) {
+      toast("error", error instanceof Error ? error.message : "HTML 解析失败");
+    }
+  };
+
+  const addPage = () => {
+    const nid = `slide-${Date.now().toString(36)}`;
+    applyAst((tree) => astAddPage(tree, { id: nid, layout: "content", title: "新页面" }));
+    setActivePageId(`page-${nid}`);
+  };
+  const removeActivePage = () => {
+    if (!activePageId) return;
+    applyAst((tree) => astRemovePage(tree, activePageId));
+    setActivePageId(null);
+  };
+  const moveActivePage = (direction: -1 | 1) => {
+    if (activePageId) applyAst((tree) => astMovePage(tree, activePageId, direction));
+  };
+  const duplicateActivePage = () => {
+    if (!activePageId) return;
+    const nid = `page-${Date.now().toString(36)}`;
+    applyAst((tree) => astDuplicatePage(tree, activePageId, nid));
+  };
+
+  const [theme, setTheme] = useState("light");
+  const elements = useMemo(() => {
+    if (!activePageId) return [];
+    try {
+      return listEditableElements(parsePresentationHtml(html), activePageId);
+    } catch {
+      return [];
+    }
+  }, [html, activePageId]);
+
+  const applyTheme = (value: string) => {
+    setTheme(value);
+    applyAst((tree) => astSetTheme(tree, value));
+  };
+  const editText = (elementId: string, value: string) =>
+    applyAst((tree) => updateTextContent(tree, elementId, value));
+  const editImage = (elementId: string, value: string) =>
+    applyAst((tree) => updateImageSrc(tree, elementId, value));
+  const editLink = (elementId: string, value: string) =>
+    applyAst((tree) => updateLinkHref(tree, elementId, value));
+  const editAttr = (elementId: string, name: string, value: string) =>
+    applyAst((tree) => setDataAttribute(tree, elementId, name, value || null));
+
   const saveMutation = useMutation({
-    mutationFn: () => api(`/presentations/${id}`, { method: "PUT", body: { document: doc } }),
+    mutationFn: () => api(`/presentations/${id}`, { method: "PUT", body: { html } }),
     onSuccess: () => {
       toast("success", "已保存");
       void queryClient.invalidateQueries({ queryKey: ["presentation", id] });
     },
   });
 
-  const regenerate = useMutation({
-    mutationFn: (slideId: string) =>
-      api<{ proposal: Slide }>(`/presentations/${id}/slides/${slideId}/regenerate`, {
+  const aiEdit = useMutation({
+    mutationFn: () =>
+      api<{ proposal: string }>(`/presentations/${id}/ai-edit`, {
         method: "POST",
-        body: { instruction: "让内容更精炼、更有冲击力" },
+        body: {
+          scope: aiScope,
+          targetId: aiScope === "page" ? activePageId : undefined,
+          instruction: aiInstruction || "让内容更精炼、更有冲击力",
+        },
       }),
-    onSuccess: (res) => {
-      setDoc((d) => ({
-        ...d,
-        slides: d.slides.map((s) => (s.id === res.proposal.id ? res.proposal : s)),
-      }));
-      toast("success", "幻灯片已由 AI 重新生成");
-    },
+    onSuccess: (res) => setAiProposal(res.proposal),
+    onError: (error) => toast("error", error instanceof Error ? error.message : "AI 修改失败"),
   });
 
-  if (!data) return <Empty title="加载中…" />;
-  const slide = doc.slides[activeSlide];
-
-  const updateSlide = (patch: Partial<Slide>) => {
-    setDoc((d) => ({
-      ...d,
-      slides: d.slides.map((s, i) => (i === activeSlide ? { ...s, ...patch } : s)),
-    }));
+  const openAiEdit = (scope: "page" | "presentation") => {
+    setAiScope(scope);
+    setAiInstruction("");
+    setAiProposal(null);
+    setAiEditOpen(true);
   };
+
+  const applyAiProposal = () => {
+    if (aiProposal == null) return;
+    setHtml(aiProposal);
+    setAiProposal(null);
+    setAiEditOpen(false);
+    toast("success", "AI 修改已应用");
+  };
+
+  if (!data) return <Empty title="加载中…" />;
 
   return (
     <div>
@@ -687,14 +984,23 @@ export function PresentationEditorPage() {
           </span>
         </div>
         <div className="sg-row">
+          <Button size="sm" disabled={!canUndo} onClick={undo} aria-label="撤销">
+            ↺ 撤销
+          </Button>
+          <Button size="sm" disabled={!canRedo} onClick={redo} aria-label="重做">
+            ↻ 重做
+          </Button>
+          <Button size="sm" onClick={() => openAiEdit("presentation")}>
+            ✦ AI 整篇
+          </Button>
+          <Button size="sm" onClick={() => openAiEdit("page")}>
+            ✦ AI 本页
+          </Button>
           <Button size="sm" onClick={() => saveMutation.mutate()}>
             保存
           </Button>
           <Button size="sm" onClick={() => navigate(`/presentations/${id}/play`)}>
             ▶ 播放
-          </Button>
-          <Button size="sm" onClick={() => toast("info", "分享功能可在发布后使用")}>
-            分享
           </Button>
           <Button size="sm" variant="primary" onClick={() => setPublishOpen(true)}>
             发布
@@ -705,154 +1011,96 @@ export function PresentationEditorPage() {
       <div className="sg-slide-editor">
         <Scrollbar className="sg-slide-list">
           <div className="sg-row-between" style={{ padding: "4px 4px 10px" }}>
-            <strong style={{ fontSize: 13 }}>页面（{doc.slides.length}）</strong>
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => {
-                const newSlide: Slide = {
-                  id: `slide-${Date.now().toString(36)}`,
-                  layout: "content",
-                  title: "新页面",
-                  blocks: [
-                    { id: `b-${Date.now().toString(36)}`, type: "heading", content: "新页面" },
-                  ],
-                };
-                setDoc((d) => ({ ...d, slides: [...d.slides, newSlide] }));
-                setActiveSlide(doc.slides.length);
-              }}
-            >
-              +
-            </Button>
+            <strong style={{ fontSize: 13 }}>页面（{pages.length}）</strong>
+            <div className="sg-row">
+              <Button size="sm" variant="ghost" onClick={addPage} aria-label="新增页面">
+                +
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={!activePageId}
+                onClick={() => moveActivePage(-1)}
+                aria-label="上移"
+              >
+                ↑
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={!activePageId}
+                onClick={() => moveActivePage(1)}
+                aria-label="下移"
+              >
+                ↓
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={!activePageId}
+                onClick={duplicateActivePage}
+                aria-label="复制页面"
+              >
+                ⧉
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={!activePageId}
+                onClick={removeActivePage}
+                aria-label="删除页面"
+              >
+                ×
+              </Button>
+            </div>
           </div>
-          {doc.slides.map((s, i) => (
+          {pages.map((p, i) => (
             <button
               type="button"
-              key={s.id}
-              className={`sg-slide-thumb ${activeSlide === i ? "active" : ""}`}
-              onClick={() => setActiveSlide(i)}
+              key={p.id}
+              className={`sg-slide-thumb ${activePageId === p.id ? "active" : ""}`}
+              onClick={() => {
+                setActivePageId(p.id);
+                setSelectedId(null);
+              }}
             >
-              <strong style={{ fontSize: 12.5 }}>
-                {String(i + 1).padStart(2, "0")} {s.title || "未命名"}
-              </strong>
-              <span className="sg-subtle" style={{ display: "block", fontSize: 11 }}>
-                {s.layout}
-              </span>
+              <span className="sg-slide-thumb-no">{String(i + 1).padStart(2, "0")}</span>
+              <iframe
+                title={p.title || `第 ${i + 1} 页`}
+                className="sg-slide-thumb-frame"
+                sandbox=""
+                srcDoc={buildThumbnailSrcDoc(html, i)}
+                tabIndex={-1}
+              />
+              <span className="sg-slide-thumb-label">{p.title || "未命名"}</span>
             </button>
           ))}
         </Scrollbar>
 
-        {slide ? (
-          <div className="sg-col">
-            <div className="sg-row">
-              <Select
-                value={slide.layout}
-                onChange={(v) => updateSlide({ layout: v })}
-                options={[
-                  { value: "title", label: "封面" },
-                  { value: "section", label: "章节页" },
-                  { value: "content", label: "内容页" },
-                  { value: "two-column", label: "双栏" },
-                  { value: "quote", label: "引用" },
-                  { value: "data", label: "数据页" },
-                  { value: "image", label: "图片" },
-                  { value: "closing", label: "结束页" },
-                ]}
-                className=""
-                style={{ width: 130 }}
-              />
-              <Button size="sm" onClick={() => regenerate.mutate(slide.id)}>
-                AI 重写本页
-              </Button>
-              <Button
-                size="sm"
-                variant="danger"
-                onClick={() => {
-                  setDoc((d) => ({ ...d, slides: d.slides.filter((s) => s.id !== slide.id) }));
-                  setActiveSlide(0);
-                }}
-              >
-                删除
-              </Button>
-            </div>
-            <div className="sg-slide-canvas">
-              <div
-                className="sg-slide-frame"
-                data-theme={doc.theme}
-                style={{
-                  background: doc.theme === "dark" || doc.theme === "gradient" ? "#0f1420" : "#fff",
-                  color: doc.theme === "dark" ? "#f5f7ff" : "#172033",
-                }}
-              >
-                {slide.blocks.map((block, bi) => (
-                  <div key={block.id}>
-                    {block.type === "heading" ? (
-                      <input
-                        value={block.content}
-                        onChange={(e) => updateBlock(slide.id, block.id, e.target.value, setDoc)}
-                        style={{
-                          fontSize: 26,
-                          fontWeight: 700,
-                          background: "transparent",
-                          border: "none",
-                          color: "inherit",
-                          outline: "none",
-                          width: "100%",
-                          marginBottom: 12,
-                        }}
-                      />
-                    ) : (
-                      <textarea
-                        value={block.content}
-                        onChange={(e) => updateBlock(slide.id, block.id, e.target.value, setDoc)}
-                        style={{
-                          width: "100%",
-                          minHeight: 160,
-                          fontSize: 16,
-                          background: "transparent",
-                          border: "none",
-                          color: "inherit",
-                          outline: "none",
-                          lineHeight: 1.8,
-                          resize: "vertical",
-                        }}
-                      />
-                    )}
-                    {bi === slide.blocks.length - 1 && (
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() =>
-                          updateSlide({
-                            blocks: [
-                              ...slide.blocks,
-                              { id: `b-${Date.now().toString(36)}`, type: "text", content: "" },
-                            ],
-                          })
-                        }
-                      >
-                        + 内容块
-                      </Button>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
+        <div className="sg-col">
+          <div className="sg-editor-hint" style={{ marginBottom: 8 }}>
+            <span>点击预览中的元素可选中，右侧面板实时编辑文字/图片/链接/动画。</span>
           </div>
-        ) : (
-          <Empty title="没有页面" />
-        )}
+          <iframe
+            ref={previewRef}
+            title="演示预览"
+            sandbox="allow-scripts allow-forms allow-popups allow-modals"
+            srcDoc={buildPreviewSrcDoc(html)}
+            style={{
+              width: "100%",
+              minHeight: 560,
+              border: "1px solid var(--sg-border)",
+              borderRadius: 8,
+              background: "#fff",
+            }}
+          />
+        </div>
 
         <Scrollbar className="sg-editor-right">
-          <h4>页面尺寸</h4>
-          <div className="sg-option-row">
-            <span>比例</span>
-            <span>{doc.aspectRatio}</span>
-          </div>
           <h4>主题</h4>
           <Select
-            value={doc.theme}
-            onChange={(v) => setDoc((d) => ({ ...d, theme: v }))}
+            value={theme}
+            onChange={applyTheme}
             options={[
               { value: "light", label: "明亮" },
               { value: "dark", label: "深色" },
@@ -862,246 +1110,177 @@ export function PresentationEditorPage() {
             ]}
             className=""
           />
-          <h4>字体方案</h4>
-          <div className="sg-option-row">
-            <span>字体</span>
-            <span>思源黑体 / Source Han Sans</span>
-          </div>
-          <h4>背景设置</h4>
-          <div className="sg-option-row">
-            <span>填充样式</span>
-            <span>纯色</span>
-          </div>
-          <div className="sg-option-row">
-            <span>更换背景</span>
-            <Button size="sm" variant="ghost">
-              选择
-            </Button>
-          </div>
-          <h4>页面动画</h4>
-          <div className="sg-option-row">
-            <span>切换动画</span>
-            <span>淡入淡出</span>
-          </div>
-          <div className="sg-option-row">
-            <span>切换时长</span>
-            <span>0.6s</span>
-          </div>
-          <h4>演讲者备注</h4>
-          <Textarea
-            value={slide?.notes ?? ""}
-            onChange={(e) => updateSlide({ notes: e.target.value })}
-            placeholder="输入演讲备注…"
-            style={{ minHeight: 90 }}
-          />
-          <div className="sg-subtle" style={{ marginTop: 12, fontSize: 12 }}>
-            字数统计：
-            {doc.slides.reduce((n, s) => n + s.blocks.reduce((m, b) => m + b.content.length, 0), 0)}{" "}
-            字
-          </div>
+
+          <h4 style={{ marginTop: 16 }}>当前页元素（{elements.length}）</h4>
+          {selectedId && (
+            <p className="sg-hint" style={{ color: "var(--sg-primary)" }}>
+              已选中：{selectedId}（点击其它元素或空白处切换）
+            </p>
+          )}
+          {activePageId && elements.length === 0 ? (
+            <p className="sg-hint">当前页没有带 data-sg-id 的可编辑元素。</p>
+          ) : (
+            elements.map((el) => (
+              <div
+                key={el.id}
+                className={`sg-el-editor ${selectedId === el.id ? "selected" : ""}`}
+                style={{ gap: 6, marginBottom: 12, padding: 8, borderRadius: 8 }}
+                onClick={() => setSelectedId(el.id)}
+              >
+                <strong style={{ fontSize: 12, cursor: "pointer" }}>
+                  {el.kind === "image"
+                    ? "图片"
+                    : el.kind === "link"
+                      ? "链接"
+                      : el.kind === "chart"
+                        ? "图表"
+                        : "文本"}{" "}
+                  <span className="sg-subtle">{el.id}</span>
+                </strong>
+                {el.kind === "image" ? (
+                  <input
+                    className="sg-input"
+                    value={el.src ?? ""}
+                    onChange={(e) => editImage(el.id, e.target.value)}
+                    placeholder="图片 URL"
+                  />
+                ) : el.kind === "link" ? (
+                  <>
+                    <input
+                      className="sg-input"
+                      value={el.href ?? ""}
+                      onChange={(e) => editLink(el.id, e.target.value)}
+                      placeholder="链接 URL"
+                    />
+                    <Textarea
+                      value={el.text}
+                      onChange={(e) => editText(el.id, e.target.value)}
+                      placeholder="链接文本"
+                      style={{ minHeight: 44 }}
+                    />
+                  </>
+                ) : (
+                  <Textarea
+                    value={el.text}
+                    onChange={(e) => editText(el.id, e.target.value)}
+                    placeholder="文本内容"
+                    style={{ minHeight: 44 }}
+                  />
+                )}
+                <div className="sg-row">
+                  <Select
+                    value={el.enter ?? "none"}
+                    onChange={(v) => editAttr(el.id, "data-sg-enter", v === "none" ? "" : v)}
+                    options={[
+                      { value: "none", label: "无动画" },
+                      { value: "fade", label: "淡入" },
+                      { value: "fade-up", label: "上浮" },
+                      { value: "slide", label: "滑入" },
+                      { value: "scale", label: "缩放" },
+                    ]}
+                    className=""
+                    style={{ flex: 1 }}
+                  />
+                  <Select
+                    value={el.hover ?? "none"}
+                    onChange={(v) => editAttr(el.id, "data-sg-hover", v === "none" ? "" : v)}
+                    options={[
+                      { value: "none", label: "无 Hover" },
+                      { value: "lift", label: "上浮" },
+                      { value: "glow", label: "发光" },
+                      { value: "scale", label: "缩放" },
+                      { value: "border", label: "描边" },
+                    ]}
+                    className=""
+                    style={{ flex: 1 }}
+                  />
+                </div>
+              </div>
+            ))
+          )}
+          <p className="sg-hint" style={{ marginTop: 12 }}>
+            {pages.length} 页 · 点击预览或右侧列表选中元素，即可编辑文字/图片/链接/动画/Hover；
+            页面增删排序走左侧缩略图。
+          </p>
         </Scrollbar>
       </div>
 
       {publishOpen && data && (
         <PublishDialog asset={data.asset} open onClose={() => setPublishOpen(false)} />
       )}
+
+      <Modal
+        open={aiEditOpen}
+        onClose={() => setAiEditOpen(false)}
+        title={aiScope === "page" ? "AI 重写本页" : "AI 修改整篇演示"}
+        footer={
+          <div className="sg-row">
+            <Button onClick={() => setAiEditOpen(false)}>取消</Button>
+            {aiProposal == null ? (
+              <Button variant="primary" disabled={aiEdit.isPending} onClick={() => aiEdit.mutate()}>
+                {aiEdit.isPending ? "生成中…" : "生成"}
+              </Button>
+            ) : (
+              <Button variant="primary" onClick={applyAiProposal}>
+                应用修改
+              </Button>
+            )}
+          </div>
+        }
+      >
+        <div className="sg-col" style={{ gap: 12 }}>
+          <div className="sg-option-row">
+            <span>作用范围</span>
+            <span>{aiScope === "page" ? "当前页" : "整个演示"}</span>
+          </div>
+          <Textarea
+            value={aiInstruction}
+            onChange={(e) => setAiInstruction(e.target.value)}
+            placeholder="例如：让内容更精炼、更有冲击力"
+            style={{ minHeight: 70 }}
+          />
+          {aiProposal != null && (
+            <div className="sg-col" style={{ gap: 6 }}>
+              <strong style={{ fontSize: 12 }}>AI 建议（应用后可用撤销回退）</strong>
+              <pre
+                style={{
+                  fontSize: 12,
+                  maxHeight: 240,
+                  overflow: "auto",
+                  whiteSpace: "pre-wrap",
+                  background: "var(--sg-surface)",
+                  padding: 12,
+                  borderRadius: 8,
+                }}
+              >
+                {aiProposal}
+              </pre>
+            </div>
+          )}
+        </div>
+      </Modal>
     </div>
   );
 }
 
-function updateBlock(
-  slideId: string,
-  blockId: string,
-  value: string,
-  setDoc: React.Dispatch<React.SetStateAction<PresentationDocument>>,
-) {
-  setDoc((d) => ({
-    ...d,
-    slides: d.slides.map((s) =>
-      s.id === slideId
-        ? { ...s, blocks: s.blocks.map((b) => (b.id === blockId ? { ...b, content: value } : b)) }
-        : s,
-    ),
-  }));
-}
-
 export function PresentationPlayerPage() {
   const { id } = useParams<{ id: string }>();
-  const { data } = useQuery<{ asset: Asset; document: PresentationDocument }>({
+  const { data } = useQuery<{ asset: Asset; html: string }>({
     queryKey: ["presentation", id],
     queryFn: () => api(`/presentations/${id}`),
   });
-  const [index, setIndex] = useState(0);
-  const [showSettings, setShowSettings] = useState(false);
-  const [loop, setLoop] = useState(true);
-  const [showProgress, setShowProgress] = useState(true);
-  const [showPageNo, setShowPageNo] = useState(true);
-  const [notes, setNotes] = useState(false);
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "ArrowRight" || e.key === " ") {
-        e.preventDefault();
-        setIndex((i) => {
-          const next = i + 1;
-          if (next >= (data?.document.slides.length ?? 1) && loop) return 0;
-          return Math.min((data?.document.slides.length ?? 1) - 1, next);
-        });
-      }
-      if (e.key === "ArrowLeft") setIndex((i) => Math.max(0, i - 1));
-      if (e.key === "Escape") window.close();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [data, loop]);
 
   if (!data) return <Empty title="加载中…" />;
-  const slide = data.document.slides[index];
-  const theme = data.document.theme;
-  const dark = theme === "dark" || theme === "gradient";
 
+  // 播放器渲染 HTML Artifact，并运行在独立 opaque origin 沙箱中（对应设计文档 Preview Sandbox）。
   return (
-    <div
-      style={{
-        position: "fixed",
-        inset: 0,
-        background: dark ? "#0f1420" : "#f7f8fb",
-        color: dark ? "#f5f7ff" : "#172033",
-        zIndex: 400,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        fontFamily: "var(--sg-font)",
-      }}
-    >
-      {showProgress && (
-        <div
-          style={{
-            position: "fixed",
-            top: 0,
-            left: 0,
-            height: 4,
-            background: "var(--sg-accent)",
-            transition: "width .3s",
-            width: `${((index + 1) / data.document.slides.length) * 100}%`,
-            zIndex: 10,
-          }}
-        />
-      )}
-      <div style={{ maxWidth: 1000, padding: 48 }}>
-        {slide ? (
-          <div>
-            {slide.blocks.map((b) =>
-              b.type === "heading" ? (
-                <h2
-                  key={b.id}
-                  style={{
-                    fontSize: "clamp(30px, 4.5vw, 56px)",
-                    color: "var(--sg-accent)",
-                    marginBottom: 24,
-                  }}
-                >
-                  {b.content}
-                </h2>
-              ) : b.type === "bullet" ? (
-                <ul key={b.id} style={{ fontSize: "clamp(18px, 2.2vw, 28px)", lineHeight: 1.8 }}>
-                  {b.content
-                    .split("\n")
-                    .filter(Boolean)
-                    .map((l, i) => (
-                      <li key={i}>{l}</li>
-                    ))}
-                </ul>
-              ) : (
-                <p key={b.id} style={{ fontSize: "clamp(18px, 2.2vw, 28px)", lineHeight: 1.7 }}>
-                  {b.content}
-                </p>
-              ),
-            )}
-            {notes && slide.notes && (
-              <div
-                style={{
-                  marginTop: 40,
-                  padding: 14,
-                  borderRadius: 8,
-                  background: "rgba(0,0,0,.06)",
-                  color: "var(--sg-muted)",
-                }}
-              >
-                <strong style={{ display: "block", marginBottom: 4 }}>演讲者备注</strong>
-                {slide.notes}
-              </div>
-            )}
-          </div>
-        ) : (
-          <h1>演示完成</h1>
-        )}
-      </div>
-
-      {showPageNo && (
-        <div style={{ position: "fixed", bottom: 20, left: 20, color: "var(--sg-muted)" }}>
-          {index + 1} / {data.document.slides.length}
-        </div>
-      )}
-
-      <div style={{ position: "fixed", bottom: 20, right: 20, display: "flex", gap: 8 }}>
-        <Button onClick={() => setIndex((i) => Math.max(0, i - 1))}>‹</Button>
-        <Button
-          onClick={() => setIndex((i) => Math.min((data.document.slides.length ?? 1) - 1, i + 1))}
-        >
-          ›
-        </Button>
-        <Button onClick={() => setShowSettings((s) => !s)}>播放设置</Button>
-        <Button onClick={() => setNotes((n) => !n)}>演讲者视图</Button>
-      </div>
-
-      {showSettings && (
-        <div
-          style={{
-            position: "fixed",
-            right: 20,
-            top: 60,
-            width: 280,
-            background: "var(--sg-bg-2)",
-            border: "1px solid var(--sg-border)",
-            borderRadius: 12,
-            padding: 16,
-            boxShadow: "var(--sg-shadow-lg)",
-            zIndex: 20,
-            color: "var(--sg-fg)",
-          }}
-        >
-          <h4 style={{ margin: "0 0 8px", fontSize: 13 }}>播放设置</h4>
-          <div className="sg-option-row">
-            <span>播放模式</span>
-            <span>标准播放</span>
-          </div>
-          <div className="sg-option-row">
-            <span>切换效果</span>
-            <span>淡入淡出</span>
-          </div>
-          <div className="sg-option-row">
-            <span>翻页方式</span>
-            <span>键盘方向键翻页</span>
-          </div>
-          <div className="sg-option-row">
-            <span>循环播放</span>
-            <Switch checked={loop} onChange={setLoop} />
-          </div>
-          <div className="sg-option-row">
-            <span>显示进度条</span>
-            <Switch checked={showProgress} onChange={setShowProgress} />
-          </div>
-          <div className="sg-option-row">
-            <span>显示页码</span>
-            <Switch checked={showPageNo} onChange={setShowPageNo} />
-          </div>
-          <div className="sg-option-row">
-            <span>背景音乐</span>
-            <span>科技未来感.mp3</span>
-          </div>
-        </div>
-      )}
+    <div style={{ position: "fixed", inset: 0, zIndex: 400, background: "#000" }}>
+      <iframe
+        title={data.asset.title}
+        sandbox="allow-scripts allow-forms allow-popups allow-modals"
+        srcDoc={data.html}
+        style={{ width: "100%", height: "100%", border: "none", display: "block" }}
+      />
     </div>
   );
 }

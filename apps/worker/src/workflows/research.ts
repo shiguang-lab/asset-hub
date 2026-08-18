@@ -1,5 +1,7 @@
-import { type AiService, createAiService } from "@shiguang/ai-core";
+import { type AiService, createAiService, loadCapabilityContext } from "@shiguang/ai-core";
+import { loadCapabilityAgentId } from "@shiguang/config";
 import { z } from "zod";
+import { completeWithCapabilities } from "./ai-helpers.js";
 import { type StepContext, step } from "./helpers.js";
 
 const researchSpecSchema = z.object({
@@ -22,6 +24,7 @@ export async function runResearchWorkflow(
 ): Promise<void> {
   const spec = researchSpecSchema.parse(specInput);
   const ai: AiService = createAiService({ quality: spec.quality });
+  const capabilityContext = await loadCapabilityContext(loadCapabilityAgentId()).catch(() => null);
   const scopeItems =
     spec.scope.length > 0
       ? spec.scope.filter((s) => s.enabled)
@@ -44,18 +47,24 @@ export async function runResearchWorkflow(
 
   let reportText = "";
   await step(ctx, "research.write", 80, "撰写报告：基于证据生成结构化报告", async () => {
-    const res = await ai.complete({
+    const res = await completeWithCapabilities(ai, {
+      capabilityContext,
+      quality: spec.quality,
       messages: [
         {
           role: "system",
-          content: "你是行业研究员。基于提供的证据撰写结构完整、结论可追溯的中文研究报告。",
+          content: [
+            "你是行业研究员。基于提供的证据撰写结构完整、结论可追溯的中文研究报告。",
+            capabilityContext?.summary,
+          ]
+            .filter(Boolean)
+            .join("\n\n"),
         },
         {
           role: "user",
           content: `report-writer\ngoal: ${spec.goal}\nregion: ${spec.region}\ntimeRange: ${spec.timeRange}\nscope: ${scopeItems.map((s) => s.label).join("、")}\nevidence:\n${evidence.map((e) => `- ${String(e.claim)} [来源: ${String(e.sourceTitle)}]`).join("\n")}`,
         },
       ],
-      quality: spec.quality,
     });
     reportText = res.text;
   });

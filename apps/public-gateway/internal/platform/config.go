@@ -17,6 +17,7 @@ import (
 type Config struct {
 	Port         string
 	APIBase      string
+	SSRBaseURL   string
 	GatewayToken string
 	ObjectRoot   string
 	HMACSecret   string
@@ -37,6 +38,10 @@ func LoadConfig() Config {
 	if apiBase == "" {
 		apiBase = "http://localhost:3001"
 	}
+	ssrBaseURL := os.Getenv("SSR_BASE_URL")
+	if ssrBaseURL == "" {
+		ssrBaseURL = "http://localhost:3005"
+	}
 	token := os.Getenv("PUBLIC_GATEWAY_TOKEN")
 	if token == "" {
 		token = "dev-gateway-token"
@@ -52,6 +57,7 @@ func LoadConfig() Config {
 	return Config{
 		Port:         port,
 		APIBase:      apiBase,
+		SSRBaseURL:   ssrBaseURL,
 		GatewayToken: token,
 		ObjectRoot:   root,
 		HMACSecret:   secret,
@@ -117,7 +123,7 @@ func (c Config) FetchReleaseFile(publishID, releaseID, path string) (body []byte
 	if resp.StatusCode != http.StatusOK {
 		return nil, resp.StatusCode, nil
 	}
-	body, err = io.ReadAll(io.LimitReader(resp.Body, 64<<20))
+	body, err = io.ReadAll(io.LimitReader(resp.Body, 256<<20))
 	return body, resp.StatusCode, err
 }
 

@@ -9,6 +9,8 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/http/httputil"
+	"net/url"
 	"os"
 	"os/signal"
 	"strings"
@@ -43,6 +45,14 @@ type PublishMeta struct {
 	} `json:"asset"`
 }
 
+type publicMarkdownContent struct {
+	Title         string            `json:"title"`
+	Markdown      string            `json:"markdown"`
+	AllowDownload bool              `json:"allowDownload"`
+	AllowCopy     bool              `json:"allowCopy"`
+	AssetLinks    map[string]string `json:"assetLinks"`
+}
+
 type metaCacheEntry struct {
 	meta      PublishMeta
 	fetchedAt time.Time
@@ -65,6 +75,40 @@ func main() {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 
+	// Next.js emits root-relative build asset URLs (/_next/static/*). These
+	// requests arrive at the public gateway through the shared edge and must be
+	// proxied to SSR rather than handled by the host's published-content route.
+	mux.HandleFunc("GET /_next/{path...}", func(w http.ResponseWriter, r *http.Request) {
+		proxySSR(w, r, cfg)
+	})
+
+	mux.HandleFunc("GET /p/{slug}/content", func(w http.ResponseWriter, r *http.Request) {
+		slug := r.PathValue("slug")
+		meta, status := cache.resolve(slug)
+		if status != http.StatusOK || meta.Release == nil || !isMarkdownPublish(meta) {
+			writeJSON(w, statusOrNotFound(status), map[string]string{"code": "CONTENT_NOT_FOUND"})
+			return
+		}
+		if meta.Publish.Visibility == "password" && !unlocked(r, meta.Publish.ID, cfg) {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"code": "PASSWORD_REQUIRED"})
+			return
+		}
+		data, fileStatus, err := cfg.FetchReleaseFile(meta.Publish.ID, meta.Release.ID, "index.md")
+		if err != nil || fileStatus != http.StatusOK {
+			writeJSON(w, statusOrNotFound(fileStatus), map[string]string{"code": "CONTENT_NOT_FOUND"})
+			return
+		}
+		w.Header().Set("Cache-Control", "private, no-store")
+		writeJSON(w, http.StatusOK, publicMarkdownContent{
+			Title:         meta.Asset.Title,
+			Markdown:      string(data),
+			AllowDownload: meta.Publish.AllowDownload,
+			AllowCopy:     meta.Publish.AllowCopy,
+			AssetLinks:    releaseAssetLinks(meta, slug),
+		})
+		go recordAccess(cfg, meta, "index.md", r)
+	})
+
 	mux.HandleFunc("GET /p/{slug}", func(w http.ResponseWriter, r *http.Request) {
 		slug := r.PathValue("slug")
 		meta, status := cache.resolve(slug)
@@ -82,14 +126,18 @@ func main() {
 			return
 		}
 		if pub.Visibility == "password" && !unlocked(r, pub.ID, cfg) {
-			serveUnlockPage(w, slug)
+			serveUnlockPage(w, slug, "/p/"+slug)
 			return
 		}
 		if meta.Release == nil {
 			serveErrorPage(w, http.StatusServiceUnavailable, "发布物尚未就绪", "该内容还在准备中，请稍后刷新。")
 			return
 		}
-		serveReleaseFile(w, r, cfg, meta, "index.html", false)
+		if isMarkdownPublish(meta) {
+			serveSSR(w, r, cfg, slug)
+			return
+		}
+		serveReleaseFile(w, r, cfg, meta, "index.html", false, "")
 		go recordAccess(cfg, meta, "index.html", r)
 	})
 
@@ -101,11 +149,61 @@ func main() {
 			serveErrorPage(w, http.StatusNotFound, "资源不存在", "该静态资源不存在。")
 			return
 		}
+		if meta.Publish.Visibility == "password" && !unlocked(r, meta.Publish.ID, cfg) {
+			serveErrorPage(w, http.StatusUnauthorized, "需要密码", "请先打开分享页面并输入访问密码。")
+			return
+		}
 		if !manifestAllows(meta, assetPath) {
 			serveErrorPage(w, http.StatusForbidden, "禁止访问", "该资源不在发布清单中。")
 			return
 		}
-		serveReleaseFile(w, r, cfg, meta, assetPath, true)
+		serveReleaseFile(w, r, cfg, meta, assetPath, true, "")
+	})
+
+	mux.HandleFunc("GET /p/{slug}/download", func(w http.ResponseWriter, r *http.Request) {
+		slug := r.PathValue("slug")
+		meta, status := cache.resolve(slug)
+		if status != 200 || meta.Release == nil {
+			serveErrorPage(w, statusOrNotFound(status), "下载不可用", "该发布内容不存在或链接已失效。")
+			return
+		}
+		if meta.Publish.Visibility == "password" && !unlocked(r, meta.Publish.ID, cfg) {
+			serveUnlockPage(w, slug, "/p/"+slug+"/download")
+			return
+		}
+		if !meta.Publish.AllowDownload {
+			serveErrorPage(w, http.StatusForbidden, "禁止下载", "内容所有者未开放下载权限。")
+			return
+		}
+		path, name, ok := releaseDownload(meta)
+		if !ok || !manifestAllows(meta, path) {
+			serveErrorPage(w, http.StatusNotFound, "下载不可用", "该发布内容没有可下载文件。")
+			return
+		}
+		serveReleaseFile(w, r, cfg, meta, path, false, name)
+	})
+
+	mux.HandleFunc("GET /p/{slug}/attachments/{attachmentID}", func(w http.ResponseWriter, r *http.Request) {
+		slug := r.PathValue("slug")
+		meta, status := cache.resolve(slug)
+		if status != 200 || meta.Release == nil {
+			serveErrorPage(w, statusOrNotFound(status), "附件不可用", "该发布内容不存在或链接已失效。")
+			return
+		}
+		if meta.Publish.Visibility == "password" && !unlocked(r, meta.Publish.ID, cfg) {
+			serveUnlockPage(w, slug, "/p/"+slug+"/attachments/"+url.PathEscape(r.PathValue("attachmentID")))
+			return
+		}
+		if !meta.Publish.AllowDownload {
+			serveErrorPage(w, http.StatusForbidden, "禁止下载", "内容所有者未开放附件下载权限。")
+			return
+		}
+		path, name, ok := releaseAttachment(meta, r.PathValue("attachmentID"))
+		if !ok || !manifestAllows(meta, path) {
+			serveErrorPage(w, http.StatusNotFound, "附件不存在", "该附件不在当前发布版本中。")
+			return
+		}
+		serveReleaseFile(w, r, cfg, meta, path, false, name)
 	})
 
 	mux.HandleFunc("GET /s/{shortSlug}", func(w http.ResponseWriter, r *http.Request) {
@@ -115,7 +213,20 @@ func main() {
 			serveErrorPage(w, http.StatusNotFound, "短链无效", "该短链不存在或已撤销。")
 			return
 		}
+		if isMarkdownPublish(meta) {
+			http.Redirect(w, r, "/p/"+url.PathEscape(meta.Publish.Slug), http.StatusFound)
+			return
+		}
 		http.Redirect(w, r, "/p/"+meta.Publish.Slug, http.StatusFound)
+	})
+
+	mux.HandleFunc("GET /s/{shortSlug}/download", func(w http.ResponseWriter, r *http.Request) {
+		meta, status := cache.resolve(r.PathValue("shortSlug"))
+		if status != 200 {
+			serveErrorPage(w, http.StatusNotFound, "短链无效", "该短链不存在或已撤销。")
+			return
+		}
+		http.Redirect(w, r, "/p/"+meta.Publish.Slug+"/download", http.StatusFound)
 	})
 
 	mux.HandleFunc("GET /{path...}", func(w http.ResponseWriter, r *http.Request) {
@@ -137,7 +248,11 @@ func main() {
 			serveErrorPage(w, http.StatusNotFound, "内容不存在", "该域名绑定的内容不存在。")
 			return
 		}
-		serveReleaseFile(w, r, cfg, meta, "index.html", false)
+		if meta.Publish.Visibility == "password" && !unlocked(r, meta.Publish.ID, cfg) {
+			serveUnlockPage(w, meta.Publish.Slug, "/p/"+meta.Publish.Slug)
+			return
+		}
+		serveReleaseFile(w, r, cfg, meta, "index.html", false, "")
 		go recordAccess(cfg, meta, "index.html", r)
 	})
 
@@ -148,6 +263,7 @@ func main() {
 			return
 		}
 		password := r.FormValue("password")
+		returnTo := safeReturnTo(slug, r.FormValue("returnTo"))
 		token, err := cfg.Unlock(slug, password)
 		if err != nil {
 			serveErrorPage(w, http.StatusUnauthorized, "密码错误", "密码不正确，请重试。")
@@ -162,7 +278,7 @@ func main() {
 			SameSite: http.SameSiteLaxMode,
 			MaxAge:   12 * 3600,
 		})
-		http.Redirect(w, r, "/p/"+slug, http.StatusFound)
+		http.Redirect(w, r, returnTo, http.StatusFound)
 	})
 
 	server := &http.Server{
@@ -239,7 +355,34 @@ func unlocked(r *http.Request, publishID string, cfg platform.Config) bool {
 	return cfg.VerifyToken(cookie.Value)
 }
 
-func serveReleaseFile(w http.ResponseWriter, r *http.Request, cfg platform.Config, meta PublishMeta, relPath string, immutable bool) {
+func serveSSR(w http.ResponseWriter, r *http.Request, cfg platform.Config, slug string) {
+	originalPath, originalRawPath := r.URL.Path, r.URL.RawPath
+	r.URL.Path = "/render/" + url.PathEscape(slug)
+	r.URL.RawPath = ""
+	defer func() {
+		r.URL.Path, r.URL.RawPath = originalPath, originalRawPath
+	}()
+	proxySSR(w, r, cfg)
+}
+
+func proxySSR(w http.ResponseWriter, r *http.Request, cfg platform.Config) {
+	target, err := url.Parse(cfg.SSRBaseURL)
+	if err != nil || target.Scheme == "" || target.Host == "" {
+		serveErrorPage(w, http.StatusServiceUnavailable, "发布页面暂时不可用", "公开阅读服务配置无效，请稍后重试。")
+		return
+	}
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	originalHost := r.Host
+	defer func() { r.Host = originalHost }()
+	r.Host = target.Host
+	proxy.ErrorHandler = func(response http.ResponseWriter, _ *http.Request, proxyErr error) {
+		slog.Error("ssr proxy failed", "path", r.URL.Path, "error", proxyErr)
+		serveErrorPage(response, http.StatusServiceUnavailable, "发布页面暂时不可用", "公开阅读服务暂时不可用，请稍后重试。")
+	}
+	proxy.ServeHTTP(w, r)
+}
+
+func serveReleaseFile(w http.ResponseWriter, r *http.Request, cfg platform.Config, meta PublishMeta, relPath string, immutable bool, downloadName string) {
 	if meta.Release == nil || meta.Publish.ID == "" {
 		serveErrorPage(w, http.StatusNotFound, "内容不存在", "该发布物不存在。")
 		return
@@ -265,7 +408,10 @@ func serveReleaseFile(w http.ResponseWriter, r *http.Request, cfg platform.Confi
 	h.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
 	h.Set("Cross-Origin-Resource-Policy", "same-origin")
 	h.Set("Cross-Origin-Opener-Policy", "same-origin")
-	if relPath == "index.html" {
+	if downloadName != "" {
+		h.Set("Cache-Control", "private, no-store")
+		h.Set("Content-Disposition", "attachment; filename=download; filename*=UTF-8''"+url.PathEscape(downloadName))
+	} else if relPath == "index.html" {
 		h.Set("Cache-Control", "private, no-store")
 		if csp, ok := meta.Release.Manifest["csp"].(string); ok && csp != "" {
 			h.Add("Content-Security-Policy", csp)
@@ -296,6 +442,76 @@ func serveReleaseFile(w http.ResponseWriter, r *http.Request, cfg platform.Confi
 		modified = parsed
 	}
 	http.ServeContent(w, r, relPath, modified, bytes.NewReader(data))
+}
+
+func releaseDownload(meta PublishMeta) (path string, name string, ok bool) {
+	download, ok := meta.Release.Manifest["download"].(map[string]any)
+	if !ok {
+		return "", "", false
+	}
+	path, pathOK := download["path"].(string)
+	name, nameOK := download["name"].(string)
+	return path, name, pathOK && nameOK && path != "" && name != ""
+}
+
+func releaseAttachment(meta PublishMeta, attachmentID string) (path string, name string, ok bool) {
+	attachments, ok := meta.Release.Manifest["attachments"].([]any)
+	if !ok {
+		return "", "", false
+	}
+	for _, item := range attachments {
+		attachment, itemOK := item.(map[string]any)
+		if !itemOK || attachment["id"] != attachmentID {
+			continue
+		}
+		path, pathOK := attachment["path"].(string)
+		name, nameOK := attachment["name"].(string)
+		return path, name, pathOK && nameOK && path != "" && name != ""
+	}
+	return "", "", false
+}
+
+func statusOrNotFound(status int) int {
+	if status == http.StatusGone {
+		return status
+	}
+	return http.StatusNotFound
+}
+
+func isMarkdownPublish(meta PublishMeta) bool {
+	if meta.Asset == nil {
+		return false
+	}
+	switch meta.Asset.Type {
+	case "document", "report", "file":
+		return true
+	default:
+		return false
+	}
+}
+
+func releaseAssetLinks(meta PublishMeta, slug string) map[string]string {
+	links := map[string]string{}
+	if meta.Release == nil {
+		return links
+	}
+	references, ok := meta.Release.Manifest["references"].([]any)
+	if !ok {
+		return links
+	}
+	for _, raw := range references {
+		ref, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		assetID, idOK := ref["assetId"].(string)
+		path, pathOK := ref["path"].(string)
+		if !idOK || !pathOK || assetID == "" || path == "" {
+			continue
+		}
+		links[assetID] = "/p/" + url.PathEscape(slug) + "/assets/" + path
+	}
+	return links
 }
 
 func manifestAllows(meta PublishMeta, assetPath string) bool {
@@ -338,11 +554,21 @@ func contentTypeFor(path string) string {
 	}
 }
 
-func serveUnlockPage(w http.ResponseWriter, slug string) {
+func serveUnlockPage(w http.ResponseWriter, slug string, returnTo string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusOK)
-	_, _ = io.WriteString(w, strings.ReplaceAll(unlockTemplate, "{{slug}}", slug))
+	page := strings.ReplaceAll(unlockTemplate, "{{slug}}", slug)
+	page = strings.ReplaceAll(page, "{{returnTo}}", returnTo)
+	_, _ = io.WriteString(w, page)
+}
+
+func safeReturnTo(slug string, returnTo string) string {
+	base := "/p/" + slug
+	if returnTo == base || returnTo == base+"/download" || strings.HasPrefix(returnTo, base+"/attachments/") {
+		return returnTo
+	}
+	return base
 }
 
 func serveErrorPage(w http.ResponseWriter, status int, title, detail string) {
@@ -354,7 +580,7 @@ func serveErrorPage(w http.ResponseWriter, status int, title, detail string) {
 	_, _ = io.WriteString(w, page)
 }
 
-const unlockTemplate = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>密码访问</title><style>body{font-family:-apple-system,"PingFang SC",sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;background:#f7f8fb;color:#172033}form{background:#fff;padding:40px;border-radius:16px;box-shadow:0 8px 30px rgba(23,32,51,.08);width:340px}input{width:100%;padding:12px;border:1px solid #e5e7ef;border-radius:8px;font-size:16px;box-sizing:border-box}button{margin-top:16px;width:100%;padding:12px;background:#6d5dfc;color:#fff;border:0;border-radius:8px;font-size:16px;cursor:pointer}</style></head><body><form method="post" action="/p/{{slug}}/unlock"><h2>该内容受密码保护</h2><p style="color:#667085">请输入访问密码后查看。</p><input type="password" name="password" placeholder="访问密码" autofocus required><button type="submit">解锁</button></form></body></html>`
+const unlockTemplate = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>密码访问</title><style>body{font-family:-apple-system,"PingFang SC",sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;background:#f7f8fb;color:#172033}form{background:#fff;padding:40px;border-radius:16px;box-shadow:0 8px 30px rgba(23,32,51,.08);width:340px}input{width:100%;padding:12px;border:1px solid #e5e7ef;border-radius:8px;font-size:16px;box-sizing:border-box}button{margin-top:16px;width:100%;padding:12px;background:#6d5dfc;color:#fff;border:0;border-radius:8px;font-size:16px;cursor:pointer}</style></head><body><form method="post" action="/p/{{slug}}/unlock"><h2>该内容受密码保护</h2><p style="color:#667085">请输入访问密码后查看。</p><input type="hidden" name="returnTo" value="{{returnTo}}"><input type="password" name="password" placeholder="访问密码" autofocus required><button type="submit">解锁</button></form></body></html>`
 
 const errorTemplate = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{{title}}</title><style>body{font-family:-apple-system,"PingFang SC",sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#f7f8fb;color:#172033}.box{text-align:center;padding:32px}h1{font-size:32px;margin:0 0 8px}p{color:#667085}</style></head><body><div class="box"><h1>{{title}}</h1><p>{{detail}}</p></div></body></html>`
 

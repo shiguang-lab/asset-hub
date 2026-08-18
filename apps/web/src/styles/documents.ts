@@ -158,7 +158,7 @@ export const DocumentsGlobalStyles = createGlobalStyle(css`
   white-space: nowrap;
 }
 .sg-docs-table th.c-owner {
-  width: 110px;
+  width: 72px;
 }
 .sg-docs-table th.c-time {
   width: 104px;
@@ -210,5 +210,56 @@ export const DocumentsGlobalStyles = createGlobalStyle(css`
 }
 .sg-docs-action-btn.ai.ant-btn {
   color: var(--sg-accent);
+}
+
+.sg-docs-move-hint {
+  margin: 0 0 12px;
+  color: var(--sg-muted);
+  font-size: 13px;
+}
+.sg-docs-move-tree {
+  max-height: min(420px, 55vh);
+  overflow-y: auto;
+  padding: 6px;
+  border: 1px solid var(--sg-border);
+  border-radius: 8px;
+  background: var(--sg-bg);
+}
+.sg-docs-move-folder {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 14px;
+  border: 0;
+  border-radius: 6px;
+  color: var(--sg-fg-2);
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+}
+.sg-docs-move-folder:hover {
+  color: var(--sg-fg);
+  background: var(--sg-bg-2);
+}
+.sg-docs-move-folder.selected {
+  color: var(--sg-accent);
+  background: var(--sg-accent-soft);
+}
+.sg-docs-move-folder > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sg-docs-move-folder-check {
+  flex: none;
+  margin-left: auto;
+}
+.sg-docs-move-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 `);

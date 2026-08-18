@@ -270,21 +270,27 @@ export function registerInternalRoutes(app: FastifyInstance): void {
         }>;
       } | null = null;
       if (output.content) {
-        const kind =
-          output.assetType === "presentation"
-            ? "manifest"
-            : output.assetType === "html"
-              ? "html"
-              : "markdown";
-        content =
-          kind === "manifest"
-            ? {
-                kind,
-                manifest:
-                  (output.content as { manifest?: Record<string, unknown> }).manifest ??
-                  (output.content as Record<string, unknown>),
-              }
-            : { kind, text: String(output.content.text ?? output.content.source ?? "") };
+        const htmlText = (output.content as { html?: string }).html;
+        if (typeof htmlText === "string") {
+          // presentation Artifact：直接存 HTML
+          content = { kind: "html", text: htmlText };
+        } else {
+          const kind =
+            output.assetType === "presentation"
+              ? "manifest"
+              : output.assetType === "html"
+                ? "html"
+                : "markdown";
+          content =
+            kind === "manifest"
+              ? {
+                  kind,
+                  manifest:
+                    (output.content as { manifest?: Record<string, unknown> }).manifest ??
+                    (output.content as Record<string, unknown>),
+                }
+              : { kind, text: String(output.content.text ?? output.content.source ?? "") };
+        }
       } else if (output.blob) {
         const isText = ["text/markdown", "text/plain", "text/html"].includes(output.blob.mediaType);
         const isManifest = output.assetType === "presentation" || output.assetType === "dataset";

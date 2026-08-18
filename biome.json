@@ -7,6 +7,7 @@
       "!!.data/**",
       "!!**/.cache/**",
       "!!**/.turbo/**",
+      "!!**/.pnpm-store/**",
       "!!**/dist/**",
       "!!**/node_modules/**"
     ]
@@ -32,6 +33,18 @@
             "noStaticElementInteractions": "off",
             "useSemanticElements": "off",
             "noLabelWithoutControl": "off"
+          }
+        }
+      }
+    },
+    {
+      "includes": ["apps/web/**"],
+      "linter": {
+        "rules": {
+          "a11y": {
+            "noStaticElementInteractions": "off",
+            "useKeyWithClickEvents": "off",
+            "useSemanticElements": "off"
           }
         }
       }

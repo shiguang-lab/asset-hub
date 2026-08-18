@@ -1,8 +1,8 @@
 import { nextId, nowIso, researchCreateSchema, taskTypeSchema } from "@shiguang/contracts";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { badRequest, notFound } from "../platform/errors.js";
 import { requireAssetAccess } from "../platform/authorization.js";
+import { badRequest, notFound } from "../platform/errors.js";
 import type { AppContext } from "../types.js";
 
 export function estimateCredits(spec: {
@@ -154,7 +154,9 @@ export function registerTasks(app: FastifyInstance): void {
       })
       .parse(req.body);
     await Promise.all(
-      (body.inputAssetIds ?? []).map((assetId) => requireAssetAccess(ctx, req.actor, assetId, "read")),
+      (body.inputAssetIds ?? []).map((assetId) =>
+        requireAssetAccess(ctx, req.actor, assetId, "read"),
+      ),
     );
     const estimate =
       body.type === "research" ? estimateCredits(body.spec as never) : { min: 100, max: 200 };

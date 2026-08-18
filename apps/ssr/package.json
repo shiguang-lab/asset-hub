@@ -1,0 +1,29 @@
+{
+  "name": "@shiguang/ssr",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "next build",
+    "dev": "next dev --hostname 0.0.0.0 --port 3005",
+    "start": "next start --hostname 0.0.0.0 --port 3005",
+    "lint": "biome check app next.config.mjs",
+    "typecheck": "tsc --noEmit --pretty false"
+  },
+  "dependencies": {
+    "@shiguang/content": "workspace:*",
+    "@shiguang/markdown-viewer": "workspace:*",
+    "@shiguang2/components": "^0.1.5",
+    "lucide-react": "^0.475.0",
+    "marked": "^15.0.12",
+    "next": "^15.5.7",
+    "react": "catalog:",
+    "react-dom": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "typescript": "catalog:"
+  }
+}

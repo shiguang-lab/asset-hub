@@ -1,6 +1,7 @@
+import { type AssetLinkResolver, rewriteAssetLinks } from "@shiguang/content";
 import { useEffect, useMemo, useRef, useState } from "react";
 import rehypeKatex from "rehype-katex";
-import rehypeSanitize from "rehype-sanitize";
+import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import rehypeStringify from "rehype-stringify";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
@@ -9,16 +10,35 @@ import remarkRehype from "remark-rehype";
 import { unified } from "unified";
 import "katex/dist/katex.min.css";
 
+// 默认 schema 会剥掉 `asset:` 协议，这里放开，使正文里的内部引用链接/图片不丢 href/src。
+const defaultProtocols = defaultSchema.protocols ?? {};
+const sanitizeSchema = {
+  ...defaultSchema,
+  protocols: {
+    ...defaultProtocols,
+    href: [...(defaultProtocols.href ?? []), "asset"],
+    src: [...(defaultProtocols.src ?? []), "asset"],
+  },
+};
+
 const processor = unified()
   .use(remarkParse)
   .use(remarkGfm)
   .use(remarkMath)
   .use(remarkRehype, { allowDangerousHtml: false })
   .use(rehypeKatex)
-  .use(rehypeSanitize)
+  .use(rehypeSanitize, sanitizeSchema)
   .use(rehypeStringify);
 
-export function Markdown({ source, className }: { source: string; className?: string }) {
+export function Markdown({
+  source,
+  className,
+  resolveAssetLink,
+}: {
+  source: string;
+  className?: string;
+  resolveAssetLink?: AssetLinkResolver;
+}) {
   const [mermaid, setMermaid] = useState<{
     render: (id: string, code: string) => Promise<string>;
   } | null>(null);
@@ -33,6 +53,9 @@ export function Markdown({ source, className }: { source: string; className?: st
     }
     return blocks;
   }, [source]);
+
+  const finalize = (html: string): string =>
+    resolveAssetLink ? rewriteAssetLinks(html, resolveAssetLink) : html;
 
   useEffect(() => {
     if (rendered.length === 0) return;
@@ -54,7 +77,7 @@ export function Markdown({ source, className }: { source: string; className?: st
   }, [mermaid, source]);
 
   if (rendered.length === 0) {
-    const html = String(processor.processSync(source));
+    const html = finalize(String(processor.processSync(source)));
     return <div className={className ?? "sg-md"} dangerouslySetInnerHTML={{ __html: html }} />;
   }
   const parts: string[] = [];
@@ -65,7 +88,7 @@ export function Markdown({ source, className }: { source: string; className?: st
     cursor = block.end;
   }
   parts.push(source.slice(cursor));
-  const html = String(processor.processSync(parts.join("")));
+  const html = finalize(String(processor.processSync(parts.join(""))));
   return (
     <div
       ref={containerRef}

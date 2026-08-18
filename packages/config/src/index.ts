@@ -97,8 +97,37 @@ export function loadModelGatewayConfig(): ModelGatewayConfig {
     baseUrl: process.env.MODEL_GATEWAY_URL ?? null,
     apiKey: process.env.MODEL_GATEWAY_API_KEY ?? null,
     timeoutMs: Number(process.env.MODEL_GATEWAY_TIMEOUT_MS ?? 120_000),
-    model: process.env.MODEL_GATEWAY_MODEL ?? "gpt-4o-mini",
+    model: process.env.MODEL_GATEWAY_MODEL ?? "deepseek-v4-flash",
   };
+}
+
+export interface SkillGatewayConfig {
+  baseUrl: string | null;
+  token: string | null;
+}
+
+export function loadSkillGatewayConfig(): SkillGatewayConfig {
+  return {
+    baseUrl: process.env.SKILL_GATEWAY_URL ?? null,
+    token: process.env.SKILL_GATEWAY_TOKEN ?? null,
+  };
+}
+
+export interface McpGatewayConfig {
+  baseUrl: string | null;
+  token: string | null;
+}
+
+export function loadMcpGatewayConfig(): McpGatewayConfig {
+  return {
+    baseUrl: process.env.MCP_GATEWAY_URL ?? null,
+    token: process.env.MCP_GATEWAY_TOKEN ?? null,
+  };
+}
+
+/** asset-hub 在 skill-gateway / mcp-gateway 中的 Agent 身份键。 */
+export function loadCapabilityAgentId(): string {
+  return process.env.CAPABILITY_AGENT_ID ?? "asset-hub";
 }
 
 export interface WorkerConfig {

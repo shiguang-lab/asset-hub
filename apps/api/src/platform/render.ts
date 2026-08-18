@@ -1,5 +1,28 @@
+import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import {
+  type AssetLinkResolver,
+  renderPresentationHtml,
+  rewriteAssetLinks,
+  validatePresentationHtml,
+} from "@shiguang/content";
 import type { PresentationDocument } from "@shiguang/contracts";
 import { marked } from "marked";
+
+const require = createRequire(import.meta.url);
+let cachedEchartsJs: string | null = null;
+
+/** 读取内联 ECharts 压缩包（approved dependency）；不可用时返回空串，SG.chart 回退原生 SVG。 */
+export function loadEchartsJs(): string {
+  if (cachedEchartsJs === null) {
+    try {
+      cachedEchartsJs = readFileSync(require.resolve("echarts/dist/echarts.min.js"), "utf8");
+    } catch {
+      cachedEchartsJs = "";
+    }
+  }
+  return cachedEchartsJs;
+}
 
 const SHELL_CSS = `
   :root { color-scheme: light dark; --fg:#172033; --bg:#f7f8fb; --accent:#6d5dfc; --muted:#667085; --border:#e5e7ef; }
@@ -21,6 +44,30 @@ const SHELL_CSS = `
   @media (max-width: 640px) { .doc { padding: 24px 16px 64px; } }
 `;
 
+/** 把 manifest（dataset/chart/source 等结构化内容）渲染为一个可读的 JSON 查看页。 */
+export function renderManifestHtml(title: string, data: unknown): string {
+  return `<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${escapeHtml(title)}</title>
+<style>
+  body { margin: 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; background: #f7f8fb; color: #172033; }
+  main { max-width: 960px; margin: 0 auto; padding: 32px 20px; }
+  h1 { font-size: 20px; border-bottom: 1px solid #e5e7ef; padding-bottom: 12px; }
+  pre { white-space: pre-wrap; word-break: break-word; background: #fff; border: 1px solid #e5e7ef; border-radius: 8px; padding: 16px; font-size: 13px; line-height: 1.6; }
+</style>
+</head>
+<body>
+<main>
+<h1>${escapeHtml(title)}</h1>
+<pre>${escapeHtml(JSON.stringify(data ?? {}, null, 2))}</pre>
+</main>
+</body>
+</html>`;
+}
+
 export function renderMarkdownHtml(markdown: string, title: string): string {
   const body = marked.parse(markdown, { async: false, gfm: true, breaks: true }) as string;
   const safeTitle = escapeHtml(title);
@@ -41,140 +88,39 @@ ${body}
 </html>`;
 }
 
-export function renderPresentationHtml(doc: PresentationDocument, title: string): string {
-  const theme =
-    doc.theme === "dark"
-      ? { bg: "#0f1420", fg: "#f5f7ff", accent: "#8b7bff", muted: "#9aa3b8" }
-      : doc.theme === "brand"
-        ? { bg: "#ffffff", fg: "#1a2a4f", accent: "#f04e2c", muted: "#6b7a99" }
-        : doc.theme === "minimal"
-          ? { bg: "#fafafa", fg: "#111111", accent: "#888888", muted: "#666666" }
-          : doc.theme === "gradient"
-            ? {
-                bg: "linear-gradient(135deg,#0d0b1e,#2a1b4d)",
-                fg: "#ffffff",
-                accent: "#7c5cff",
-                muted: "#c4b8e8",
-              }
-            : { bg: "#ffffff", fg: "#172033", accent: "#6d5dfc", muted: "#667085" };
-  const slides = doc.slides
-    .map(
-      (slide, i) => `
-  <section class="slide" data-index="${i}">
-    <div class="slide-inner">
-      ${slide.blocks
-        .map((block) => {
-          switch (block.type) {
-            case "heading":
-              return `<h2>${escapeHtml(block.content)}</h2>`;
-            case "text":
-              return `<p>${escapeHtml(block.content)}</p>`;
-            case "bullet":
-              return `<ul>${block.content
-                .split("\n")
-                .filter(Boolean)
-                .map((line) => `<li>${escapeHtml(line)}</li>`)
-                .join("")}</ul>`;
-            case "quote":
-              return `<blockquote>${escapeHtml(block.content)}</blockquote>`;
-            case "table":
-              return `<pre class="table">${escapeHtml(block.content)}</pre>`;
-            case "code":
-              return `<pre><code>${escapeHtml(block.content)}</code></pre>`;
-            default:
-              return `<p>${escapeHtml(block.content)}</p>`;
-          }
-        })
-        .join("")}
-    </div>
-  </section>`,
-    )
-    .join("");
-  return `<!doctype html>
-<html lang="zh-CN">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${escapeHtml(title)}</title>
-<style>
-  * { box-sizing: border-box; }
-  html,body { height: 100%; margin: 0; font-family: -apple-system,"PingFang SC","Noto Sans SC",sans-serif; }
-  body { background: ${theme.bg}; color: ${theme.fg}; overflow: hidden; }
-  .deck { height: 100vh; display: flex; }
-  .slide { min-width: 100%; display: flex; align-items: center; justify-content: center; padding: 48px; transition: transform .4s ease; }
-  .slide-inner { max-width: 1000px; width: 100%; }
-  h2 { font-size: clamp(28px, 4vw, 52px); margin: 0 0 24px; color: ${theme.accent}; }
-  p, li { font-size: clamp(18px, 2vw, 26px); line-height: 1.6; }
-  blockquote { border-left: 5px solid ${theme.accent}; padding: 8px 20px; color: ${theme.muted}; font-size: 22px; }
-  ul { padding-left: 28px; }
-  .table { white-space: pre-wrap; background: rgba(0,0,0,.08); padding: 16px; border-radius: 8px; }
-  pre { overflow: auto; }
-  .nav { position: fixed; bottom: 20px; right: 20px; display: flex; gap: 8px; z-index: 10; }
-  .nav button { border: 1px solid ${theme.accent}; background: transparent; color: ${theme.fg}; border-radius: 50%; width: 40px; height: 40px; cursor: pointer; font-size: 18px; }
-  .progress { position: fixed; top: 0; left: 0; height: 4px; background: ${theme.accent}; transition: width .3s; z-index: 10; }
-  @media (max-width: 640px) { .slide { padding: 24px; } }
-</style>
-</head>
-<body>
-<div class="progress" id="progress"></div>
-<div class="deck" id="deck">${slides}</div>
-<div class="nav">
-  <button id="prev" aria-label="上一页">‹</button>
-  <button id="next" aria-label="下一页">›</button>
-</div>
-<script>
-(() => {
-  const deck = document.getElementById('deck');
-  const slides = Array.from(deck.querySelectorAll('.slide'));
-  const progress = document.getElementById('progress');
-  let current = 0;
-  const show = (i) => {
-    current = Math.max(0, Math.min(slides.length - 1, i));
-    slides.forEach((s, idx) => s.style.transform = 'translateX(' + ((idx - current) * 100) + '%)');
-    progress.style.width = (slides.length ? ((current + 1) / slides.length) * 100 : 0) + '%';
-  };
-  document.getElementById('prev').addEventListener('click', () => show(current - 1));
-  document.getElementById('next').addEventListener('click', () => show(current + 1));
-  window.addEventListener('keydown', (e) => {
-    if (e.key === 'ArrowRight' || e.key === ' ') { e.preventDefault(); show(current + 1); }
-    if (e.key === 'ArrowLeft') { e.preventDefault(); show(current - 1); }
-  });
-  show(0);
-})();
-</script>
-</body>
-</html>`;
-}
-
 export function buildReleaseBundle(input: {
   assetType: string;
   title: string;
   markdown?: string;
   html?: string;
   presentation?: PresentationDocument;
+  resolveAssetLink?: AssetLinkResolver;
 }): {
   files: Array<{ path: string; content: string; mediaType: string }>;
   manifest: Record<string, unknown>;
 } {
   const files: Array<{ path: string; content: string; mediaType: string }> = [];
-  if (input.assetType === "presentation" && input.presentation) {
-    files.push({
-      path: "index.html",
-      content: renderPresentationHtml(input.presentation, input.title),
-      mediaType: "text/html",
-    });
-    files.push({
-      path: "slides.json",
-      content: JSON.stringify(input.presentation, null, 2),
-      mediaType: "application/json",
-    });
+  const resolve = input.resolveAssetLink;
+  if (input.assetType === "presentation") {
+    const presentationHtml =
+      input.html ??
+      (input.presentation
+        ? renderPresentationHtml(input.presentation, input.title, { echartsJs: loadEchartsJs() })
+        : "");
+    const issues = validatePresentationHtml(presentationHtml);
+    if (issues.length > 0) {
+      throw new Error(`演示 HTML 校验失败: ${issues.map((issue) => issue.message).join("; ")}`);
+    }
+    files.push({ path: "index.html", content: presentationHtml, mediaType: "text/html" });
   } else if (input.assetType === "html" && input.html) {
-    files.push({ path: "index.html", content: input.html, mediaType: "text/html" });
+    const rendered = resolve ? rewriteAssetLinks(input.html, resolve) : input.html;
+    files.push({ path: "index.html", content: rendered, mediaType: "text/html" });
   } else {
     const markdown = input.markdown ?? "";
+    const renderedHtml = renderMarkdownHtml(markdown, input.title);
     files.push({
       path: "index.html",
-      content: renderMarkdownHtml(markdown, input.title),
+      content: resolve ? rewriteAssetLinks(renderedHtml, resolve) : renderedHtml,
       mediaType: "text/html",
     });
     files.push({ path: "index.md", content: markdown, mediaType: "text/markdown" });
@@ -192,6 +138,51 @@ export function buildReleaseBundle(input: {
     csp: "default-src 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self'",
   };
   return { files, manifest };
+}
+
+export interface PublishDownloadAction {
+  label: string;
+  href: string;
+}
+
+export function injectPublishDownloadActions(
+  html: string,
+  actions: PublishDownloadAction[],
+): string {
+  if (actions.length === 0) return html;
+  const links = actions
+    .map(
+      (action) =>
+        `<a class="sg-publish-download" href="${escapeHtml(action.href)}">${escapeHtml(action.label)}</a>`,
+    )
+    .join("");
+  const panel = `<style>
+  .sg-publish-downloads { position:fixed; right:20px; top:20px; z-index:1000; display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; max-width:min(520px,calc(100vw - 32px)); }
+  .sg-publish-download { display:inline-flex; align-items:center; min-height:36px; padding:7px 12px; border:1px solid rgba(109,93,252,.35); border-radius:7px; color:#fff; background:#6d5dfc; box-shadow:0 8px 24px rgba(23,32,51,.16); font:500 14px/1.4 -apple-system,"PingFang SC",sans-serif; text-decoration:none; }
+  .sg-publish-download:hover { background:#5d4ee6; }
+  @media (max-width:640px) { .sg-publish-downloads { position:static; margin:16px; justify-content:flex-start; } }
+</style><nav class="sg-publish-downloads" aria-label="下载">${links}</nav>`;
+  return html.includes("</body>") ? html.replace("</body>", `${panel}</body>`) : `${html}${panel}`;
+}
+
+export function injectPublishAccessPolicy(
+  html: string,
+  input: { visibility: string; allowCopy: boolean },
+): string {
+  const robots =
+    input.visibility === "public"
+      ? '<meta name="robots" content="index,follow">'
+      : '<meta name="robots" content="noindex,nofollow">';
+  const copyProtection = input.allowCopy
+    ? ""
+    : `<style>body { -webkit-user-select:none; user-select:none; }</style>
+<script>document.addEventListener("copy", function (event) { event.preventDefault(); }); document.addEventListener("cut", function (event) { event.preventDefault(); }); document.addEventListener("contextmenu", function (event) { event.preventDefault(); });</script>`;
+  const withRobots = html.includes("</head>")
+    ? html.replace("</head>", `${robots}</head>`)
+    : `${robots}${html}`;
+  return copyProtection && withRobots.includes("</body>")
+    ? withRobots.replace("</body>", `${copyProtection}</body>`)
+    : `${withRobots}${copyProtection}`;
 }
 
 function escapeHtml(input: string): string {

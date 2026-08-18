@@ -158,7 +158,7 @@ export const AssetsGlobalStyles = createGlobalStyle(css`
   width: 96px;
 }
 .sg-assets-table th.c-owner {
-  width: 110px;
+  width: 72px;
 }
 .sg-assets-table th.c-time {
   width: 104px;
@@ -169,9 +169,11 @@ export const AssetsGlobalStyles = createGlobalStyle(css`
 .sg-assets-table th.c-vis {
   width: 128px;
 }
-.sg-assets-table th.c-menu {
-  width: 44px;
-  padding: 0;
+.sg-assets-table th.c-menu,
+.sg-assets-table td.c-menu {
+  width: 60px;
+  padding-right: 16px;
+  padding-left: 8px;
 }
 .sg-assets-table td {
   height: 60px;
@@ -288,21 +290,33 @@ export const AssetsGlobalStyles = createGlobalStyle(css`
   font-size: 10.5px;
   line-height: 18px;
 }
-.sg-owner {
+.sg-owner-stack {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  min-width: 28px;
+  padding-left: 2px;
+}
+.sg-owner-stack > * + * {
+  margin-left: -8px;
 }
 .sg-owner-avatar {
-  width: 20px;
-  height: 20px;
+  width: 28px;
+  height: 28px;
   display: grid;
+  flex: none;
   place-items: center;
+  border: 2px solid #121116;
   border-radius: 50%;
   color: #fff;
-  background: #4b4658;
-  font-size: 10.5px;
+  background: #40586d;
+  font-size: 11px;
   font-weight: 600;
+  line-height: 1;
+  text-transform: uppercase;
+  cursor: default;
+}
+.sg-assets-row:hover .sg-owner-avatar {
+  border-color: #17151c;
 }
 .sg-status {
   display: inline-flex;
@@ -355,6 +369,9 @@ export const AssetsGlobalStyles = createGlobalStyle(css`
   color: var(--sg-muted);
   background: transparent;
   cursor: pointer;
+}
+.c-menu .sg-asset-more {
+  margin-left: auto;
 }
 .sg-asset-more:hover {
   color: var(--sg-fg);

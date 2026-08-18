@@ -19,6 +19,7 @@
   },
   "dependencies": {
     "@shiguang/config": "workspace:*",
+    "@shiguang/contracts": "workspace:*",
     "zod": "catalog:"
   },
   "devDependencies": {

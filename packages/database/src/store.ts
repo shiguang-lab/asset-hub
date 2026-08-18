@@ -61,6 +61,32 @@ const str = (v: unknown, fallback = ""): string => (typeof v === "string" ? v : 
 const num = (v: unknown, fallback = 0): number => (typeof v === "number" ? v : fallback);
 const bool = (v: unknown): boolean => v === 1 || v === true;
 
+// Personal and organization workspaces share the initial 100 MB quota.
+// Subscription-based expansion can replace this workspace-level policy later.
+export const DEFAULT_WORKSPACE_STORAGE_QUOTA_BYTES = 100 * 1024 * 1024;
+
+function relationSources(provenance: Record<string, unknown>): string[] {
+  const raw = provenance.sources;
+  if (!Array.isArray(raw)) return [];
+  return raw.filter((source): source is string => typeof source === "string");
+}
+
+function mergeProvenance(
+  existing: Record<string, unknown>,
+  incoming: Record<string, unknown>,
+): Record<string, unknown> {
+  const merged: Record<string, unknown> = { ...existing };
+  const existingSources = relationSources(existing);
+  const incomingSources = relationSources(incoming);
+  // 历史遗留 `{}` 全部来自附件路径；合并时保持该语义，避免把附件关系误判为纯正文引用。
+  const base = existingSources.length === 0 ? ["attachment"] : existingSources;
+  merged.sources = [...new Set([...base, ...incomingSources])];
+  for (const [key, value] of Object.entries(incoming)) {
+    if (key !== "sources") merged[key] = value;
+  }
+  return merged;
+}
+
 function mapAsset(r: Row): Asset {
   const ownerDisplayName = str(r.owner_display_name).trim();
   return {
@@ -461,6 +487,23 @@ export class Store {
     };
   }
 
+  async getStorageUsage(workspaceId: string): Promise<{ usedBytes: number; quotaBytes: number }> {
+    const row = (await this.db
+      .prepare(
+        `SELECT COALESCE(SUM(ab.size), 0) AS used_bytes
+         FROM asset_blobs ab
+         JOIN asset_versions av ON av.id = ab.version_id
+         JOIN assets a ON a.id = av.asset_id
+         WHERE a.workspace_id = ?`,
+      )
+      .get(workspaceId)) as { used_bytes?: number };
+    return {
+      usedBytes: Number(row?.used_bytes ?? 0),
+      // Workspace quota is a product limit, while usedBytes is measured from stored blobs.
+      quotaBytes: DEFAULT_WORKSPACE_STORAGE_QUOTA_BYTES,
+    };
+  }
+
   async getAsset(workspaceId: string, assetId: string): Promise<Asset | null> {
     const row = (await this.db
       .prepare(
@@ -710,6 +753,28 @@ export class Store {
     return await this.getAsset(actor.workspaceId, assetId);
   }
 
+  async setAssetPublishedUrl(
+    workspaceId: string,
+    assetId: string,
+    publishedUrl: string | null,
+    expectedCurrentUrl?: string,
+  ): Promise<void> {
+    const now = nowIso();
+    if (expectedCurrentUrl !== undefined) {
+      await this.db
+        .prepare(
+          "UPDATE assets SET published_url = ?, updated_at = ? WHERE id = ? AND workspace_id = ? AND published_url = ?",
+        )
+        .run(publishedUrl, now, assetId, workspaceId, expectedCurrentUrl);
+      return;
+    }
+    await this.db
+      .prepare(
+        "UPDATE assets SET published_url = ?, updated_at = ? WHERE id = ? AND workspace_id = ?",
+      )
+      .run(publishedUrl, now, assetId, workspaceId);
+  }
+
   async batchUpdateAssets(
     actor: ActorContext,
     ids: string[],
@@ -878,12 +943,16 @@ export class Store {
       )
       .get(sourceAssetId, targetAssetId, relationType)) as Row | undefined;
     if (existing) {
+      const merged = mergeProvenance(parse(existing.provenance_json, {}), provenance);
+      await this.db
+        .prepare("UPDATE asset_relations SET provenance_json = ? WHERE id = ?")
+        .run(json(merged), str(existing.id));
       return {
         id: str(existing.id),
         sourceAssetId,
         targetAssetId,
         relationType,
-        provenance: parse(existing.provenance_json, {}),
+        provenance: merged,
         createdAt: str(existing.created_at),
       };
     }
@@ -894,6 +963,18 @@ export class Store {
       )
       .run(id, sourceAssetId, targetAssetId, relationType, json(provenance), nowIso());
     return { id, sourceAssetId, targetAssetId, relationType, provenance, createdAt: nowIso() };
+  }
+
+  async deleteRelation(
+    sourceAssetId: string,
+    targetAssetId: string,
+    relationType: AssetRelation["relationType"],
+  ): Promise<void> {
+    await this.db
+      .prepare(
+        "DELETE FROM asset_relations WHERE source_asset_id = ? AND target_asset_id = ? AND relation_type = ?",
+      )
+      .run(sourceAssetId, targetAssetId, relationType);
   }
 
   async listRelations(
@@ -2020,7 +2101,8 @@ export class Store {
 
   async getPublishStats(publishId: string): Promise<{
     views: number;
-    daily: Array<{ day: string; views: number }>;
+    uniqueVisitors: number;
+    daily: Array<{ day: string; views: number; uniqueVisitors: number }>;
   }> {
     const views = num(
       (await this.db
@@ -2031,10 +2113,105 @@ export class Store {
     );
     const rows = (await this.db
       .prepare(
-        "SELECT ts_bucket AS day, COUNT(*) AS views FROM publish_access_events WHERE publish_id = ? GROUP BY ts_bucket ORDER BY day DESC LIMIT 30",
+        `SELECT LEFT(ts_bucket, 10) AS day,
+                COUNT(*) AS views,
+                COUNT(DISTINCT hashed_visitor) AS unique_visitors
+         FROM publish_access_events
+         WHERE publish_id = ?
+         GROUP BY LEFT(ts_bucket, 10)
+         ORDER BY day DESC LIMIT 30`,
       )
-      .all(publishId)) as Array<{ day: string; views: number }>;
-    return { views, daily: rows };
+      .all(publishId)) as Array<{ day: string; views: number; unique_visitors: number }>;
+    const uniqueRow = (await this.db
+      .prepare(
+        "SELECT COUNT(DISTINCT hashed_visitor) AS n FROM publish_access_events WHERE publish_id = ? AND hashed_visitor IS NOT NULL",
+      )
+      .get(publishId)) as { n: number };
+    return {
+      views,
+      uniqueVisitors: Number(uniqueRow?.n ?? 0),
+      daily: rows.map((row) => ({
+        day: str(row.day),
+        views: Number(row.views ?? 0),
+        uniqueVisitors: Number(row.unique_visitors ?? 0),
+      })),
+    };
+  }
+
+  async getWorkspacePublishStats(
+    workspaceId: string,
+    assetType?: string,
+  ): Promise<{
+    views: number;
+    uniqueVisitors: number;
+    averageLikes: number;
+    averageWatchSeconds: number;
+    growthRate: number;
+    daily: Array<{ day: string; views: number; uniqueVisitors: number }>;
+  }> {
+    const typeClause = assetType ? " AND a.type = ?" : "";
+    const queryParams = assetType ? [workspaceId, assetType] : [workspaceId];
+    const publishRow = (await this.db
+      .prepare(
+        `SELECT COALESCE(SUM(p.view_count), 0) AS views
+         FROM publishes p
+         JOIN assets a ON a.id = p.asset_id
+         WHERE p.workspace_id = ?${typeClause}`,
+      )
+      .get(...queryParams)) as { views: number };
+    const since = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const rows = (await this.db
+      .prepare(
+        `SELECT pae.ts_bucket, pae.hashed_visitor
+         FROM publish_access_events pae
+         JOIN publishes p ON p.id = pae.publish_id
+         JOIN assets a ON a.id = p.asset_id
+         WHERE p.workspace_id = ?${typeClause} AND pae.ts_bucket >= ?`,
+      )
+      .all(...queryParams, since)) as Array<{ ts_bucket: string; hashed_visitor: string | null }>;
+    const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
+    const recentVisitors = new Set<string>();
+    const daily = new Map<string, { views: number; visitors: Set<string> }>();
+    let recentViews = 0;
+    let previousViews = 0;
+    for (const row of rows) {
+      const timestamp = new Date(str(row.ts_bucket)).getTime();
+      if (!Number.isFinite(timestamp)) continue;
+      if (timestamp >= cutoff) {
+        recentViews += 1;
+        const day = str(row.ts_bucket).slice(0, 10);
+        const item = daily.get(day) ?? { views: 0, visitors: new Set<string>() };
+        item.views += 1;
+        if (row.hashed_visitor) {
+          item.visitors.add(row.hashed_visitor);
+          recentVisitors.add(row.hashed_visitor);
+        }
+        daily.set(day, item);
+      } else {
+        previousViews += 1;
+      }
+    }
+    const growthRate =
+      previousViews === 0
+        ? recentViews > 0
+          ? 100
+          : 0
+        : Math.round(((recentViews - previousViews) / previousViews) * 100);
+    return {
+      views: Number(publishRow?.views ?? 0),
+      uniqueVisitors: recentVisitors.size,
+      // Engagement collection is not available for historical releases yet.
+      averageLikes: 0,
+      averageWatchSeconds: 0,
+      growthRate,
+      daily: [...daily.entries()]
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([day, value]) => ({
+          day,
+          views: value.views,
+          uniqueVisitors: value.visitors.size,
+        })),
+    };
   }
 
   /* ---------------- notifications ---------------- */

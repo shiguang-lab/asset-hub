@@ -4,8 +4,8 @@ import { AssetsPage } from "../features/assets/assets.js";
 import { AssistantPage } from "../features/assistant/assistant.js";
 import { BillingPage } from "../features/billing/billing.js";
 import { DatasetDetailPage, DatasetsPage } from "../features/datasets/datasets.js";
-import { DocumentEditorPage } from "../features/documents/editor.js";
 import { DocumentsPage } from "../features/documents/documents.js";
+import { DocumentEditorPage } from "../features/documents/editor.js";
 import { HtmlEditorPage } from "../features/documents/html-editor.js";
 import { HomePage } from "../features/home/home.js";
 import {

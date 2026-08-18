@@ -1,8 +1,9 @@
 import { Button, Empty, Field, Modal, Select, Input as UiInput, useToast } from "@shiguang/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Dropdown, Input } from "antd";
+import { Dropdown, Input, Tooltip } from "antd";
 import {
   BarChart3,
+  Check,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -32,9 +33,10 @@ import {
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { getAuthSession } from "../../auth/session.js";
-import { type Asset, api } from "../../entities/api.js";
+import { type Asset, api, publishedShortUrl } from "../../entities/api.js";
 import { isOwnedBySession, ownerDisplayName } from "../../shared/owner.js";
 import { useShellBreadcrumb } from "../../shell/layout.js";
+import { PublishDialog } from "../publishing/publish-dialog.js";
 
 const ME = "dev-user";
 const FAVORITES_STORAGE_KEY = "shiguang.document-favorites";
@@ -42,6 +44,18 @@ const FOLDERS_STORAGE_KEY = "shiguang.document-folders";
 const FOLDER_ASSIGNMENTS_STORAGE_KEY = "shiguang.document-folder-assignments";
 
 type DocumentFolder = { id: string; name: string; parentId: string | null };
+
+function OwnerAvatar({ name }: { name: string }) {
+  return (
+    <span className="sg-owner-stack">
+      <Tooltip title={name}>
+        <span className="sg-owner-avatar" role="img" aria-label={`所有者：${name}`}>
+          {name.slice(0, 1)}
+        </span>
+      </Tooltip>
+    </span>
+  );
+}
 
 const DEFAULT_DOCUMENT_FOLDERS: DocumentFolder[] = [
   { id: "product", name: "产品", parentId: null },
@@ -341,6 +355,13 @@ export function DocumentsPage() {
     parentId: string | null;
     folderId?: string;
   } | null>(null);
+  const [moveDialog, setMoveDialog] = useState<{
+    documentId: string;
+    documentTitle: string;
+    folderId: string;
+  } | null>(null);
+  const [openDocumentMenuId, setOpenDocumentMenuId] = useState<string | null>(null);
+  const [publishTarget, setPublishTarget] = useState<Asset | null>(null);
   const [newFolderName, setNewFolderName] = useState("");
   const [favoriteIds, setFavoriteIds] = useState<string[]>(() => {
     if (typeof window === "undefined") return [];
@@ -538,25 +559,23 @@ export function DocumentsPage() {
     enabled: paged.length > 0 && !demoMode,
   });
 
-  const copyLink = (d: Asset) => {
-    if (!d.publishedUrl) {
+  const copyLink = async (d: Asset) => {
+    const shortUrl = await publishedShortUrl(d.id);
+    if (!shortUrl) {
       toast("info", "该文档尚未发布，请先发布后再复制链接");
       return;
     }
     const done = () => toast("success", "链接已复制");
     if (navigator.clipboard?.writeText) {
-      void navigator.clipboard.writeText(d.publishedUrl).then(done);
+      await navigator.clipboard.writeText(shortUrl);
+      done();
     } else {
       done();
     }
   };
 
   const shareDocument = (document: Asset) => {
-    if (document.publishedUrl) {
-      copyLink(document);
-      return;
-    }
-    navigate(`/documents/${document.id}?publish=1`);
+    setPublishTarget(document);
   };
 
   const toggleFavorite = (id: string) => {
@@ -568,8 +587,23 @@ export function DocumentsPage() {
 
   const moveToFolder = (documentId: string, folderId: string) => {
     setFolderAssignments((current) => ({ ...current, [documentId]: folderId }));
-    const folderName = folders.find((folder) => folder.id === folderId)?.name ?? "未分类";
+    const folderName = folders.find((folder) => folder.id === folderId)?.name ?? "全部文档";
     toast("success", `已移动到${folderName}`);
+  };
+
+  const openMoveDialog = (document: Asset) => {
+    setOpenDocumentMenuId(null);
+    setMoveDialog({
+      documentId: document.id,
+      documentTitle: document.title,
+      folderId: folderAssignments[document.id] ?? inferredFolderId(document),
+    });
+  };
+
+  const confirmMoveToFolder = () => {
+    if (!moveDialog) return;
+    moveToFolder(moveDialog.documentId, moveDialog.folderId);
+    setMoveDialog(null);
   };
 
   const activeFolderPath = useMemo(() => {
@@ -745,6 +779,34 @@ export function DocumentsPage() {
               </Dropdown>
             </div>
             {hasChildren && expanded && renderFolderTree(folder.id, depth + 1)}
+          </div>
+        );
+      });
+
+  const renderMoveFolderOptions = (parentId: string | null, depth = 0): ReactNode =>
+    folders
+      .filter((folder) => folder.parentId === parentId)
+      .map((folder) => {
+        const selected = moveDialog?.folderId === folder.id;
+        return (
+          <div key={folder.id} className="sg-docs-move-folder-branch">
+            <button
+              type="button"
+              role="radio"
+              aria-checked={selected}
+              className={`sg-docs-move-folder ${selected ? "selected" : ""}`}
+              style={{ paddingLeft: 14 + depth * 22 }}
+              onClick={() =>
+                setMoveDialog((current) =>
+                  current ? { ...current, folderId: folder.id } : current,
+                )
+              }
+            >
+              <Folder size={17} />
+              <span>{folder.name}</span>
+              {selected ? <Check className="sg-docs-move-folder-check" size={17} /> : null}
+            </button>
+            {renderMoveFolderOptions(folder.id, depth + 1)}
           </div>
         );
       });
@@ -949,7 +1011,8 @@ export function DocumentsPage() {
                       <span className="sg-docs-recent-copy">
                         <span className="sg-docs-recent-title">{d.title}</span>
                         <span className="sg-docs-recent-meta">
-                          {ownerDisplayName(d, authSession)} · {displayDate(d.updatedAt)}
+                          <OwnerAvatar name={ownerDisplayName(d, authSession)} />
+                          <span>{displayDate(d.updatedAt)}</span>
                           <span className="sg-badge sg-badge-accent">文档</span>
                         </span>
                       </span>
@@ -1008,6 +1071,8 @@ export function DocumentsPage() {
                         <Dropdown
                           trigger={["click"]}
                           placement="bottomRight"
+                          open={openDocumentMenuId === d.id}
+                          onOpenChange={(open) => setOpenDocumentMenuId(open ? d.id : null)}
                           popupRender={() => (
                             <div className="sg-asset-menu">
                               <button type="button" onClick={() => navigate(`/documents/${d.id}`)}>
@@ -1022,17 +1087,9 @@ export function DocumentsPage() {
                               <button type="button" onClick={() => toggleFavorite(d.id)}>
                                 {favoriteIds.includes(d.id) ? "取消收藏" : "收藏"}
                               </button>
-                              <div className="sg-asset-menu-label">移动到目录</div>
-                              {folders.map((folder) => (
-                                <button
-                                  key={folder.id}
-                                  type="button"
-                                  onClick={() => moveToFolder(d.id, folder.id)}
-                                >
-                                  {folderAssignments[d.id] === folder.id ? "✓ " : ""}
-                                  {folder.name}
-                                </button>
-                              ))}
+                              <button type="button" onClick={() => openMoveDialog(d)}>
+                                移动到目录
+                              </button>
                               {filter !== "trash" ? (
                                 <button
                                   type="button"
@@ -1087,12 +1144,7 @@ export function DocumentsPage() {
                         )}
                       </div>
                       <div className="sg-doc-card-meta">
-                        <span className="sg-owner">
-                          <span className="sg-owner-avatar">
-                            {ownerDisplayName(d, authSession).slice(0, 1)}
-                          </span>
-                          {ownerDisplayName(d, authSession)}
-                        </span>
+                        <OwnerAvatar name={ownerDisplayName(d, authSession)} />
                         <span className="sg-subtle">{displayDate(d.updatedAt)}</span>
                       </div>
                       <div className="sg-doc-card-foot">
@@ -1209,12 +1261,7 @@ export function DocumentsPage() {
                             </div>
                           </td>
                           <td className="c-owner">
-                            <span className="sg-owner">
-                              <span className="sg-owner-avatar">
-                                {ownerDisplayName(d, authSession).slice(0, 1)}
-                              </span>
-                              {ownerDisplayName(d, authSession)}
-                            </span>
+                            <OwnerAvatar name={ownerDisplayName(d, authSession)} />
                           </td>
                           <td className="c-time sg-subtle">{displayDate(d.updatedAt)}</td>
                           <td className="c-vis">
@@ -1280,6 +1327,8 @@ export function DocumentsPage() {
                               <Dropdown
                                 trigger={["click"]}
                                 placement="bottomRight"
+                                open={openDocumentMenuId === d.id}
+                                onOpenChange={(open) => setOpenDocumentMenuId(open ? d.id : null)}
                                 popupRender={() => (
                                   <div className="sg-asset-menu">
                                     <button
@@ -1300,17 +1349,9 @@ export function DocumentsPage() {
                                     <button type="button" onClick={() => toggleFavorite(d.id)}>
                                       {favoriteIds.includes(d.id) ? "取消收藏" : "收藏"}
                                     </button>
-                                    <div className="sg-asset-menu-label">移动到目录</div>
-                                    {folders.map((folder) => (
-                                      <button
-                                        key={folder.id}
-                                        type="button"
-                                        onClick={() => moveToFolder(d.id, folder.id)}
-                                      >
-                                        {folderAssignments[d.id] === folder.id ? "✓ " : ""}
-                                        {folder.name}
-                                      </button>
-                                    ))}
+                                    <button type="button" onClick={() => openMoveDialog(d)}>
+                                      移动到目录
+                                    </button>
                                     {filter !== "trash" ? (
                                       <button
                                         type="button"
@@ -1410,6 +1451,48 @@ export function DocumentsPage() {
           </section>
         </div>
       </div>
+
+      <Modal
+        open={Boolean(moveDialog)}
+        onClose={() => setMoveDialog(null)}
+        title="移动到目录"
+        footer={
+          <div className="sg-docs-move-footer">
+            <Button onClick={() => setMoveDialog(null)}>取消</Button>
+            <Button variant="primary" onClick={confirmMoveToFolder}>
+              移动
+            </Button>
+          </div>
+        }
+      >
+        <div className="sg-docs-move-dialog">
+          <p className="sg-docs-move-hint">
+            选择“{moveDialog?.documentTitle ?? "文档"}”要移动到的目录
+          </p>
+          <div className="sg-docs-move-tree" role="radiogroup" aria-label="目标目录">
+            <button
+              type="button"
+              role="radio"
+              aria-checked={moveDialog?.folderId === "root"}
+              className={`sg-docs-move-folder ${moveDialog?.folderId === "root" ? "selected" : ""}`}
+              onClick={() =>
+                setMoveDialog((current) => (current ? { ...current, folderId: "root" } : current))
+              }
+            >
+              <FileStack size={17} />
+              <span>全部文档</span>
+              {moveDialog?.folderId === "root" ? (
+                <Check className="sg-docs-move-folder-check" size={17} />
+              ) : null}
+            </button>
+            {renderMoveFolderOptions(null)}
+          </div>
+        </div>
+      </Modal>
+
+      {publishTarget ? (
+        <PublishDialog asset={publishTarget} open onClose={() => setPublishTarget(null)} />
+      ) : null}
 
       <Modal
         open={Boolean(folderDialog)}

@@ -319,7 +319,7 @@ export function KnowledgePage() {
         {
           label: "已使用存储",
           value: "86.3 GB",
-          note: "总计 200 GB",
+          note: "总计 100 MB",
           icon: Database,
           tone: "green",
         },

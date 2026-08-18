@@ -1,32 +1,53 @@
-import { loadModelGatewayConfig, type ModelGatewayConfig } from "@shiguang/config";
+import {
+  loadMcpGatewayConfig,
+  loadModelGatewayConfig,
+  loadSkillGatewayConfig,
+  type ModelGatewayConfig,
+} from "@shiguang/config";
 import { z } from "zod";
+
+import { connectMcpServers } from "./mcp.js";
+
+export * from "./mcp.js";
 
 export type ModelQuality = "economy" | "balanced" | "best";
 
-export interface ModelPolicy {
-  readonly quality: ModelQuality;
-  readonly requireStructuredOutput: boolean;
-}
-
-export const defaultModelPolicy: ModelPolicy = {
-  quality: "balanced",
-  requireStructuredOutput: true,
-};
-
-export const qualityToProfile = (quality: ModelQuality): string =>
-  quality === "economy"
-    ? "ai-function.economy"
-    : quality === "best"
-      ? "research.writer"
-      : "ai-function.balanced";
+/**
+ * asset-hub Agent 在 Model Gateway 中固定的 Agent 键。
+ * 网关端为该键配置唯一默认绑定 → deepseek-v4-flash，运行时直接解析，无需质量档/策略键映射。
+ */
+export const MODEL_AGENT_KEY = "asset-hub";
 
 /* ------------------------------------------------------------------ */
 /* Chat completion client                                               */
 /* ------------------------------------------------------------------ */
 
 export interface ChatMessage {
-  role: "system" | "user" | "assistant";
-  content: string;
+  role: "system" | "user" | "assistant" | "tool";
+  content: string | null;
+  /** tool 消息回填时用于关联 assistant 的 tool_calls。 */
+  tool_call_id?: string;
+  /** assistant 消息携带的 tool_calls（OpenAI 兼容格式）。 */
+  tool_calls?: Array<{
+    id: string;
+    type: "function";
+    function: { name: string; arguments: string };
+  }>;
+}
+
+export interface ChatTool {
+  type: "function";
+  function: {
+    name: string;
+    description?: string;
+    parameters?: Record<string, unknown>;
+  };
+}
+
+export interface ChatToolCall {
+  id: string;
+  name: string;
+  arguments: string;
 }
 
 export interface ChatCompletionRequest {
@@ -36,6 +57,7 @@ export interface ChatCompletionRequest {
   responseFormat?: "text" | "json_object";
   quality?: ModelQuality;
   taskId?: string;
+  tools?: ChatTool[];
 }
 
 export interface ChatCompletionResponse {
@@ -45,12 +67,24 @@ export interface ChatCompletionResponse {
     outputTokens: number;
   };
   provider: string;
+  toolCalls?: ChatToolCall[];
 }
 
 const completionSchema = z.object({
   choices: z.array(
     z.object({
-      message: z.object({ content: z.string().nullable() }),
+      message: z.object({
+        content: z.string().nullable(),
+        tool_calls: z
+          .array(
+            z.object({
+              id: z.string(),
+              type: z.string().optional(),
+              function: z.object({ name: z.string(), arguments: z.string().default("{}") }),
+            }),
+          )
+          .optional(),
+      }),
     }),
   ),
   usage: z
@@ -61,18 +95,17 @@ const completionSchema = z.object({
     .optional(),
 });
 
-interface ResolveRuntimeConfig {
-  provider?: string;
-  model?: string;
-  baseURL?: string;
-  apiKey?: string;
-  routeExpiresAt?: string;
+interface ResolvedRoute {
+  provider: string;
+  model: string;
+  baseUrl?: string;
+  apiKey: string;
 }
 
 export class ModelGatewayClient {
   constructor(private readonly config: ModelGatewayConfig) {}
 
-  private async resolve(agentKey: string, taskId: string): Promise<ResolveRuntimeConfig | null> {
+  private async resolve(taskId: string): Promise<ResolvedRoute | null> {
     if (!this.config.baseUrl) throw new Error("MODEL_GATEWAY_URL is not configured");
     const url = new URL("/internal/model-config/resolve", this.config.baseUrl);
     const res = await fetch(url, {
@@ -81,13 +114,13 @@ export class ModelGatewayClient {
         "content-type": "application/json",
         authorization: `Bearer ${this.config.apiKey ?? ""}`,
       },
-      body: JSON.stringify({ agentKey, taskKey: "", taskId }),
+      body: JSON.stringify({ agentKey: MODEL_AGENT_KEY, taskKey: "", taskId }),
     });
     if (!res.ok) {
       const body = await res.text().catch(() => "");
       throw new Error(`model gateway resolve ${res.status}: ${body.slice(0, 300)}`);
     }
-    return (await res.json()) as ResolveRuntimeConfig | null;
+    return (await res.json()) as ResolvedRoute | null;
   }
 
   async complete(request: ChatCompletionRequest): Promise<ChatCompletionResponse> {
@@ -95,12 +128,11 @@ export class ModelGatewayClient {
       throw new Error("MODEL_GATEWAY_URL is not configured");
     }
     const taskId = request.taskId ?? `task_${crypto.randomUUID()}`;
-    const agentKey = qualityToProfile(request.quality ?? "balanced");
-    const runtime = await this.resolve(agentKey, taskId);
+    const runtime = await this.resolve(taskId);
     if (!runtime) {
-      throw new Error(`model gateway has no route configured for agentKey=${agentKey}`);
+      throw new Error(`model gateway has no route configured for agentKey=${MODEL_AGENT_KEY}`);
     }
-    const url = new URL("/v1/chat/completions", runtime.baseURL ?? this.config.baseUrl);
+    const url = new URL("/v1/chat/completions", runtime.baseUrl ?? this.config.baseUrl);
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.config.timeoutMs);
     try {
@@ -108,6 +140,7 @@ export class ModelGatewayClient {
         method: "POST",
         headers: {
           "content-type": "application/json",
+          "x-opc-task-id": taskId,
           ...(runtime.apiKey ? { authorization: `Bearer ${runtime.apiKey}` } : {}),
         },
         body: JSON.stringify({
@@ -118,6 +151,11 @@ export class ModelGatewayClient {
           ...(request.responseFormat === "json_object"
             ? { response_format: { type: "json_object" } }
             : {}),
+          ...(request.tools?.length
+            ? {
+                tools: request.tools.map((tool) => ({ type: "function", function: tool.function })),
+              }
+            : {}),
         }),
         signal: controller.signal,
       });
@@ -127,6 +165,13 @@ export class ModelGatewayClient {
       }
       const parsed = completionSchema.parse(await res.json());
       const text = parsed.choices[0]?.message.content ?? "";
+      const toolCalls = (parsed.choices[0]?.message.tool_calls ?? [])
+        .filter((call) => call.id && call.function.name)
+        .map((call) => ({
+          id: call.id,
+          name: call.function.name,
+          arguments: call.function.arguments,
+        }));
       return {
         text,
         usage: {
@@ -134,6 +179,7 @@ export class ModelGatewayClient {
           outputTokens: parsed.usage?.completion_tokens ?? 0,
         },
         provider: "model-gateway",
+        ...(toolCalls.length ? { toolCalls } : {}),
       };
     } finally {
       clearTimeout(timer);
@@ -373,6 +419,7 @@ export interface AiResult {
   text: string;
   usage: { inputTokens: number; outputTokens: number };
   provider: string;
+  toolCalls?: ChatToolCall[];
 }
 
 export class AiService {
@@ -431,3 +478,285 @@ export const createAiService = (options?: {
   forceLocal?: boolean;
   quality?: ModelQuality;
 }): AiService => new AiService(options);
+
+/* ------------------------------------------------------------------ */
+/* 动态能力上下文（Skill / MCP manifest）                               */
+/* ------------------------------------------------------------------ */
+
+export interface CapabilityContext {
+  agentId: string;
+  skills: Array<{ name: string; description: string; content: string }>;
+  mcpServers: Array<{
+    name: string;
+    url: string;
+    headers?: Record<string, string>;
+    timeoutMs?: number;
+  }>;
+  /** 注入 system prompt 的完整能力说明（含各 Skill 的 SKILL.md 全文）；无配置能力时返回 null。 */
+  summary: string;
+}
+
+/**
+ * 拉取该 Agent 在 Skill Gateway / MCP Gateway 中已分配的能力 manifest，
+ * 生成一段可注入 system prompt 的摘要。任一网关未配置时跳过；两者都无内容时返回 null。
+ */
+export async function loadCapabilityContext(agentId: string): Promise<CapabilityContext | null> {
+  const skill = loadSkillGatewayConfig();
+  const mcp = loadMcpGatewayConfig();
+
+  const [skills, mcpServers] = await Promise.all([
+    skill.baseUrl ? fetchSkills(agentId, skill.baseUrl, skill.token) : Promise.resolve([]),
+    mcp.baseUrl ? fetchMcpServers(agentId, mcp.baseUrl, mcp.token) : Promise.resolve([]),
+  ]);
+
+  if (skills.length === 0 && mcpServers.length === 0) return null;
+  const summary = buildCapabilitySummary(skills, mcpServers);
+  return { agentId, skills, mcpServers, summary };
+}
+
+async function fetchSkills(
+  agentId: string,
+  baseUrl: string,
+  token: string | null,
+): Promise<Array<{ name: string; description: string; content: string }>> {
+  try {
+    const base = baseUrl.replace(/\/+$/, "");
+    const res = await fetch(`${base}/skills/manifests/${encodeURIComponent(agentId)}`, {
+      headers: { authorization: `Bearer ${token ?? ""}` },
+      signal: AbortSignal.timeout(8_000),
+    });
+    if (!res.ok) return [];
+    const body = (await res.json()) as {
+      skills?: Array<{
+        name?: string;
+        versionTree?: { entries?: Record<string, { blobHash?: string }> };
+      }>;
+    };
+    const skills: Array<{ name: string; description: string; content: string }> = [];
+    for (const skill of body.skills ?? []) {
+      if (typeof skill.name !== "string") continue;
+      const blobHash = skill.versionTree?.entries?.["SKILL.md"]?.blobHash;
+      let content = "";
+      if (blobHash) {
+        const blobRes = await fetch(`${base}/blobs/${encodeURIComponent(blobHash)}`, {
+          headers: { authorization: `Bearer ${token ?? ""}` },
+          signal: AbortSignal.timeout(8_000),
+        });
+        if (blobRes.ok) content = await blobRes.text();
+      }
+      skills.push({
+        name: skill.name,
+        description: extractFrontmatterDescription(content),
+        content,
+      });
+    }
+    return skills;
+  } catch {
+    return [];
+  }
+}
+
+function extractFrontmatterDescription(markdown: string): string {
+  const match = markdown.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+  if (!match) return "";
+  const frontmatter = match[1] ?? "";
+  const lineMatch = frontmatter.match(/^description:\s*(.*)$/m);
+  if (!lineMatch) return "";
+  const raw = (lineMatch[1] ?? "").trim();
+  if (raw === "|" || raw === ">") {
+    const lines = frontmatter.split(/\r?\n/);
+    const start = lines.findIndex((l) => /^description:\s*[|>]/.test(l));
+    const block: string[] = [];
+    for (const line of lines.slice(start + 1)) {
+      if (!/^\s+/.test(line)) break;
+      block.push(line.trim());
+    }
+    return block.join(raw === ">" ? " " : "\n").trim();
+  }
+  return raw.replace(/^["']|["']$/g, "").trim();
+}
+
+async function fetchMcpServers(
+  agentId: string,
+  baseUrl: string,
+  token: string | null,
+): Promise<CapabilityContext["mcpServers"]> {
+  try {
+    const res = await fetch(
+      `${baseUrl.replace(/\/+$/, "")}/api/mcp/manifest/${encodeURIComponent(agentId)}`,
+      {
+        headers: { authorization: `Bearer ${token ?? ""}` },
+        signal: AbortSignal.timeout(8_000),
+      },
+    );
+    if (!res.ok) return [];
+    const body = (await res.json()) as {
+      servers?: Array<{
+        name?: string;
+        url?: string;
+        headers?: Record<string, string>;
+        timeoutMs?: number;
+      }>;
+    };
+    return (body.servers ?? [])
+      .filter((s) => typeof s.url === "string")
+      .map((s) => ({
+        name: s.name ?? s.url ?? "",
+        url: s.url as string,
+        ...(s.headers ? { headers: s.headers } : {}),
+        ...(s.timeoutMs ? { timeoutMs: s.timeoutMs } : {}),
+      }));
+  } catch {
+    return [];
+  }
+}
+
+function buildCapabilitySummary(
+  skills: Array<{ name: string; description: string; content: string }>,
+  mcpServers: CapabilityContext["mcpServers"],
+): string {
+  const lines: string[] = ["可用动态能力："];
+  for (const s of skills) {
+    lines.push(`- Skill「${s.name}」${s.description ? `：${s.description}` : ""}`);
+  }
+  for (const m of mcpServers) {
+    lines.push(`- MCP 工具服务「${m.name}」(${m.url})`);
+  }
+  if (skills.some((s) => s.content.trim())) {
+    lines.push("\n已加载的 Skill 规范（按需遵循）：");
+    for (const s of skills) {
+      if (!s.content.trim()) continue;
+      lines.push(`\n=== Skill: ${s.name} ===\n${s.content.trim()}`);
+    }
+  }
+  lines.push("\n在回答时遵循相关 Skill 规范；不要编造未列出的能力。");
+  return lines.join("\n");
+}
+
+/* ------------------------------------------------------------------ */
+/* Agentic 工具调用循环（MCP 工具真正被执行）                          */
+/* ------------------------------------------------------------------ */
+
+export interface McpToolkit {
+  tools: ChatTool[];
+  execute: (
+    name: string,
+    args: Record<string, unknown>,
+  ) => Promise<{ content: string; isError: boolean }>;
+}
+
+/** 连接配置的 MCP server，发现工具并把工具名扁平化为 `<serverId>__<toolName>`。 */
+export async function buildMcpToolkit(
+  servers: CapabilityContext["mcpServers"],
+): Promise<McpToolkit | null> {
+  const clients = await connectMcpServers(
+    servers.map((server) => ({
+      id: server.name,
+      url: server.url,
+      headers: server.headers,
+      timeoutMs: server.timeoutMs,
+    })),
+  );
+  if (clients.length === 0) return null;
+
+  const executors = new Map<
+    string,
+    (args: Record<string, unknown>) => Promise<{ content: string; isError: boolean }>
+  >();
+  const tools: ChatTool[] = [];
+  for (const client of clients) {
+    for (const tool of client.tools) {
+      const qualifiedName = `${client.serverId}__${tool.name}`;
+      tools.push({
+        type: "function",
+        function: {
+          name: qualifiedName,
+          ...(tool.description ? { description: tool.description } : {}),
+          parameters:
+            tool.inputSchema && Object.keys(tool.inputSchema).length > 0
+              ? tool.inputSchema
+              : { type: "object", properties: {} },
+        },
+      });
+      executors.set(qualifiedName, (args) => client.callTool(tool.name, args));
+    }
+  }
+  return {
+    tools,
+    execute: (name, args) => {
+      const run = executors.get(name);
+      if (!run) return Promise.resolve({ content: `未知工具：${name}`, isError: true });
+      return run(args);
+    },
+  };
+}
+
+export interface AgenticResult {
+  text: string;
+  rounds: number;
+  toolCalls: Array<{ name: string; args: Record<string, unknown> }>;
+}
+
+/** 工具调用循环：模型返回 tool_calls → 执行 → 回填 tool 消息 → 直至终答或轮次耗尽。 */
+export async function agenticComplete(options: {
+  complete: (request: ChatCompletionRequest) => Promise<ChatCompletionResponse>;
+  messages: ChatMessage[];
+  tools: ChatTool[];
+  execute: (
+    name: string,
+    args: Record<string, unknown>,
+  ) => Promise<{ content: string; isError: boolean }>;
+  quality?: ModelQuality;
+  maxRounds?: number;
+}): Promise<AgenticResult> {
+  const { complete, tools, execute, quality, maxRounds = 6 } = options;
+  const messages: ChatMessage[] = [...options.messages];
+  const toolCalls: Array<{ name: string; args: Record<string, unknown> }> = [];
+  let rounds = 0;
+  let text = "";
+
+  while (rounds < maxRounds) {
+    rounds += 1;
+    const res = await complete({ messages, tools, quality });
+    const calls = res.toolCalls ?? [];
+    if (calls.length === 0) {
+      text = res.text;
+      break;
+    }
+    messages.push({
+      role: "assistant",
+      content: res.text || null,
+      tool_calls: calls.map((call) => ({
+        id: call.id,
+        type: "function" as const,
+        function: { name: call.name, arguments: call.arguments },
+      })),
+    });
+    for (const call of calls) {
+      let args: Record<string, unknown> = {};
+      try {
+        args = JSON.parse(call.arguments || "{}") as Record<string, unknown>;
+      } catch {
+        args = {};
+      }
+      let content: string;
+      let isError = false;
+      try {
+        const result = await execute(call.name, args);
+        content = result.content;
+        isError = result.isError;
+      } catch (error) {
+        content = `工具执行失败：${error instanceof Error ? error.message : String(error)}`;
+        isError = true;
+      }
+      toolCalls.push({ name: call.name, args });
+      messages.push({
+        role: "tool",
+        tool_call_id: call.id,
+        content: isError ? `ERROR: ${content}` : content,
+      });
+    }
+  }
+
+  return { text, rounds, toolCalls };
+}

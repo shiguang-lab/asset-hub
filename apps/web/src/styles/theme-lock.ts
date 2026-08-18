@@ -595,7 +595,7 @@ body,
   background: transparent;
 }
 .sg-docs-table th.c-owner {
-  width: 118px;
+  width: 72px;
 }
 .sg-docs-table th.c-time {
   width: 128px;

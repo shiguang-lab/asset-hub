@@ -354,7 +354,20 @@ export const presentationLayoutSchema = z.enum([
 
 export const slideBlockSchema = z.object({
   id: z.string(),
-  type: z.enum(["heading", "text", "bullet", "image", "chart", "quote", "table", "code"]),
+  type: z.enum([
+    "heading",
+    "text",
+    "bullet",
+    "image",
+    "chart",
+    "quote",
+    "table",
+    "code",
+    "metric",
+    "card",
+    "timeline",
+    "divider",
+  ]),
   content: z.string(),
   meta: z.record(z.string(), z.unknown()).default({}),
 });
@@ -375,6 +388,46 @@ export const presentationDocumentSchema = z.object({
   slides: z.array(slideSchema).default([]),
 });
 export type PresentationDocument = z.infer<typeof presentationDocumentSchema>;
+
+/**
+ * 演示「章节大纲」：AI 从源内容提炼出的叙事结构（不是页面 1:1 列表）。
+ * 一个 section 在生成阶段可展开为 1..N 页（由内容量与视觉类型决定）。
+ */
+export const outlineDataPointSchema = z.object({
+  id: z.string(),
+  label: z.string(),
+  value: z.string(),
+  note: z.string().optional(),
+});
+export type OutlineDataPoint = z.infer<typeof outlineDataPointSchema>;
+
+export const outlineVisualSchema = z.enum([
+  "default",
+  "metrics",
+  "chart",
+  "two-column",
+  "quote",
+  "timeline",
+]);
+export type OutlineVisual = z.infer<typeof outlineVisualSchema>;
+
+export const presentationSectionSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  summary: z.string().default(""),
+  points: z.array(z.string()).default([]),
+  data: z.array(outlineDataPointSchema).default([]),
+  visual: outlineVisualSchema.default("default"),
+});
+export type PresentationSection = z.infer<typeof presentationSectionSchema>;
+
+export const presentationOutlineSchema = z.object({
+  title: z.string(),
+  theme: presentationThemeSchema.default("light"),
+  aspectRatio: z.enum(["16:9", "4:3", "9:16"]).default("16:9"),
+  sections: z.array(presentationSectionSchema).min(1),
+});
+export type PresentationOutline = z.infer<typeof presentationOutlineSchema>;
 
 export const templateSchema = z.object({
   id: templateIdSchema,
@@ -805,6 +858,20 @@ export type ProgressEvent = z.infer<typeof progressEventSchema>;
 /* API request/response DTOs                                            */
 /* ------------------------------------------------------------------ */
 
+const queryBooleanSchema = z.preprocess((value) => {
+  if (typeof value !== "string") return value;
+  switch (value.trim().toLowerCase()) {
+    case "true":
+    case "1":
+      return true;
+    case "false":
+    case "0":
+      return false;
+    default:
+      return value;
+  }
+}, z.boolean());
+
 export const listAssetsQuerySchema = z.object({
   type: assetTypeSchema.optional(),
   q: z.string().optional(),
@@ -814,7 +881,7 @@ export const listAssetsQuerySchema = z.object({
   sort: z.enum(["updated_at", "created_at", "title"]).optional(),
   cursor: z.string().optional(),
   limit: z.coerce.number().min(1).max(100).default(20),
-  includeDeleted: z.coerce.boolean().optional(),
+  includeDeleted: queryBooleanSchema.optional(),
 });
 
 export const createAssetInputSchema = z.object({

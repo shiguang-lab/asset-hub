@@ -18,8 +18,7 @@ document.documentElement.style.colorScheme = "dark";
 const root = document.getElementById("root");
 if (!root) throw new Error("Missing #root element");
 
-void requireAuthSession().then((session) => {
-  if (!session) return;
+const renderApp = () => {
   createRoot(root).render(
     <React.StrictMode>
       <ThemeProvider>
@@ -29,4 +28,8 @@ void requireAuthSession().then((session) => {
       </ThemeProvider>
     </React.StrictMode>,
   );
+};
+
+void requireAuthSession().then((session) => {
+  if (session) renderApp();
 });

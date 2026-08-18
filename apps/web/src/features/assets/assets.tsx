@@ -1,6 +1,6 @@
 import { Button, Empty, formatRelative, Progress, Select, useToast } from "@shiguang/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Dropdown, Input } from "antd";
+import { Dropdown, Input, Tooltip } from "antd";
 import {
   BookOpen,
   ChartNoAxesCombined,
@@ -109,6 +109,42 @@ const QUICK_FILTERS = [
 
 type QuickId = "all" | (typeof QUICK_FILTERS)[number]["id"];
 
+interface AssetPage {
+  items: Asset[];
+  total: number;
+  nextCursor?: string | null;
+}
+
+interface StorageUsage {
+  usedBytes: number;
+  quotaBytes: number;
+}
+
+function formatStorageBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
+}
+
+async function loadAssetSet(includeDeleted: boolean): Promise<Asset[]> {
+  const items: Asset[] = [];
+  let cursor: string | undefined;
+  do {
+    const page = await api<AssetPage>("/assets", {
+      params: { includeDeleted, limit: 100, cursor },
+    });
+    items.push(...page.items);
+    cursor = page.nextCursor ?? undefined;
+  } while (cursor);
+  return items;
+}
+
+async function loadAllAssets(): Promise<Asset[]> {
+  const [active, deleted] = await Promise.all([loadAssetSet(false), loadAssetSet(true)]);
+  return [...active, ...deleted];
+}
+
 function withinDays(iso: string, days: number): boolean {
   return Date.now() - new Date(iso).getTime() < days * 24 * 3600 * 1000;
 }
@@ -133,9 +169,13 @@ export function AssetsPage() {
 
   const includeDeleted = quick === "trash";
 
-  const { data } = useQuery<{ items: Asset[]; total: number }>({
+  const { data } = useQuery<Asset[]>({
     queryKey: ["assets", "all"],
-    queryFn: () => api<{ items: Asset[]; total: number }>("/assets", { params: { limit: 100 } }),
+    queryFn: loadAllAssets,
+  });
+  const { data: storage } = useQuery<StorageUsage>({
+    queryKey: ["assets", "storage"],
+    queryFn: () => api<StorageUsage>("/assets/storage"),
   });
 
   const batchMutation = useMutation({
@@ -145,11 +185,12 @@ export function AssetsPage() {
       toast("success", "批量操作成功");
       setSelected(new Set());
       void queryClient.invalidateQueries({ queryKey: ["assets"] });
+      void queryClient.invalidateQueries({ queryKey: ["assets", "storage"] });
       void queryClient.invalidateQueries({ queryKey: ["home"] });
     },
   });
 
-  const all = useMemo(() => data?.items ?? [], [data]);
+  const all = useMemo(() => data ?? [], [data]);
 
   const items = useMemo(() => {
     return all
@@ -252,11 +293,20 @@ export function AssetsPage() {
     [all],
   );
 
-  const storage = useMemo(() => {
-    const usedGb = 42.6 + all.length * 0.15;
-    const clamped = Math.min(199.9, usedGb);
-    return { used: clamped.toFixed(1), pct: Math.round((clamped / 200) * 100) };
+  const assetSummary = useMemo(() => {
+    const active = all.filter((a) => !a.deletedAt).length;
+    return { active, deleted: all.length - active };
   }, [all]);
+
+  const storageSummary = useMemo(() => {
+    const usedBytes = Math.max(0, storage?.usedBytes ?? 0);
+    const quotaBytes = Math.max(1, storage?.quotaBytes ?? 100 * 1024 * 1024);
+    return {
+      used: formatStorageBytes(usedBytes),
+      quota: formatStorageBytes(quotaBytes),
+      pct: Math.min(100, Math.round((usedBytes / quotaBytes) * 100)),
+    };
+  }, [storage]);
 
   const toggle = (id: string) =>
     setSelected((prev) => {
@@ -475,11 +525,12 @@ export function AssetsPage() {
                         }}
                       >
                         <td className="c-check">
-                          <label className="sg-asset-check" onClick={(e) => e.stopPropagation()}>
+                          <label className="sg-asset-check">
                             <input
                               type="checkbox"
                               checked={selected.has(asset.id)}
                               onChange={() => toggle(asset.id)}
+                              onClick={(e) => e.stopPropagation()}
                             />
                           </label>
                         </td>
@@ -502,11 +553,16 @@ export function AssetsPage() {
                         </td>
                         <td className="c-type sg-subtle">{meta.label}</td>
                         <td className="c-owner">
-                          <span className="sg-owner">
-                            <span className="sg-owner-avatar">
-                              {ownerDisplayName(asset, authSession).slice(0, 1)}
-                            </span>
-                            {ownerDisplayName(asset, authSession)}
+                          <span className="sg-owner-stack">
+                            <Tooltip title={ownerDisplayName(asset, authSession)}>
+                              <span
+                                className="sg-owner-avatar"
+                                role="img"
+                                aria-label={`所有者：${ownerDisplayName(asset, authSession)}`}
+                              >
+                                {ownerDisplayName(asset, authSession).slice(0, 1)}
+                              </span>
+                            </Tooltip>
                           </span>
                         </td>
                         <td className="c-time sg-subtle">{formatRelative(asset.updatedAt)}</td>
@@ -617,7 +673,7 @@ export function AssetsPage() {
                   <ChevronRight size={15} />
                 </button>
               </div>
-              <label className="sg-pager-size">
+              <span className="sg-pager-size">
                 每页
                 <Select
                   value={String(pageSize)}
@@ -629,7 +685,7 @@ export function AssetsPage() {
                     { value: "50", label: "50 项" },
                   ]}
                 />
-              </label>
+              </span>
             </div>
           )}
         </div>
@@ -661,17 +717,17 @@ export function AssetsPage() {
           <div className="sg-side-card">
             <div className="sg-row-between">
               <h3 className="sg-h3 sg-side-title">存储空间</h3>
-              <span className="sg-subtle">{storage.pct}%</span>
+              <span className="sg-subtle">{storageSummary.pct}%</span>
             </div>
             <div className="sg-storage-num">
-              {storage.used} GB <em>/ 200 GB</em>
+              {storageSummary.used} <em>/ {storageSummary.quota}</em>
             </div>
             <div className="sg-storage-bar">
-              <Progress value={storage.pct} />
+              <Progress value={storageSummary.pct} />
             </div>
-            <button type="button" className="sg-side-link" onClick={() => navigate("/billing")}>
-              查看详情
-            </button>
+            <div className="sg-subtle">
+              {assetSummary.active} 个资产 · 回收站 {assetSummary.deleted} 个
+            </div>
           </div>
 
           <div className="sg-side-card">

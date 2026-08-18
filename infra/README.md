@@ -53,7 +53,7 @@ docker compose -f postgres.yml ps
 
 ## 生产应用部署
 
-五个应用使用仓库根目录的多阶段 `Dockerfile` 构建，并由
+六个应用使用仓库根目录的多阶段 `Dockerfile` 构建，并由
 `infra/compose/production.yml` 统一编排：
 
 - `web`：静态 SPA，NAS 调试端口 `3700`；
@@ -61,10 +61,16 @@ docker compose -f postgres.yml ps
 - `worker`：Hatchet/Outbox 后台任务执行器；
 - `compute-worker`：数据处理服务，NAS 调试端口 `3702`；
 - `public-gateway`：公开发布服务，NAS 调试端口 `3704`。
+- `ssr`：公开 Markdown 阅读页的 Next.js 服务，仅加入内部 `app` 网络，监听容器端口 `3005`，由 `public-gateway` 反向代理。
 
 生产统一使用 `doc.shiguanglab.com`：主应用与 API 需要登录，`/p/*`、`/s/*`
 为匿名发布路径。发布网关必须对 HTML 强制附加限制性 CSP，禁止网络请求、
 iframe、表单和第三方子资源，以降低用户生成 HTML 与主站同源带来的风险。
+
+Markdown 发布页不再生成静态 HTML 作为最终入口：`public-gateway` 完成短链、状态、
+密码和资源权限校验后，将 `/p/:slug` 内部代理到 `ssr` 的 `/render/:slug`，由 Next.js
+服务端通过网关读取 `index.md`，使用共享 `@shiguang/markdown-viewer`（XMarkdown）渲染，
+并在浏览器端提供目录折叠、代码块/Mermaid 交互、下载和复制链接能力。
 
 NAS 部署目录约定为 `/home/yanxianliang/asset-hub`。把生产集成凭据放入仓库
 根目录 `.env` 后执行：

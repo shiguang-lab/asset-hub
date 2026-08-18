@@ -16,7 +16,7 @@ export const UiVisualizationGlobalStyles = createGlobalStyle(css`
   padding: 8px;
 }
 .sg-slide-thumb {
-  padding: 12px;
+  padding: 8px;
   border-radius: 8px;
   cursor: pointer;
   font-size: 12.5px;
@@ -25,11 +25,49 @@ export const UiVisualizationGlobalStyles = createGlobalStyle(css`
   border: 0;
   background: transparent;
   color: var(--sg-fg);
-  margin-bottom: 2px;
+  margin-bottom: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 .sg-slide-thumb.active {
   background: var(--sg-accent-soft);
-  color: var(--sg-accent);
+}
+.sg-slide-thumb-no {
+  font-size: 11px;
+  color: var(--sg-muted);
+  font-variant-numeric: tabular-nums;
+}
+.sg-slide-thumb-frame {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border: 1px solid var(--sg-border);
+  border-radius: 6px;
+  background: #fff;
+  pointer-events: none;
+}
+.sg-slide-thumb-label {
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sg-slide-thumb.active .sg-slide-thumb-frame {
+  border-color: var(--sg-accent);
+}
+.sg-el-editor {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid transparent;
+  transition: border-color 0.15s ease;
+}
+.sg-el-editor.selected {
+  border-color: var(--sg-accent);
+  background: var(--sg-accent-soft);
+}
+.sg-editor-hint {
+  font-size: 12.5px;
+  color: var(--sg-muted);
 }
 .sg-slide-canvas {
   border: 1px solid var(--sg-border);

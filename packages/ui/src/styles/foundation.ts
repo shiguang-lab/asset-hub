@@ -247,6 +247,35 @@ button {
   color: var(--sg-muted);
   font-size: 13px;
 }
+.sg-diff-block {
+  border-left: 3px solid var(--sg-border);
+  background: var(--sg-surface-muted, rgba(128, 128, 128, 0.06));
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  line-height: 1.5;
+}
+.sg-diff-block[data-kind="add"] {
+  border-left-color: var(--sg-success, #16a34a);
+  background: rgba(22, 163, 74, 0.08);
+}
+.sg-diff-block[data-kind="remove"] {
+  border-left-color: var(--sg-danger, #dc2626);
+  background: rgba(220, 38, 38, 0.07);
+}
+.sg-diff-block[data-kind="modify"] {
+  border-left-color: var(--sg-warning, #d97706);
+  background: rgba(217, 119, 6, 0.08);
+}
+.sg-diff-label {
+  flex: none;
+  font-size: 11px;
+  color: var(--sg-muted);
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .sg-eyebrow {
   color: var(--sg-accent);
   font-size: 11px;

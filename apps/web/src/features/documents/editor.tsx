@@ -22,13 +22,29 @@ import {
 } from "@shiguang/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Dropdown } from "antd";
-import { Download, MoreHorizontal, Paperclip, RefreshCcw, Trash2 } from "lucide-react";
+import {
+  Download,
+  FileDiff,
+  ImagePlus,
+  Link2,
+  MoreHorizontal,
+  Paperclip,
+  RefreshCcw,
+  Share2,
+  Trash2,
+} from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { type Asset, api, downloadFile, uploadFile } from "../../entities/api.js";
+import {
+  type Asset,
+  api,
+  downloadFile,
+  publishedShortUrl,
+  uploadFile,
+} from "../../entities/api.js";
 import { loadDocumentLocal, saveDocumentLocal } from "../../shared/document-local.js";
+import { DocumentMarkdown } from "../../shared/document-markdown.js";
 import { loadDraft, markSynced, saveDraft } from "../../shared/draft.js";
-import { Markdown } from "../../shared/markdown.js";
 import { useShellBreadcrumb } from "../../shell/layout.js";
 import { PublishDialog } from "../publishing/publish-dialog.js";
 
@@ -42,6 +58,26 @@ interface DocumentVersion {
   changeKind: string;
   createdAt: string;
   contentHash: string;
+}
+
+interface DiffBlock {
+  kind: "add" | "remove" | "modify" | "unchanged";
+  id: string;
+  label: string;
+  text: string;
+  oldText?: string;
+}
+
+interface VersionDiffResponse {
+  baseVersionId: string;
+  targetVersionId: string;
+  diff: {
+    added: number;
+    removed: number;
+    modified: number;
+    unchanged: number;
+    blocks: DiffBlock[];
+  };
 }
 
 interface LocalComment {
@@ -97,6 +133,7 @@ export function DocumentEditorPage() {
   const [aiModal, setAiModal] = useState(false);
   const [aiResult, setAiResult] = useState<{ patchId: string; proposed: string } | null>(null);
   const [publishOpen, setPublishOpen] = useState(false);
+  const [attachmentPublishAsset, setAttachmentPublishAsset] = useState<Asset | null>(null);
   const [chartModal, setChartModal] = useState(false);
   const [chartName, setChartName] = useState("");
   const [chartType, setChartType] = useState("bar");
@@ -105,6 +142,9 @@ export function DocumentEditorPage() {
   const [attachments, setAttachments] = useState<LocalAttachment[]>([]);
   const [attachmentUploading, setAttachmentUploading] = useState(false);
   const [charts, setCharts] = useState<LocalChart[]>([]);
+  const [linkPickerOpen, setLinkPickerOpen] = useState(false);
+  const [linkPickerMode, setLinkPickerMode] = useState<"link" | "image">("link");
+  const [linkQuery, setLinkQuery] = useState("");
   const [_dirty, setDirty] = useState(false);
   const draftBaseRef = useRef<string>("");
   const lockVersionRef = useRef(1);
@@ -122,10 +162,30 @@ export function DocumentEditorPage() {
     enabled: Boolean(id),
   });
 
+  const { data: linkPickerData } = useQuery<{ items: Asset[] }>({
+    queryKey: ["asset-picker", linkQuery, linkPickerMode],
+    queryFn: () =>
+      api<{ items: Asset[] }>("/assets", {
+        params: {
+          q: linkQuery || undefined,
+          type: linkPickerMode === "image" ? "file" : undefined,
+          limit: 20,
+        },
+      }),
+    enabled: linkPickerOpen,
+  });
+
   const { data: versions = [] } = useQuery<DocumentVersion[]>({
     queryKey: ["asset-versions", id],
     queryFn: () => api<DocumentVersion[]>(`/assets/${id}/versions`),
     enabled: Boolean(id),
+  });
+
+  const [diffVersionId, setDiffVersionId] = useState<string | null>(null);
+  const { data: diffData, isFetching: diffLoading } = useQuery<VersionDiffResponse>({
+    queryKey: ["asset-version-diff", id, diffVersionId],
+    queryFn: () => api<VersionDiffResponse>(`/assets/${id}/versions/${diffVersionId}/diff`),
+    enabled: Boolean(id && diffVersionId),
   });
 
   const { data: serverAttachments } = useQuery<LocalAttachment[]>({
@@ -276,6 +336,37 @@ export function DocumentEditorPage() {
     }
   }, []);
 
+  const _insertAtCursor = useCallback((text: string) => {
+    const view = viewRef.current;
+    if (view) {
+      const { from } = view.state.selection.main;
+      view.dispatch({
+        changes: { from, insert: text },
+        selection: { anchor: from + text.length },
+      });
+      view.focus();
+    } else {
+      setContent((current) => current + text);
+    }
+  }, []);
+
+  const openLinkPicker = (mode: "link" | "image") => {
+    setLinkPickerMode(mode);
+    setLinkQuery("");
+    setLinkPickerOpen(true);
+  };
+
+  const insertReference = (target: Asset) => {
+    const label = target.title || "未命名";
+    const snippet =
+      linkPickerMode === "image"
+        ? `![${label}](asset:${target.id})`
+        : `[${label}](asset:${target.id})`;
+    _insertAtCursor(snippet);
+    setLinkPickerOpen(false);
+    toast("success", linkPickerMode === "image" ? "图片引用已插入" : "文档引用已插入");
+  };
+
   const patchAsset = useCallback(
     (body: { title?: string; content?: { markdown: string } }): Promise<Asset> => {
       if (!id) return Promise.reject(new Error("文档不存在"));
@@ -325,11 +416,13 @@ export function DocumentEditorPage() {
   };
 
   const copyPublishedLink = async () => {
-    if (!asset?.publishedUrl) {
+    if (!asset) return;
+    const shortUrl = await publishedShortUrl(asset.id);
+    if (!shortUrl) {
       toast("info", "该文档尚未发布，请先发布后再复制链接");
       return;
     }
-    await navigator.clipboard?.writeText(asset.publishedUrl);
+    await navigator.clipboard?.writeText(shortUrl);
     toast("success", "链接已复制");
   };
 
@@ -362,8 +455,8 @@ export function DocumentEditorPage() {
 
   const handleAttachment = async (file: File | undefined) => {
     if (!file) return;
-    if (file.size > 200 * 1024 * 1024) {
-      toast("error", "附件不能超过 200MB");
+    if (file.size > 100 * 1024 * 1024) {
+      toast("error", "附件不能超过 100MB");
       return;
     }
     if (!id) return;
@@ -409,6 +502,18 @@ export function DocumentEditorPage() {
       anchor.click();
     } catch (error) {
       toast("error", error instanceof Error ? error.message : "附件下载失败");
+    }
+  };
+
+  const shareAttachment = async (attachment: LocalAttachment) => {
+    if (!attachment.assetId) {
+      toast("info", "请重新上传该本地附件后再分享");
+      return;
+    }
+    try {
+      setAttachmentPublishAsset(await api<Asset>(`/assets/${attachment.assetId}`));
+    } catch (error) {
+      toast("error", error instanceof Error ? error.message : "附件读取失败");
     }
   };
 
@@ -530,7 +635,7 @@ export function DocumentEditorPage() {
   );
 
   return (
-    <div>
+    <div className={`sg-document-editor-page ${tab === "内容编辑" ? "is-content-editing" : ""}`}>
       <div className="sg-row-between" style={{ marginBottom: 10 }}>
         <div className="sg-row" style={{ flex: 1, minWidth: 0 }}>
           <input
@@ -691,6 +796,15 @@ export function DocumentEditorPage() {
                     <button
                       type="button"
                       className="sg-asset-more"
+                      aria-label="分享附件"
+                      disabled={!attachment.assetId}
+                      onClick={() => void shareAttachment(attachment)}
+                    >
+                      <Share2 size={15} />
+                    </button>
+                    <button
+                      type="button"
+                      className="sg-asset-more"
                       aria-label="下载附件"
                       onClick={() => void downloadAttachment(attachment)}
                     >
@@ -734,34 +848,87 @@ export function DocumentEditorPage() {
                       {new Date(version.createdAt).toLocaleString("zh-CN", { hour12: false })}
                     </span>
                   </div>
-                  {version.id === asset?.currentVersionId ? (
-                    <span className="sg-badge sg-badge-success">当前版本</span>
-                  ) : (
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => restoreMutation.mutate(version.id)}
-                      disabled={restoreMutation.isPending}
-                    >
-                      <RefreshCcw size={14} /> 恢复
-                    </Button>
-                  )}
+                  <div className="sg-row" style={{ gap: 6 }}>
+                    {version.id !== asset?.currentVersionId && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() =>
+                          setDiffVersionId(diffVersionId === version.id ? null : version.id)
+                        }
+                        disabled={diffLoading}
+                      >
+                        <FileDiff size={14} /> 对比
+                      </Button>
+                    )}
+                    {version.id === asset?.currentVersionId ? (
+                      <span className="sg-badge sg-badge-success">当前版本</span>
+                    ) : (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => restoreMutation.mutate(version.id)}
+                        disabled={restoreMutation.isPending}
+                      >
+                        <RefreshCcw size={14} /> 恢复
+                      </Button>
+                    )}
+                  </div>
                 </div>
               ))}
+            </div>
+          )}
+          {diffData?.diff && (
+            <div className="sg-col sg-mt-sm">
+              <div className="sg-row-between">
+                <strong style={{ fontSize: 14 }}>
+                  结构化 Diff
+                  {(() => {
+                    const baseSeq = versions.find((v) => v.id === diffData.baseVersionId)?.sequence;
+                    const targetSeq = versions.find(
+                      (v) => v.id === diffData.targetVersionId,
+                    )?.sequence;
+                    return baseSeq !== undefined && targetSeq !== undefined
+                      ? ` · v${baseSeq} → v${targetSeq}`
+                      : "";
+                  })()}
+                </strong>
+                <span className="sg-subtle" style={{ fontSize: 12 }}>
+                  +{diffData.diff.added} −{diffData.diff.removed} ~{diffData.diff.modified}
+                </span>
+              </div>
+              <div className="sg-col sg-mt-sm" style={{ gap: 4 }}>
+                {diffData.diff.blocks
+                  .filter((block) => block.kind !== "unchanged")
+                  .map((block) => (
+                    <div
+                      key={block.id}
+                      className="sg-diff-block"
+                      data-kind={block.kind}
+                      style={{ padding: "6px 10px", borderRadius: 6, fontSize: 13 }}
+                    >
+                      <span className="sg-diff-label">{block.label || block.id}</span>
+                      {block.kind === "modify" ? (
+                        <span>
+                          <del style={{ opacity: 0.7 }}>{block.oldText}</del> →{" "}
+                          <ins style={{ textDecoration: "none", fontWeight: 600 }}>
+                            {block.text}
+                          </ins>
+                        </span>
+                      ) : (
+                        <span>{block.text || "（新增块）"}</span>
+                      )}
+                    </div>
+                  ))}
+              </div>
             </div>
           )}
         </Card>
       )}
 
       {tab === "内容编辑" && (
-        <div
-          className="sg-grid"
-          style={{ gridTemplateColumns: "200px 1fr 260px", alignItems: "start" }}
-        >
-          <Scrollbar
-            className="sg-editor-right"
-            style={{ width: "auto", maxHeight: "calc(100vh - 220px)" }}
-          >
+        <div className="sg-document-editor-layout">
+          <Scrollbar className="sg-document-editor-outline sg-editor-right">
             <h4>文档结构</h4>
             {headings.map((h, i) => (
               <div
@@ -779,8 +946,35 @@ export function DocumentEditorPage() {
             ))}
           </Scrollbar>
 
-          <div>
+          <section className="sg-document-editor-main">
             <div className="sg-editor-toolbar">
+              <Button size="sm" variant="ghost" onClick={() => openLinkPicker("link")}>
+                <Link2 size={14} /> 插入引用
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => openLinkPicker("image")}>
+                <ImagePlus size={14} /> 插入图片
+              </Button>
+              <span className="sg-subtle" style={{ marginLeft: 8 }}>
+                AI 选区处理：
+              </span>
+              {["rewrite", "summarize", "expand", "translate", "explain"].map((action) => (
+                <Button
+                  key={action}
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => aiAction.mutate(action)}
+                >
+                  {action === "rewrite"
+                    ? "改写"
+                    : action === "summarize"
+                      ? "精简"
+                      : action === "expand"
+                        ? "扩写"
+                        : action === "translate"
+                          ? "翻译"
+                          : "解释"}
+                </Button>
+              ))}
               <div className="mode">
                 <button
                   type="button"
@@ -804,49 +998,18 @@ export function DocumentEditorPage() {
                   预览
                 </button>
               </div>
-              <span className="sg-subtle" style={{ marginLeft: 8 }}>
-                AI 选区处理：
-              </span>
-              {["rewrite", "summarize", "expand", "translate", "explain"].map((action) => (
-                <Button
-                  key={action}
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => aiAction.mutate(action)}
-                >
-                  {action === "rewrite"
-                    ? "改写"
-                    : action === "summarize"
-                      ? "精简"
-                      : action === "expand"
-                        ? "扩写"
-                        : action === "translate"
-                          ? "翻译"
-                          : "解释"}
-                </Button>
-              ))}
             </div>
 
-            {mode === "preview" && (
-              <div
-                className="sg-editor sg-preview"
-                style={{ border: "1px solid var(--sg-border)", borderRadius: 10 }}
-              >
-                <Markdown source={content} />
-              </div>
-            )}
-            <div
-              className={`sg-editor ${mode === "split" ? "sg-split" : ""}`}
-              style={{ display: mode === "preview" ? "none" : undefined }}
-            >
-              <div ref={editorRef} style={{ minHeight: 520 }} />
-              {mode === "split" && (
-                <Scrollbar
-                  className="sg-preview"
-                  style={{ borderLeft: "1px solid var(--sg-border)" }}
-                >
-                  <Markdown source={content} />
-                </Scrollbar>
+            <div className={`sg-document-editor-workspace mode-${mode}`}>
+              <section className="sg-editor-pane sg-editor-source">
+                <div ref={editorRef} className="sg-code-editor-host" />
+              </section>
+              {mode !== "edit" && (
+                <section className="sg-editor-pane sg-editor-rendered">
+                  <Scrollbar className="sg-preview">
+                    <DocumentMarkdown source={content} />
+                  </Scrollbar>
+                </section>
               )}
             </div>
 
@@ -857,12 +1020,9 @@ export function DocumentEditorPage() {
               <span>共 {content.length} 字 · 自动保存已开启</span>
               <span>Markdown · 行 1 列 1</span>
             </div>
-          </div>
+          </section>
 
-          <Scrollbar
-            className="sg-editor-right"
-            style={{ width: "auto", maxHeight: "calc(100vh - 220px)" }}
-          >
+          <Scrollbar className="sg-document-editor-comments sg-editor-right">
             <h4>评论（{comments.length}）</h4>
             <div className="sg-subtle" style={{ fontSize: 12.5 }}>
               评论保存在当前浏览器，可用于记录编辑意见。
@@ -916,6 +1076,44 @@ export function DocumentEditorPage() {
           </Scrollbar>
         </div>
       )}
+
+      <Modal
+        open={linkPickerOpen}
+        onClose={() => setLinkPickerOpen(false)}
+        title={linkPickerMode === "image" ? "选择图片" : "插入文档引用"}
+        footer={
+          <div className="sg-row">
+            <Button onClick={() => setLinkPickerOpen(false)}>取消</Button>
+          </div>
+        }
+      >
+        <div className="sg-col" style={{ gap: 12 }}>
+          <input
+            className="sg-input"
+            value={linkQuery}
+            onChange={(event) => setLinkQuery(event.target.value)}
+            placeholder="搜索资产名称…"
+          />
+          <div className="sg-col" style={{ gap: 6, maxHeight: 360, overflow: "auto" }}>
+            {(linkPickerData?.items?.length ?? 0) === 0 ? (
+              <Empty title="没有找到资产" hint="换个关键词试试，或先在资产中心创建。" />
+            ) : (
+              linkPickerData?.items.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  className="sg-card"
+                  style={{ textAlign: "left", cursor: "pointer" }}
+                  onClick={() => insertReference(item)}
+                >
+                  <strong>{item.title || "未命名"}</strong>
+                  <div className="sg-subtle">{item.type}</div>
+                </button>
+              ))
+            )}
+          </div>
+        </div>
+      </Modal>
 
       <Modal
         open={chartModal}
@@ -981,6 +1179,13 @@ export function DocumentEditorPage() {
 
       {publishOpen && asset && (
         <PublishDialog asset={asset} open onClose={() => setPublishOpen(false)} />
+      )}
+      {attachmentPublishAsset && (
+        <PublishDialog
+          asset={attachmentPublishAsset}
+          open
+          onClose={() => setAttachmentPublishAsset(null)}
+        />
       )}
     </div>
   );
