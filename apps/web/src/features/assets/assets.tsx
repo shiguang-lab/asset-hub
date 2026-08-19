@@ -28,6 +28,7 @@ import {
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { getAuthSession } from "../../auth/session.js";
+import { useDeleteConfirm } from "../../shared/useDeleteConfirm";
 import { type Asset, api } from "../../entities/api.js";
 import { isOwnedBySession, ownerDisplayName } from "../../shared/owner.js";
 
@@ -152,6 +153,7 @@ function withinDays(iso: string, days: number): boolean {
 export function AssetsPage() {
   const navigate = useNavigate();
   const toast = useToast();
+  const { confirmDelete } = useDeleteConfirm();
   const queryClient = useQueryClient();
   const authSession = getAuthSession();
   const [type, setType] = useState("all");
@@ -189,6 +191,15 @@ export function AssetsPage() {
       void queryClient.invalidateQueries({ queryKey: ["home"] });
     },
   });
+
+  const confirmDeleteAssets = (targets: { id: string; title: string }[]) => {
+    const count = targets.length;
+    confirmDelete({
+      title: count > 1 ? `删除 ${count} 个资产？` : `删除资产「${targets[0]?.title}」？`,
+      content: "删除后可在回收站恢复。",
+      onConfirm: () => batchMutation.mutate({ action: "delete", ids: targets.map((t) => t.id) }),
+    });
+  };
 
   const all = useMemo(() => data ?? [], [data]);
 
@@ -460,7 +471,13 @@ export function AssetsPage() {
                     <Button
                       size="sm"
                       variant="danger"
-                      onClick={() => batchMutation.mutate({ action: "delete", ids: [...selected] })}
+                      onClick={() =>
+                        confirmDeleteAssets(
+                          all
+                            .filter((a) => selected.has(a.id))
+                            .map((a) => ({ id: a.id, title: a.title })),
+                        )
+                      }
                     >
                       删除
                     </Button>
@@ -598,7 +615,7 @@ export function AssetsPage() {
                                     type="button"
                                     className="danger"
                                     onClick={() =>
-                                      batchMutation.mutate({ action: "delete", ids: [asset.id] })
+                                      confirmDeleteAssets([{ id: asset.id, title: asset.title }])
                                     }
                                   >
                                     删除

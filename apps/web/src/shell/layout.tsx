@@ -63,16 +63,43 @@ import {
   type HomeData,
   type SearchResult,
   uploadFile,
+  uploadFiles,
 } from "../entities/api.js";
 import { isOwnedBySession, ownerDisplayName } from "../shared/owner.js";
+import {
+  type ImportConflict,
+  ImportConflictModal,
+  type ImportResolutionValue,
+} from "../shared/ImportConflictModal.js";
 import { useSse } from "../shared/sse.js";
 
 const { Header, Sider, Content } = Layout;
 
 type ShellBreadcrumb = { section: string; current?: string };
 type SetShellBreadcrumb = Dispatch<SetStateAction<ShellBreadcrumb | null>>;
+export type ImportedDocumentEntry = { asset: Asset; path: string };
+export type DocumentImportResult = {
+  assets: Asset[];
+  entries: ImportedDocumentEntry[];
+  folders: string[];
+};
+
+export function isDocumentImportResult(
+  value: Asset | DocumentImportResult,
+): value is DocumentImportResult {
+  return "assets" in value && Array.isArray(value.assets);
+}
+
+export type DocumentImportHandler = (result: DocumentImportResult) => void;
+
+type ShellDocumentActions = {
+  openDocumentFilePicker: () => void;
+  openDocumentFolderPicker: () => void;
+  registerImportHandler: (handler: DocumentImportHandler) => () => void;
+};
 
 const ShellBreadcrumbContext = createContext<SetShellBreadcrumb | null>(null);
+const ShellDocumentActionsContext = createContext<ShellDocumentActions | null>(null);
 const BRAND_TITLE = "知序";
 
 export function useShellBreadcrumb(section: string, current?: string) {
@@ -82,6 +109,10 @@ export function useShellBreadcrumb(section: string, current?: string) {
     setBreadcrumb({ section, current });
     return () => setBreadcrumb(null);
   }, [current, section, setBreadcrumb]);
+}
+
+export function useShellDocumentActions(): ShellDocumentActions | null {
+  return useContext(ShellDocumentActionsContext);
 }
 
 const useShellStyles = createStyles(() => ({
@@ -218,10 +249,24 @@ export function Shell() {
   const contextCreate = CONTEXT_CREATE_ACTIONS.find((action) =>
     action.match.test(location.pathname),
   );
-  const showDocumentImport = location.pathname === "/documents";
   const showCreateMenu = location.pathname === "/";
   const uploadInputRef = useRef<HTMLInputElement>(null);
-  const documentImportInputRef = useRef<HTMLInputElement>(null);
+  const documentFileInputRef = useRef<HTMLInputElement>(null);
+  const documentFolderInputRef = useRef<HTMLInputElement>(null);
+  const importHandlersRef = useRef<DocumentImportHandler[]>([]);
+  const documentActions = useMemo<ShellDocumentActions>(
+    () => ({
+      openDocumentFilePicker: () => documentFileInputRef.current?.click(),
+      openDocumentFolderPicker: () => documentFolderInputRef.current?.click(),
+      registerImportHandler: (handler) => {
+        importHandlersRef.current.push(handler);
+        return () => {
+          importHandlersRef.current = importHandlersRef.current.filter((h) => h !== handler);
+        };
+      },
+    }),
+    [],
+  );
 
   const activeKey = useMemo(() => {
     const match = NAV.filter((item) => item.to !== "/").find((item) =>
@@ -300,12 +345,74 @@ export function Shell() {
     }
   };
 
-  const importDocument = async (file: File | undefined) => {
-    if (!file) return;
+  const conflictResolverRef = useRef<{
+    resolve: (resolutions: Record<string, ImportResolutionValue> | null) => void;
+  } | null>(null);
+  const [conflictModal, setConflictModal] = useState<{ conflicts: ImportConflict[] } | null>(null);
+
+  const requestConflictResolution = (conflicts: ImportConflict[]) =>
+    new Promise<Record<string, ImportResolutionValue> | null>((resolve) => {
+      conflictResolverRef.current = { resolve };
+      setConflictModal({ conflicts });
+    });
+
+  const handleConflictResolve = (resolutions: Record<string, ImportResolutionValue> | null) => {
+    conflictResolverRef.current?.resolve(resolutions);
+    conflictResolverRef.current = null;
+    setConflictModal(null);
+  };
+
+  const computeCandidateTitles = (files: File[]): string[] => {
+    const titles: string[] = [];
+    for (const file of files) {
+      const rel = (file as File & { webkitRelativePath?: string }).webkitRelativePath;
+      const name = rel ? rel.split("/").pop() ?? file.name : file.name;
+      if (!/\.(?:md|markdown|txt)$/i.test(name)) continue;
+      const title = name.replace(/\.(?:md|markdown|txt)$/i, "").trim() || "未命名文档";
+      titles.push(title);
+    }
+    return titles;
+  };
+
+  const importDocument = async (files: File[]) => {
+    if (files.length === 0) return;
     try {
-      const asset = await uploadFile<Asset>("/assets/documents/import", file);
+      const titles = computeCandidateTitles(files);
+      let resolutions: Record<string, ImportResolutionValue> = {};
+      if (titles.length > 0) {
+        const { existing } = await api<{ existing: Record<string, string> }>(
+          "/assets/documents/import/check",
+          { method: "POST", body: { titles } },
+        );
+        const conflicts = titles
+          .filter((title) => existing[title])
+          .map((title) => ({ title, existingId: existing[title] }));
+        if (conflicts.length > 0) {
+          const chosen = await requestConflictResolution(conflicts);
+          if (!chosen) return;
+          resolutions = chosen;
+        }
+      }
+      const query =
+        Object.keys(resolutions).length > 0
+          ? `?resolutions=${encodeURIComponent(JSON.stringify(resolutions))}`
+          : "";
+      const result = await uploadFiles<Asset | DocumentImportResult>(
+        `/assets/documents/import${query}`,
+        files,
+      );
+      if (isDocumentImportResult(result)) {
+        for (const handler of importHandlersRef.current) {
+          handler(result);
+        }
+        toast(
+          "success",
+          result.assets.length > 1 ? `已导入 ${result.assets.length} 个文档` : "文档已导入",
+        );
+        return;
+      }
       toast("success", "文档已导入");
-      navigate(`/documents/${asset.id}`);
+      navigate(`/documents/${result.id}`);
     } catch (error) {
       toast("error", error instanceof Error ? error.message : "文档导入失败");
     }
@@ -313,205 +420,220 @@ export function Shell() {
 
   return (
     <ShellBreadcrumbContext.Provider value={setPageBreadcrumb}>
-      <Layout className={cx("sg-shell", styles.root)}>
-        <input
-          ref={uploadInputRef}
-          type="file"
-          hidden
-          onChange={(event) => {
-            void uploadAsset(event.target.files?.[0]);
-            event.target.value = "";
-          }}
-        />
-        <input
-          ref={documentImportInputRef}
-          type="file"
-          accept=".md,.markdown,.txt,.zip,text/markdown,text/plain,application/zip"
-          hidden
-          onChange={(event) => {
-            void importDocument(event.target.files?.[0]);
-            event.target.value = "";
-          }}
-        />
-        <Sider width={266} className="sg-sidebar" theme="dark">
-          <Scrollbar className={styles.viewport}>
-            <Flex vertical style={{ minHeight: "100%" }}>
-              <Link to="/" className="sg-sidebar-logo">
-                <span className="sg-brand-mark">
-                  <Blocks size={18} />
-                </span>
-                <span className="sg-sidebar-logo-copy">
-                  <b>知序</b>
-                  <small>AI 知识与创作空间</small>
-                </span>
-              </Link>
-              <Menu
-                mode="inline"
-                items={menuItems}
-                selectedKeys={[activeKey]}
-                onClick={onMenuClick}
-                className="sg-nav"
-                style={{ background: "transparent", border: "none", flex: 1 }}
-              />
-              <div className="sg-sidebar-footer">
-                <Link
-                  to="/settings"
-                  className={cx(
-                    "sg-sidebar-settings",
-                    location.pathname.startsWith("/settings") && "active",
-                  )}
-                >
-                  <Settings size={17} />
-                  <span>设置</span>
-                  <ChevronRight size={15} />
-                </Link>
-                <Link to="/billing" className="sg-credits-box">
-                  <div className="sg-credits-head">
-                    <span className="sg-credits-title">
-                      <CircleDollarSign size={13} /> AI Credits
-                    </span>
-                    <span className="sg-credits-percent">{Math.round(creditUsagePercent)}%</span>
-                  </div>
-                  <div className="sg-credits-progress">
-                    <span style={{ width: `${creditUsagePercent}%` }} />
-                  </div>
-                </Link>
-              </div>
-            </Flex>
-          </Scrollbar>
-        </Sider>
-
-        <Layout className={styles.main}>
-          <Header className={cx("sg-header", paletteOpen && "search-mode")}>
-            <div className="sg-breadcrumb">
-              {breadcrumbSection && (
-                <span className="sg-breadcrumb-section">{breadcrumbSection}</span>
-              )}
-              {breadcrumbSection && breadcrumbCurrent && (
-                <>
-                  <ChevronRight className="sg-breadcrumb-separator" size={15} />
-                  <strong className="sg-breadcrumb-current">{breadcrumbCurrent}</strong>
-                </>
-              )}
-            </div>
-            <div className="sg-header-tools">
-              <Input
-                className="sg-search"
-                value={searchQuery}
-                onFocus={() => setPaletteOpen(true)}
-                onClick={() => setPaletteOpen(true)}
-                onChange={(event) => {
-                  setSearchQuery(event.target.value);
-                  setPaletteOpen(true);
-                }}
-                placeholder="搜索模板、任务、文档…"
-                prefix={<Search size={15} />}
-                suffix={
-                  <span className={cx("sg-search-suffix", paletteOpen && "is-active")}>
-                    <button
-                      type="button"
-                      aria-label="关闭搜索"
-                      tabIndex={paletteOpen ? 0 : -1}
-                      onMouseDown={(event) => event.preventDefault()}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        setPaletteOpen(false);
-                      }}
-                    >
-                      <X size={15} />
-                    </button>
-                    <span className="sg-kbd">⌘K</span>
+      <ShellDocumentActionsContext.Provider value={documentActions}>
+        <Layout className={cx("sg-shell", styles.root)}>
+          <input
+            ref={uploadInputRef}
+            type="file"
+            hidden
+            onChange={(event) => {
+              void uploadAsset(event.target.files?.[0]);
+              event.target.value = "";
+            }}
+          />
+          <input
+            ref={documentFileInputRef}
+            type="file"
+            multiple
+            accept=".md,.markdown,.txt,.zip,text/markdown,text/plain,application/zip"
+            hidden
+            onChange={(event) => {
+              void importDocument(Array.from(event.target.files ?? []));
+              event.target.value = "";
+            }}
+          />
+          <input
+            ref={documentFolderInputRef}
+            type="file"
+            multiple
+            // Chromium exposes a directory picker through this standard attribute.
+            {...({ webkitdirectory: "" } as Record<string, string>)}
+            hidden
+            onChange={(event) => {
+              void importDocument(Array.from(event.target.files ?? []));
+              event.target.value = "";
+            }}
+          />
+          <Sider width={266} className="sg-sidebar" theme="dark">
+            <Scrollbar className={styles.viewport}>
+              <Flex vertical style={{ minHeight: "100%" }}>
+                <Link to="/" className="sg-sidebar-logo">
+                  <span className="sg-brand-mark">
+                    <Blocks size={18} />
                   </span>
-                }
-              />
-              <Space size={12} className="sg-header-actions">
-                {canWrite && showDocumentImport ? (
-                  <Button
-                    className="sg-document-import"
-                    type="text"
-                    icon={<CloudUpload size={17} />}
-                    onClick={() => documentImportInputRef.current?.click()}
-                    aria-label="导入 Markdown 文档"
-                    title="导入 Markdown / ZIP 文档（ZIP 内的图片与资源会自动提取上传）"
-                  />
-                ) : null}
-                {canWrite && contextCreate ? (
-                  <Button
-                    className="sg-create-button is-context"
-                    type="primary"
-                    icon={<Plus size={17} />}
-                    onClick={() => navigate(contextCreate.target)}
+                  <span className="sg-sidebar-logo-copy">
+                    <b>知序</b>
+                    <small>AI 知识与创作空间</small>
+                  </span>
+                </Link>
+                <Menu
+                  mode="inline"
+                  items={menuItems}
+                  selectedKeys={[activeKey]}
+                  onClick={onMenuClick}
+                  className="sg-nav"
+                  style={{ background: "transparent", border: "none", flex: 1 }}
+                />
+                <div className="sg-sidebar-footer">
+                  <Link
+                    to="/settings"
+                    className={cx(
+                      "sg-sidebar-settings",
+                      location.pathname.startsWith("/settings") && "active",
+                    )}
                   >
-                    {contextCreate.label}
-                  </Button>
-                ) : canWrite && showCreateMenu ? (
+                    <Settings size={17} />
+                    <span>设置</span>
+                    <ChevronRight size={15} />
+                  </Link>
+                  <Link to="/billing" className="sg-credits-box">
+                    <div className="sg-credits-head">
+                      <span className="sg-credits-title">
+                        <CircleDollarSign size={13} /> AI Credits
+                      </span>
+                      <span className="sg-credits-percent">{Math.round(creditUsagePercent)}%</span>
+                    </div>
+                    <div className="sg-credits-progress">
+                      <span style={{ width: `${creditUsagePercent}%` }} />
+                    </div>
+                  </Link>
+                </div>
+              </Flex>
+            </Scrollbar>
+          </Sider>
+
+          <Layout className={styles.main}>
+            <Header className={cx("sg-header", paletteOpen && "search-mode")}>
+              <div className="sg-breadcrumb">
+                {breadcrumbSection && (
+                  <span className="sg-breadcrumb-section">{breadcrumbSection}</span>
+                )}
+                {breadcrumbSection && breadcrumbCurrent && (
+                  <>
+                    <ChevronRight className="sg-breadcrumb-separator" size={15} />
+                    <strong className="sg-breadcrumb-current">{breadcrumbCurrent}</strong>
+                  </>
+                )}
+              </div>
+              <div className="sg-header-tools">
+                <Input
+                  className="sg-search"
+                  value={searchQuery}
+                  onFocus={() => setPaletteOpen(true)}
+                  onClick={() => setPaletteOpen(true)}
+                  onChange={(event) => {
+                    setSearchQuery(event.target.value);
+                    setPaletteOpen(true);
+                  }}
+                  placeholder="搜索模板、任务、文档…"
+                  prefix={<Search size={15} />}
+                  suffix={
+                    <span className={cx("sg-search-suffix", paletteOpen && "is-active")}>
+                      <button
+                        type="button"
+                        aria-label="关闭搜索"
+                        tabIndex={paletteOpen ? 0 : -1}
+                        onMouseDown={(event) => event.preventDefault()}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          setPaletteOpen(false);
+                        }}
+                      >
+                        <X size={15} />
+                      </button>
+                      <span className="sg-kbd">⌘K</span>
+                    </span>
+                  }
+                />
+                <Space size={12} className="sg-header-actions">
+                  {canWrite && contextCreate && !location.pathname.startsWith("/documents") ? (
+                    <Button
+                      className="sg-create-button is-context"
+                      type="primary"
+                      icon={<Plus size={17} />}
+                      onClick={() => navigate(contextCreate.target)}
+                    >
+                      {contextCreate.label}
+                    </Button>
+                  ) : canWrite && showCreateMenu ? (
+                    <Dropdown
+                      trigger={["click"]}
+                      placement="bottomRight"
+                      popupRender={() => (
+                        <CreatePopover
+                          onSelect={onCreate}
+                          onBrowse={() => navigate("/templates")}
+                        />
+                      )}
+                      rootClassName="sg-create-dropdown"
+                    >
+                      <Button className="sg-create-button" type="primary" icon={<Plus size={17} />}>
+                        新建 <ChevronDown size={14} />
+                      </Button>
+                    </Dropdown>
+                  ) : null}
+                  {authSession && <SpaceSwitcher session={authSession} />}
                   <Dropdown
                     trigger={["click"]}
                     placement="bottomRight"
-                    popupRender={() => (
-                      <CreatePopover onSelect={onCreate} onBrowse={() => navigate("/templates")} />
-                    )}
-                    rootClassName="sg-create-dropdown"
+                    menu={{ items: userMenuItems, onClick: onUserMenuClick }}
+                    rootClassName="sg-user-dropdown"
                   >
-                    <Button className="sg-create-button" type="primary" icon={<Plus size={17} />}>
-                      新建 <ChevronDown size={14} />
-                    </Button>
+                    <button
+                      type="button"
+                      className="sg-header-user sg-search-profile"
+                      aria-label={`${displayName}，打开用户菜单`}
+                      title={displayName}
+                    >
+                      <span className="sg-header-account-avatar" aria-hidden="true">
+                        {accountInitial(displayName)}
+                      </span>
+                    </button>
                   </Dropdown>
-                ) : null}
-                {authSession && <SpaceSwitcher session={authSession} />}
-                <Dropdown
-                  trigger={["click"]}
-                  placement="bottomRight"
-                  menu={{ items: userMenuItems, onClick: onUserMenuClick }}
-                  rootClassName="sg-user-dropdown"
-                >
-                  <button
-                    type="button"
-                    className="sg-header-user sg-search-profile"
-                    aria-label={`${displayName}，打开用户菜单`}
-                    title={displayName}
-                  >
-                    <span className="sg-header-account-avatar" aria-hidden="true">
-                      {accountInitial(displayName)}
-                    </span>
-                  </button>
-                </Dropdown>
-                <Badge count={home?.unreadNotifications ?? 0} size="small">
-                  <Button
-                    className="sg-header-notifications"
-                    type="text"
-                    icon={<Bell size={18} />}
-                    onClick={() => navigate("/notifications")}
-                    aria-label="通知"
-                  />
-                </Badge>
-              </Space>
-            </div>
-          </Header>
-          <Content className={cx(styles.content, "sg-content-shell")}>
-            <Scrollbar
-              className={cx(
-                styles.viewport,
-                !paletteOpen &&
-                  /^\/documents\/[^/]+/.test(location.pathname) &&
-                  "sg-content-viewport-document-editor",
-              )}
-            >
-              <div className={cx("sg-content", paletteOpen && "sg-search-content")}>
-                {paletteOpen ? (
-                  <SearchWorkspace
-                    query={searchQuery}
-                    onQueryChange={setSearchQuery}
-                    onClose={() => setPaletteOpen(false)}
-                  />
-                ) : (
-                  <Outlet />
-                )}
+                  <Badge count={home?.unreadNotifications ?? 0} size="small">
+                    <Button
+                      className="sg-header-notifications"
+                      type="text"
+                      icon={<Bell size={18} />}
+                      onClick={() => navigate("/notifications")}
+                      aria-label="通知"
+                    />
+                  </Badge>
+                </Space>
               </div>
-            </Scrollbar>
-          </Content>
+            </Header>
+            <Content className={cx(styles.content, "sg-content-shell")}>
+              <Scrollbar
+                className={cx(
+                  styles.viewport,
+                  !paletteOpen &&
+                    /^\/documents\/[^/]+/.test(location.pathname) &&
+                    (location.pathname.endsWith("/preview")
+                      ? "sg-content-viewport-document-preview"
+                      : "sg-content-viewport-document-editor"),
+                )}
+              >
+                <div className={cx("sg-content", paletteOpen && "sg-search-content")}>
+                  {paletteOpen ? (
+                    <SearchWorkspace
+                      query={searchQuery}
+                      onQueryChange={setSearchQuery}
+                      onClose={() => setPaletteOpen(false)}
+                    />
+                  ) : (
+                    <Outlet />
+                  )}
+                </div>
+              </Scrollbar>
+            </Content>
+          </Layout>
         </Layout>
-      </Layout>
+      </ShellDocumentActionsContext.Provider>
+      <ImportConflictModal
+        open={conflictModal !== null}
+        conflicts={conflictModal?.conflicts ?? []}
+        onResolve={handleConflictResolve}
+      />
     </ShellBreadcrumbContext.Provider>
   );
 }
@@ -935,7 +1057,7 @@ function SearchWorkspace({
               key={item.id}
               onClick={() => setCategory(item.id)}
             >
-              <TabIcon size={14} />
+              <TabIcon size={18} />
               {item.label}
               <span>{count}</span>
             </button>
@@ -1000,7 +1122,7 @@ function SearchWorkspace({
           />
           <i />
         </label>
-        <div>
+        <div className="sg-global-search-sort">
           <span>排序：</span>
           <Select
             value={sort}

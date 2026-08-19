@@ -1,6 +1,7 @@
 package platform
 
 import (
+	"bytes"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
@@ -130,6 +131,37 @@ func (c Config) FetchReleaseFile(publishID, releaseID, path string) (body []byte
 type UnlockResult struct {
 	Token     string `json:"token"`
 	PublishID string
+}
+
+type PresenceResult struct {
+	VisitorCount int              `json:"visitorCount"`
+	Viewers      []map[string]any `json:"viewers"`
+}
+
+func (c Config) RecordPresence(payload any) (PresenceResult, error) {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return PresenceResult{}, err
+	}
+	req, err := http.NewRequest(http.MethodPost, c.APIBase+"/internal/v1/presence", bytes.NewReader(body))
+	if err != nil {
+		return PresenceResult{}, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Internal-Token", c.GatewayToken)
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return PresenceResult{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return PresenceResult{}, fmt.Errorf("presence status %d", resp.StatusCode)
+	}
+	var result PresenceResult
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&result); err != nil {
+		return PresenceResult{}, err
+	}
+	return result, nil
 }
 
 func (c Config) Unlock(slug, password string) (UnlockResult, error) {

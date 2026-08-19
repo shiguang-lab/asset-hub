@@ -39,6 +39,7 @@ export const router = createBrowserRouter([
       { path: "assets/:id", element: <AssetDetailPage /> },
       { path: "documents", element: <DocumentsPage /> },
       { path: "documents/new", element: <DocumentEditorPage /> },
+      { path: "documents/:id/preview", element: <AssetDetailPage /> },
       { path: "documents/:id", element: <DocumentEditorPage /> },
       { path: "html/new", element: <HtmlEditorPage /> },
       { path: "html/:id", element: <HtmlEditorPage /> },

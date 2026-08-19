@@ -29,6 +29,7 @@ import {
 import { DocumentMarkdown } from "../../shared/document-markdown.js";
 import { SandboxHtmlPreview } from "../../shared/sandbox-preview.js";
 import { PublishDialog } from "../publishing/publish-dialog.js";
+import { useDeleteConfirm } from "../../shared/useDeleteConfirm";
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -39,6 +40,7 @@ function formatBytes(bytes: number): string {
 export function AssetDetailPage() {
   const { id } = useParams<{ id: string }>();
   const toast = useToast();
+  const { confirmDelete } = useDeleteConfirm();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const [tab, setTab] = useState("content");
@@ -146,8 +148,8 @@ export function AssetDetailPage() {
   const content = asset.content;
 
   return (
-    <div>
-      <div className="sg-row-between sg-mb">
+    <div className="sg-asset-detail-page">
+      <div className="sg-row-between sg-mb sg-asset-detail-header">
         <div>
           <h1 className="sg-h1" style={{ marginTop: 0 }}>
             {asset.title}
@@ -214,7 +216,16 @@ export function AssetDetailPage() {
               </Button>
             ))}
           {canManageAsset && (
-            <Button variant="danger" onClick={() => deleteAsset.mutate()}>
+            <Button
+              variant="danger"
+              onClick={() =>
+                confirmDelete({
+                  title: `删除资产「${asset.title}」？`,
+                  content: "删除后可在回收站恢复。",
+                  onConfirm: () => deleteAsset.mutate(),
+                })
+              }
+            >
               删除
             </Button>
           )}
@@ -232,195 +243,197 @@ export function AssetDetailPage() {
         onChange={setTab}
       />
 
-      {tab === "content" && (
-        <Card>
-          {content?.kind === "blob" || asset.type === "file" ? (
-            <div className="sg-col" style={{ gap: 10 }}>
-              <strong>{asset.title}</strong>
-              <span className="sg-subtle">
-                {content?.refs?.[0]?.mediaType ?? "application/octet-stream"}
-                {content?.refs?.[0]?.size !== undefined
-                  ? ` · ${formatBytes(content.refs[0].size)}`
-                  : ""}
-              </span>
-              <Button
-                variant="primary"
-                onClick={() =>
-                  void downloadFile(`/assets/${asset.id}/download`, asset.title).catch((error) =>
-                    toast("error", error instanceof Error ? error.message : "下载失败"),
-                  )
-                }
-              >
-                <Download size={15} /> 下载文件
-              </Button>
-            </div>
-          ) : content?.kind === "markdown" || asset.type === "report" ? (
-            <DocumentMarkdown source={content?.text ?? ""} />
-          ) : content?.kind === "html" ? (
-            <SandboxHtmlPreview source={content?.text ?? ""} />
-          ) : content?.kind === "manifest" ? (
-            <Scrollbar>
-              <pre style={{ fontSize: 12 }}>{JSON.stringify(content.manifest, null, 2)}</pre>
-            </Scrollbar>
-          ) : (
-            <Empty title="没有内容" />
-          )}
-        </Card>
-      )}
+      <div className="sg-asset-detail-content">
+        {tab === "content" && (
+          <Card>
+            {content?.kind === "blob" || asset.type === "file" ? (
+              <div className="sg-col" style={{ gap: 10 }}>
+                <strong>{asset.title}</strong>
+                <span className="sg-subtle">
+                  {content?.refs?.[0]?.mediaType ?? "application/octet-stream"}
+                  {content?.refs?.[0]?.size !== undefined
+                    ? ` · ${formatBytes(content.refs[0].size)}`
+                    : ""}
+                </span>
+                <Button
+                  variant="primary"
+                  onClick={() =>
+                    void downloadFile(`/assets/${asset.id}/download`, asset.title).catch((error) =>
+                      toast("error", error instanceof Error ? error.message : "下载失败"),
+                    )
+                  }
+                >
+                  <Download size={15} /> 下载文件
+                </Button>
+              </div>
+            ) : content?.kind === "markdown" || asset.type === "report" ? (
+              <DocumentMarkdown source={content?.text ?? ""} />
+            ) : content?.kind === "html" ? (
+              <SandboxHtmlPreview source={content?.text ?? ""} />
+            ) : content?.kind === "manifest" ? (
+              <Scrollbar>
+                <pre style={{ fontSize: 12 }}>{JSON.stringify(content.manifest, null, 2)}</pre>
+              </Scrollbar>
+            ) : (
+              <Empty title="没有内容" />
+            )}
+          </Card>
+        )}
 
-      {tab === "info" && (
-        <Card>
-          <Table>
-            <tbody>
-              <tr>
-                <td>ID</td>
-                <td>
-                  <code>{asset.id}</code>
-                </td>
-              </tr>
-              <tr>
-                <td>类型</td>
-                <td>{asset.type}</td>
-              </tr>
-              <tr>
-                <td>可见性</td>
-                <td>{asset.visibility}</td>
-              </tr>
-              <tr>
-                <td>来源</td>
-                <td>{asset.sourceType}</td>
-              </tr>
-              <tr>
-                <td>创建时间</td>
-                <td>{formatDate(asset.createdAt)}</td>
-              </tr>
-              <tr>
-                <td>更新时间</td>
-                <td>{formatDate(asset.updatedAt)}</td>
-              </tr>
-              <tr>
-                <td>版本号</td>
-                <td>v{asset.lockVersion}</td>
-              </tr>
-              <tr>
-                <td>当前版本</td>
-                <td>
-                  <code>{asset.currentVersionId}</code>
-                </td>
-              </tr>
-              {canManageAsset && (
+        {tab === "info" && (
+          <Card>
+            <Table>
+              <tbody>
                 <tr>
-                  <td>共享权限</td>
+                  <td>ID</td>
                   <td>
-                    {(acl?.acl.length ?? 0) === 0 ? (
-                      <span className="sg-subtle">仅所有者可见</span>
-                    ) : (
-                      <div className="sg-col" style={{ gap: 4 }}>
-                        {acl?.acl.map((entry) => (
-                          <div key={entry.principal_id} className="sg-row">
-                            <span className="sg-badge">{entry.principal_id}</span>
-                            <span className="sg-badge sg-badge-accent">{entry.role}</span>
-                            <Button
-                              size="sm"
-                              variant="danger"
-                              onClick={() => revokeShare.mutate(entry.principal_id)}
-                            >
-                              取消
-                            </Button>
-                          </div>
-                        ))}
-                      </div>
-                    )}
+                    <code>{asset.id}</code>
                   </td>
                 </tr>
-              )}
-            </tbody>
-          </Table>
-        </Card>
-      )}
-
-      {tab === "versions" && (
-        <Card>
-          <Table>
-            <thead>
-              <tr>
-                <th>版本</th>
-                <th>变更类型</th>
-                <th>时间</th>
-                <th>内容哈希</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {(versions ?? []).map((v) => (
-                <tr key={v.id}>
-                  <td>v{v.sequence}</td>
-                  <td>{v.changeKind}</td>
-                  <td>{formatDate(v.createdAt)}</td>
+                <tr>
+                  <td>类型</td>
+                  <td>{asset.type}</td>
+                </tr>
+                <tr>
+                  <td>可见性</td>
+                  <td>{asset.visibility}</td>
+                </tr>
+                <tr>
+                  <td>来源</td>
+                  <td>{asset.sourceType}</td>
+                </tr>
+                <tr>
+                  <td>创建时间</td>
+                  <td>{formatDate(asset.createdAt)}</td>
+                </tr>
+                <tr>
+                  <td>更新时间</td>
+                  <td>{formatDate(asset.updatedAt)}</td>
+                </tr>
+                <tr>
+                  <td>版本号</td>
+                  <td>v{asset.lockVersion}</td>
+                </tr>
+                <tr>
+                  <td>当前版本</td>
                   <td>
-                    <code style={{ fontSize: 11 }}>{v.contentHash.slice(0, 18)}…</code>
+                    <code>{asset.currentVersionId}</code>
                   </td>
-                  <td>
-                    {canManageAsset && (
+                </tr>
+                {canManageAsset && (
+                  <tr>
+                    <td>共享权限</td>
+                    <td>
+                      {(acl?.acl.length ?? 0) === 0 ? (
+                        <span className="sg-subtle">仅所有者可见</span>
+                      ) : (
+                        <div className="sg-col" style={{ gap: 4 }}>
+                          {acl?.acl.map((entry) => (
+                            <div key={entry.principal_id} className="sg-row">
+                              <span className="sg-badge">{entry.principal_id}</span>
+                              <span className="sg-badge sg-badge-accent">{entry.role}</span>
+                              <Button
+                                size="sm"
+                                variant="danger"
+                                onClick={() => revokeShare.mutate(entry.principal_id)}
+                              >
+                                取消
+                              </Button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </Table>
+          </Card>
+        )}
+
+        {tab === "versions" && (
+          <Card>
+            <Table>
+              <thead>
+                <tr>
+                  <th>版本</th>
+                  <th>变更类型</th>
+                  <th>时间</th>
+                  <th>内容哈希</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {(versions ?? []).map((v) => (
+                  <tr key={v.id}>
+                    <td>v{v.sequence}</td>
+                    <td>{v.changeKind}</td>
+                    <td>{formatDate(v.createdAt)}</td>
+                    <td>
+                      <code style={{ fontSize: 11 }}>{v.contentHash.slice(0, 18)}…</code>
+                    </td>
+                    <td>
+                      {canManageAsset && (
+                        <Button
+                          size="sm"
+                          onClick={() =>
+                            api(`/assets/${id}/versions/${v.id}/restore`, { method: "POST" }).then(
+                              () => toast("success", "已恢复该版本"),
+                            )
+                          }
+                        >
+                          恢复
+                        </Button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </Table>
+          </Card>
+        )}
+
+        {tab === "relations" && (
+          <Card>
+            {(relations?.length ?? 0) === 0 ? (
+              <Empty title="暂无关联" hint="由文档生成演示、报告引用来源等操作会在这里建立关系。" />
+            ) : (
+              <div className="sg-col">
+                {relations?.map(({ relation, asset: target, direction }) => (
+                  <div key={relation.targetAssetId} className="sg-row-between">
+                    <div className="sg-row">
+                      <span className={`sg-badge ${direction === "out" ? "" : "sg-badge-success"}`}>
+                        {direction === "out" ? "→ 输出" : "← 来源"}
+                      </span>
+                      <span className="sg-badge sg-badge-accent">{relation.relationType}</span>
+                      <strong>{target?.title ?? relation.targetAssetId}</strong>
+                      {target && <span className="sg-subtle">{target.type}</span>}
+                    </div>
+                    {target && (
                       <Button
                         size="sm"
-                        onClick={() =>
-                          api(`/assets/${id}/versions/${v.id}/restore`, { method: "POST" }).then(
-                            () => toast("success", "已恢复该版本"),
-                          )
-                        }
+                        onClick={() => {
+                          const href =
+                            target.type === "document" || target.type === "report"
+                              ? `/documents/${target.id}`
+                              : target.type === "dataset"
+                                ? `/datasets/${target.id}`
+                                : target.type === "presentation"
+                                  ? `/presentations/${target.id}`
+                                  : `/assets/${target.id}`;
+                          navigate(href);
+                        }}
                       >
-                        恢复
+                        打开
                       </Button>
                     )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </Table>
-        </Card>
-      )}
-
-      {tab === "relations" && (
-        <Card>
-          {(relations?.length ?? 0) === 0 ? (
-            <Empty title="暂无关联" hint="由文档生成演示、报告引用来源等操作会在这里建立关系。" />
-          ) : (
-            <div className="sg-col">
-              {relations?.map(({ relation, asset: target, direction }) => (
-                <div key={relation.targetAssetId} className="sg-row-between">
-                  <div className="sg-row">
-                    <span className={`sg-badge ${direction === "out" ? "" : "sg-badge-success"}`}>
-                      {direction === "out" ? "→ 输出" : "← 来源"}
-                    </span>
-                    <span className="sg-badge sg-badge-accent">{relation.relationType}</span>
-                    <strong>{target?.title ?? relation.targetAssetId}</strong>
-                    {target && <span className="sg-subtle">{target.type}</span>}
                   </div>
-                  {target && (
-                    <Button
-                      size="sm"
-                      onClick={() => {
-                        const href =
-                          target.type === "document" || target.type === "report"
-                            ? `/documents/${target.id}`
-                            : target.type === "dataset"
-                              ? `/datasets/${target.id}`
-                              : target.type === "presentation"
-                                ? `/presentations/${target.id}`
-                                : `/assets/${target.id}`;
-                        navigate(href);
-                      }}
-                    >
-                      打开
-                    </Button>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-        </Card>
-      )}
+                ))}
+              </div>
+            )}
+          </Card>
+        )}
+      </div>
 
       <Modal
         open={kbModal}

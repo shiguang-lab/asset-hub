@@ -42,6 +42,7 @@ import {
   publishedShortUrl,
   uploadFile,
 } from "../../entities/api.js";
+import { useDeleteConfirm } from "../../shared/useDeleteConfirm";
 import { loadDocumentLocal, saveDocumentLocal } from "../../shared/document-local.js";
 import { DocumentMarkdown } from "../../shared/document-markdown.js";
 import { loadDraft, markSynced, saveDraft } from "../../shared/draft.js";
@@ -120,6 +121,7 @@ export function DocumentEditorPage() {
   const [params] = useSearchParams();
   const navigate = useNavigate();
   const toast = useToast();
+  const { confirmDelete } = useDeleteConfirm();
   const queryClient = useQueryClient();
   const editorRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
@@ -656,7 +658,7 @@ export function DocumentEditorPage() {
         </div>
         <div className="sg-row">
           <SaveBadge state={saveState} />
-          <Button size="sm" onClick={() => navigate(`/assets/${id}`)}>
+          <Button size="sm" onClick={() => navigate(`/documents/${id}/preview`)}>
             ◎ 预览
           </Button>
           <Button size="sm" onClick={() => setPublishOpen(true)}>
@@ -679,15 +681,21 @@ export function DocumentEditorPage() {
                 <button
                   type="button"
                   className="danger"
-                  onClick={async () => {
+                  onClick={() => {
                     if (!id) return;
-                    try {
-                      await api(`/assets/${id}`, { method: "DELETE" });
-                      toast("success", "文档已移入回收站");
-                      navigate("/documents");
-                    } catch (error) {
-                      toast("error", error instanceof Error ? error.message : "删除失败");
-                    }
+                    confirmDelete({
+                      title: `删除文档「${title || id}」？`,
+                      content: "删除后可在回收站恢复。",
+                      onConfirm: async () => {
+                        try {
+                          await api(`/assets/${id}`, { method: "DELETE" });
+                          toast("success", "文档已移入回收站");
+                          navigate("/documents");
+                        } catch (error) {
+                          toast("error", error instanceof Error ? error.message : "删除失败");
+                        }
+                      },
+                    });
                   }}
                 >
                   删除文档

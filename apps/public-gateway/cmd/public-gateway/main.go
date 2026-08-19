@@ -39,15 +39,40 @@ type PublishMeta struct {
 		Created  string         `json:"createdAt"`
 	} `json:"release"`
 	Asset *struct {
-		ID    string `json:"id"`
-		Type  string `json:"type"`
-		Title string `json:"title"`
+		ID               string  `json:"id"`
+		Type             string  `json:"type"`
+		Title            string  `json:"title"`
+		OwnerSubject     string  `json:"ownerSubject"`
+		OwnerDisplayName *string `json:"ownerDisplayName"`
 	} `json:"asset"`
+	Publisher *struct {
+		Name      string  `json:"name"`
+		AvatarURL *string `json:"avatarUrl"`
+	} `json:"publisher"`
+	Stats *struct {
+		Views          int            `json:"views"`
+		UniqueVisitors int            `json:"uniqueVisitors"`
+		ActiveViewers  []activeViewer `json:"activeViewers"`
+	} `json:"stats"`
+}
+
+type activeViewer struct {
+	VisitorKey  string  `json:"visitorKey"`
+	UserID      *string `json:"userId"`
+	DisplayName *string `json:"displayName"`
+	AvatarURL   *string `json:"avatarUrl"`
 }
 
 type publicMarkdownContent struct {
-	Title         string            `json:"title"`
-	Markdown      string            `json:"markdown"`
+	Title         string         `json:"title"`
+	Markdown      string         `json:"markdown"`
+	Visibility    string         `json:"visibility"`
+	VisitorCount  int            `json:"visitorCount"`
+	ActiveViewers []activeViewer `json:"activeViewers"`
+	Publisher     *struct {
+		Name      string  `json:"name"`
+		AvatarURL *string `json:"avatarUrl"`
+	} `json:"publisher"`
 	AllowDownload bool              `json:"allowDownload"`
 	AllowCopy     bool              `json:"allowCopy"`
 	AssetLinks    map[string]string `json:"assetLinks"`
@@ -81,6 +106,9 @@ func main() {
 	mux.HandleFunc("GET /_next/{path...}", func(w http.ResponseWriter, r *http.Request) {
 		proxySSR(w, r, cfg)
 	})
+	mux.HandleFunc("GET /icon.svg", func(w http.ResponseWriter, r *http.Request) {
+		proxySSR(w, r, cfg)
+	})
 
 	mux.HandleFunc("GET /p/{slug}/content", func(w http.ResponseWriter, r *http.Request) {
 		slug := r.PathValue("slug")
@@ -99,14 +127,70 @@ func main() {
 			return
 		}
 		w.Header().Set("Cache-Control", "private, no-store")
+		visitorCount := 0
+		if meta.Stats != nil {
+			visitorCount = meta.Stats.UniqueVisitors
+		}
 		writeJSON(w, http.StatusOK, publicMarkdownContent{
 			Title:         meta.Asset.Title,
 			Markdown:      string(data),
+			Visibility:    meta.Publish.Visibility,
+			VisitorCount:  visitorCount,
+			ActiveViewers: activeViewers(meta),
+			Publisher:     meta.Publisher,
 			AllowDownload: meta.Publish.AllowDownload,
 			AllowCopy:     meta.Publish.AllowCopy,
 			AssetLinks:    releaseAssetLinks(meta, slug),
 		})
-		go recordAccess(cfg, meta, "index.md", r)
+	})
+
+	mux.HandleFunc("POST /p/{slug}/presence", func(w http.ResponseWriter, r *http.Request) {
+		slug := r.PathValue("slug")
+		meta, status := cache.resolve(slug)
+		if status != http.StatusOK || meta.Release == nil || !isMarkdownPublish(meta) {
+			writeJSON(w, statusOrNotFound(status), map[string]string{"code": "CONTENT_NOT_FOUND"})
+			return
+		}
+		if meta.Publish.Visibility == "password" && !unlocked(r, meta.Publish.ID, cfg) {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"code": "PASSWORD_REQUIRED"})
+			return
+		}
+		var input struct {
+			VisitorID   string  `json:"visitorId"`
+			UserID      *string `json:"userId"`
+			DisplayName *string `json:"displayName"`
+			AvatarURL   *string `json:"avatarUrl"`
+		}
+		if err := json.NewDecoder(io.LimitReader(r.Body, 16<<10)).Decode(&input); err != nil || len(input.VisitorID) < 8 || len(input.VisitorID) > 160 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"code": "INVALID_VISITOR"})
+			return
+		}
+		userID := cleanPresenceValue(input.UserID, 180)
+		visitorKey := "guest:" + input.VisitorID
+		if userID != nil {
+			visitorKey = "user:" + *userID
+		}
+		displayName := (*string)(nil)
+		avatarURL := (*string)(nil)
+		if userID != nil {
+			displayName = cleanPresenceValue(input.DisplayName, 120)
+			avatarURL = cleanPresenceValue(input.AvatarURL, 2_000)
+		}
+		result, err := cfg.RecordPresence(map[string]any{
+			"publishId":      meta.Publish.ID,
+			"releaseId":      releaseID(meta),
+			"visitorKey":     visitorKey,
+			"userId":         userID,
+			"displayName":    displayName,
+			"avatarUrl":      avatarURL,
+			"referrerDomain": referrerDomain(r),
+			"deviceClass":    "browser",
+		})
+		if err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"code": "PRESENCE_UNAVAILABLE"})
+			return
+		}
+		writeJSON(w, http.StatusOK, result)
 	})
 
 	mux.HandleFunc("GET /p/{slug}", func(w http.ResponseWriter, r *http.Request) {
@@ -607,6 +691,24 @@ func recordAccess(cfg platform.Config, meta PublishMeta, path string, r *http.Re
 	if err == nil {
 		_ = resp.Body.Close()
 	}
+}
+
+func activeViewers(meta PublishMeta) []activeViewer {
+	if meta.Stats == nil || len(meta.Stats.ActiveViewers) == 0 {
+		return []activeViewer{}
+	}
+	return meta.Stats.ActiveViewers
+}
+
+func cleanPresenceValue(value *string, max int) *string {
+	if value == nil {
+		return nil
+	}
+	trimmed := strings.TrimSpace(*value)
+	if trimmed == "" || len(trimmed) > max {
+		return nil
+	}
+	return &trimmed
 }
 
 func releaseID(meta PublishMeta) string {

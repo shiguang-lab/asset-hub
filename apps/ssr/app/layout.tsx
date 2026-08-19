@@ -5,6 +5,7 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "Shiguang Lab 文档",
   robots: { index: false, follow: false },
+  icons: { icon: "/favicon.svg?v=20260818" },
 };
 
 export default function RootLayout({ children }: PropsWithChildren) {

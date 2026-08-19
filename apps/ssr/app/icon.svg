@@ -1,4 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <title>Shiguang Lab</title>
   <rect x="3" y="3" width="26" height="26" rx="8" fill="#7137ff" />
   <g transform="translate(4.4 4.4) scale(.9)" fill="none" stroke="#fff" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8">
     <rect width="7" height="7" x="14" y="3" rx="1" />

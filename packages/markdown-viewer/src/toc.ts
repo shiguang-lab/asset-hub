@@ -20,7 +20,7 @@ export function extractMarkdownToc(markdown: string): MarkdownTocItem[] {
     result.push({
       level: match[1]?.length ?? 1,
       text,
-      anchor: `sg-heading-${result.length}-${slugify(text)}`,
+      anchor: `${result.length}-${slugify(text)}`,
     });
   }
   return result;

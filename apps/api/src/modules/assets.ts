@@ -1,3 +1,4 @@
+import { posix as pathPosix } from "node:path";
 import {
   extractMarkdownReferences,
   isLocalReference,
@@ -175,48 +176,91 @@ export function registerAssets(app: FastifyInstance): void {
 
   app.post("/api/v1/assets/documents/import", async (req, reply) => {
     if (!req.isMultipart()) throw badRequest("FILE_REQUIRED", "请选择要导入的文档");
-    const part = await req.file();
-    if (!part) throw badRequest("FILE_REQUIRED", "请选择要导入的文档");
-    const buffer = Buffer.from(await part.toBuffer());
-    const fileName = part.filename || "document.md";
+    const parts = [];
+    for await (const part of req.files()) {
+      if (part.type !== "file") continue;
+      parts.push({
+        name: part.filename || "document.md",
+        data: Buffer.from(await part.toBuffer()),
+      });
+    }
+    if (parts.length === 0) throw badRequest("FILE_REQUIRED", "请选择要导入的文档");
 
-    const { title, markdown, resources } = parseImportedArchive(fileName, buffer);
-    const extracted = await extractAndUploadResources(markdown, resources, (name, data) =>
-      uploadResourceAsset(ctx, req.actor, name, data),
+    const totalSize = parts.reduce((sum, part) => sum + part.data.byteLength, 0);
+    if (totalSize > MAX_IMPORTED_ARCHIVE_SIZE) {
+      throw badRequest("DOCUMENT_TOO_LARGE", "导入内容不能超过 50MB");
+    }
+
+    const imported = await importDocumentEntries(
+      ctx,
+      req.actor,
+      parts.map((part) => ({ path: part.name, data: part.data })),
+      parseImportResolutions(req.query),
     );
+    for (const item of imported.items) {
+      if (!item.replaced) {
+        await ctx.bus.emit({
+          eventId: nextId("evt"),
+          eventType: "asset.created",
+          schemaVersion: 1,
+          occurredAt: nowIso(),
+          producer: "api",
+          tenantId: req.actor.workspaceId,
+          aggregate: { type: "asset", id: item.asset.id, version: 1 },
+          trace: {},
+          data: { assetId: item.asset.id, assetType: item.asset.type, sourceType: "upload" },
+        });
+      }
+      await ctx.store.audit(
+        req.actor.workspaceId,
+        req.actor.subject,
+        "asset.document_import",
+        item.asset.id,
+        "success",
+        {
+          fileName: item.path,
+          size: totalSize,
+          extractedResources: imported.uploadedResources,
+          replaced: item.replaced ?? false,
+        },
+      );
+    }
 
-    const asset = await ctx.store.createAsset(req.actor, {
+    // Preserve the old single-file response contract. Directory/ZIP imports
+    // return all documents and their relative paths for the folder tree UI.
+    const originalPath = parts[0]?.name.replaceAll("\\", "/") ?? "";
+    const legacySingleFile =
+      parts.length === 1 &&
+      !originalPath.includes("/") &&
+      (!originalPath.toLowerCase().endsWith(".zip") || imported.folders.length === 0);
+    if (imported.items.length === 1 && legacySingleFile) {
+      return reply.code(201).send(imported.items[0]?.asset);
+    }
+    return reply.code(201).send({
+      assets: imported.items.map((item) => item.asset),
+      entries: imported.items.map(({ asset, path }) => ({ asset, path })),
+      folders: imported.folders,
+    });
+  });
+
+  // Lightweight pre-import conflict check. The client already knows the file
+  // names, so it can compute candidate titles and ask which ones already exist
+  // without uploading the payload twice. Returns a title -> assetId map.
+  app.post("/api/v1/assets/documents/import/check", async (req, reply) => {
+    const body = z
+      .object({ titles: z.array(z.string()).max(2000) })
+      .parse(req.body ?? { titles: [] });
+    const existing = await ctx.store.listAssets(req.actor.workspaceId, {
       type: "document",
-      title,
-      sourceType: "upload",
-      content: {
-        kind: "markdown",
-        text: extracted.markdown,
-        manifest: null,
-        refs: [],
-      },
+      limit: 2000,
     });
-    await syncContentLinkRelations(ctx, req.actor.workspaceId, asset.id, extracted.markdown);
-    await ctx.bus.emit({
-      eventId: nextId("evt"),
-      eventType: "asset.created",
-      schemaVersion: 1,
-      occurredAt: nowIso(),
-      producer: "api",
-      tenantId: req.actor.workspaceId,
-      aggregate: { type: "asset", id: asset.id, version: 1 },
-      trace: {},
-      data: { assetId: asset.id, assetType: asset.type, sourceType: "upload" },
-    });
-    await ctx.store.audit(
-      req.actor.workspaceId,
-      req.actor.subject,
-      "asset.document_import",
-      asset.id,
-      "success",
-      { fileName, size: buffer.byteLength, extractedResources: extracted.uploaded },
-    );
-    return reply.code(201).send(asset);
+    const byTitle = new Map(existing.items.map((asset) => [asset.title, asset.id]));
+    const found: Record<string, string> = {};
+    for (const title of body.titles) {
+      const id = byTitle.get(title);
+      if (id) found[title] = id;
+    }
+    return reply.send({ existing: found });
   });
 
   app.get("/api/v1/assets/:id", async (req, reply) => {
@@ -697,48 +741,216 @@ export function parseImportedDocumentFile(
 }
 
 const MAX_IMPORTED_ARCHIVE_SIZE = 50 * 1024 * 1024;
-const MARKDOWN_EXTENSIONS = new Set(["md", "markdown"]);
 /** 正文里指向这些文本格式的相对链接视为「文档引用」，不自动导入为 file 资产。 */
 const TEXT_DOCUMENT_EXTENSIONS = new Set(["md", "markdown", "txt"]);
 
-interface ParsedImport {
-  title: string;
-  markdown: string;
-  resources?: Map<string, Buffer>;
+interface ImportEntry {
+  path: string;
+  data: Buffer;
 }
 
-/** 支持单文件（md/markdown/txt）与 ZIP 归档（md + 图片/资源目录）。 */
-function parseImportedArchive(fileName: string, buffer: Buffer): ParsedImport {
-  const extension = fileName.split(".").at(-1)?.toLowerCase() ?? "";
-  if (extension === "zip") {
-    if (buffer.byteLength > MAX_IMPORTED_ARCHIVE_SIZE) {
-      throw badRequest("DOCUMENT_TOO_LARGE", "导入压缩包不能超过 50MB");
+interface ImportedDocumentItem {
+  asset: Asset;
+  path: string;
+  /** true when this item overwrote an existing asset (resolution = "replace"). */
+  replaced?: boolean;
+}
+
+/** Per-title conflict resolution chosen by the user before importing. */
+export type ImportResolution = "skip" | "replace" | "rename";
+
+interface ImportedDocumentBundle {
+  items: ImportedDocumentItem[];
+  folders: string[];
+  uploadedResources: number;
+}
+
+/**
+ * Import a flat multipart file list or ZIP archive as one document tree.
+ * Every text file gets a document asset first, so links can be resolved even
+ * when two documents refer to each other. A second pass rewrites those links
+ * after all ids are known.
+ *
+ * `resolutions` lets the client decide what to do when a candidate title
+ * already exists: "skip" drops the entry, "replace" overwrites the existing
+ * asset's content, "rename" imports under an auto-suffixed title.
+ */
+function parseImportResolutions(query: unknown): Record<string, ImportResolution> {
+  const raw = (query as { resolutions?: unknown })?.resolutions;
+  if (typeof raw !== "string" || raw.length === 0) return {};
+  try {
+    const parsed = JSON.parse(raw) as Record<string, ImportResolution>;
+    const out: Record<string, ImportResolution> = {};
+    for (const [title, value] of Object.entries(parsed)) {
+      if (value === "skip" || value === "replace" || value === "rename") out[title] = value;
     }
-    const entries = readZipEntries(buffer);
-    const markdownName = pickMarkdownEntry(entries);
-    if (!markdownName) throw badRequest("NO_MARKDOWN_IN_ZIP", "ZIP 中未找到 Markdown 文档");
-    const doc = entries.get(markdownName);
-    if (!doc) throw badRequest("NO_MARKDOWN_IN_ZIP", "ZIP 中未找到 Markdown 文档");
-    const parsed = parseImportedDocumentFile(markdownName, doc);
-    return { title: parsed.title, markdown: parsed.markdown, resources: entries };
+    return out;
+  } catch {
+    return {};
   }
-  const parsed = parseImportedDocumentFile(fileName, buffer);
-  return { title: parsed.title, markdown: parsed.markdown };
 }
 
-function pickMarkdownEntry(entries: Map<string, Buffer>): string | null {
-  const candidates = [...entries.keys()].filter((name) => {
-    const ext = name.split(".").at(-1)?.toLowerCase() ?? "";
-    return MARKDOWN_EXTENSIONS.has(ext);
-  });
-  if (candidates.length === 0) return null;
-  const priority = (name: string): number => {
-    const base = normalizeResourcePath(name).toLowerCase();
-    if (base === "index.md" || base === "index.markdown") return 0;
-    if (base === "readme.md" || base === "readme.markdown") return 1;
-    return base.includes("/") ? 3 : 2;
+async function loadExistingDocumentTitles(
+  ctx: AppContext,
+  workspaceId: string,
+): Promise<Map<string, Asset>> {
+  const existing = await ctx.store.listAssets(workspaceId, { type: "document", limit: 2000 });
+  return new Map(existing.items.map((asset) => [asset.title, asset]));
+}
+
+function uniqueTitle(base: string, used: Set<string>): string {
+  if (!used.has(base)) return base;
+  let n = 1;
+  while (used.has(`${base} (${n})`)) n += 1;
+  return `${base} (${n})`;
+}
+
+async function importDocumentEntries(
+  ctx: AppContext,
+  actor: ActorContext,
+  parts: ImportEntry[],
+  resolutions: Record<string, ImportResolution> = {},
+): Promise<ImportedDocumentBundle> {
+  const entries = expandImportEntries(parts);
+  const normalized = normalizeImportEntries(entries);
+  const documents = normalized.filter((entry) => isImportedDocument(entry.path));
+  if (documents.length === 0)
+    throw badRequest("NO_MARKDOWN_IN_FOLDER", "文件夹中未找到 Markdown 文档");
+
+  const existingByTitle = await loadExistingDocumentTitles(ctx, actor.workspaceId);
+  const usedTitles = new Set(existingByTitle.keys());
+
+  const items: ImportedDocumentItem[] = [];
+  const pathToAsset = new Map<string, Asset>();
+  const markdownByPath = new Map<string, string>();
+
+  for (const entry of documents) {
+    const parsed = parseImportedDocumentFile(pathPosix.basename(entry.path), entry.data);
+    const path = normalizeResourcePath(entry.path);
+    const resolution = resolutions[parsed.title];
+    if (resolution === "skip") continue;
+
+    let asset: Asset;
+    let replaced = false;
+    if (resolution === "replace" && existingByTitle.has(parsed.title)) {
+      asset = existingByTitle.get(parsed.title) as Asset;
+      replaced = true;
+    } else {
+      const title = resolution === "rename" ? uniqueTitle(parsed.title, usedTitles) : parsed.title;
+      asset = await ctx.store.createAsset(actor, {
+        type: "document",
+        title,
+        sourceType: "upload",
+        metadata: { importPath: path },
+        content: { kind: "markdown", text: parsed.markdown, manifest: null, refs: [] },
+      });
+    }
+    usedTitles.add(asset.title);
+    markdownByPath.set(path, parsed.markdown);
+    items.push({ asset, path, replaced });
+    pathToAsset.set(path, asset);
+  }
+
+  const resourceIndex = buildResourceIndex(
+    new Map(normalized.map((entry) => [entry.path, entry.data])),
+  );
+  const resourceAssets = new Map<string, Asset>();
+  let uploadedResources = 0;
+
+  for (const item of items) {
+    const sourceMarkdown = markdownByPath.get(item.path) ?? "";
+    const references = extractMarkdownReferences(sourceMarkdown);
+    for (const ref of references) {
+      if (!isLocalReference(ref.src)) continue;
+      const targetPath = resolveImportReference(item.path, ref.src);
+      if (pathToAsset.has(targetPath) || resourceAssets.has(targetPath)) continue;
+      const extension = targetPath.split(".").at(-1)?.toLowerCase() ?? "";
+      if (TEXT_DOCUMENT_EXTENSIONS.has(extension)) continue;
+      const data = resourceIndex.get(targetPath);
+      if (!data) continue;
+      resourceAssets.set(targetPath, await uploadResourceAsset(ctx, actor, targetPath, data));
+      uploadedResources += 1;
+    }
+    const rewritten = rewriteMarkdownReferences(sourceMarkdown, (ref) => {
+      if (!isLocalReference(ref.src)) return null;
+      const targetPath = resolveImportReference(item.path, ref.src);
+      const targetDocument = pathToAsset.get(targetPath);
+      if (targetDocument) return `asset:${targetDocument.id}`;
+      const resource = resourceAssets.get(targetPath);
+      return resource ? `asset:${resource.id}` : null;
+    });
+
+    if (rewritten !== sourceMarkdown) {
+      const saved = await ctx.store.saveContent(
+        actor,
+        item.asset.id,
+        { kind: "markdown", text: rewritten, manifest: null, refs: [] },
+        { changeKind: "import", metadata: { importPath: item.path } },
+      );
+      item.asset = saved.asset;
+    }
+    await syncContentLinkRelations(ctx, actor.workspaceId, item.asset.id, rewritten);
+  }
+
+  return {
+    items,
+    folders: collectImportFolders(items.map((item) => item.path)),
+    uploadedResources,
   };
-  return candidates.sort((a, b) => priority(a) - priority(b))[0] ?? null;
+}
+
+function expandImportEntries(parts: ImportEntry[]): ImportEntry[] {
+  if (parts.length !== 1 || !parts[0]?.path.toLowerCase().endsWith(".zip")) return parts;
+  const archive = parts[0];
+  try {
+    return [...readZipEntries(archive.data)].map(([path, data]) => ({ path, data }));
+  } catch (error) {
+    throw badRequest(
+      "DOCUMENT_ARCHIVE_INVALID",
+      error instanceof Error ? error.message : "ZIP 归档无效",
+    );
+  }
+}
+
+function normalizeImportEntries(entries: ImportEntry[]): ImportEntry[] {
+  const cleaned = entries
+    .map((entry) => {
+      const path = pathPosix.normalize(normalizeResourcePath(entry.path));
+      return { path, data: entry.data };
+    })
+    .filter((entry) => entry.path !== ".." && !entry.path.startsWith("../"))
+    .filter((entry) => entry.path && !entry.path.startsWith("__MACOSX/"));
+  // Browsers include the selected directory name in webkitRelativePath. Drop
+  // one common root so only real child directories appear in the app.
+  const roots = cleaned.map((entry) => entry.path.split("/")[0]).filter(Boolean);
+  const commonRoot = roots.length > 0 && roots.every((root) => root === roots[0]) ? roots[0] : null;
+  return commonRoot && cleaned.some((entry) => entry.path.includes("/"))
+    ? cleaned.map((entry) => ({ ...entry, path: entry.path.slice(commonRoot.length + 1) }))
+    : cleaned;
+}
+
+function isImportedDocument(path: string): boolean {
+  const extension = path.split(".").at(-1)?.toLowerCase() ?? "";
+  return IMPORTED_DOCUMENT_EXTENSIONS.has(extension);
+}
+
+export function resolveImportReference(sourcePath: string, source: string): string {
+  const withoutSuffix = source.trim().split(/[?#]/, 1)[0] ?? "";
+  const joined = withoutSuffix.startsWith("/")
+    ? withoutSuffix
+    : pathPosix.join(pathPosix.dirname(sourcePath), withoutSuffix);
+  const normalized = pathPosix.normalize(joined).replace(/^\.\//, "");
+  return normalizeResourcePath(normalized);
+}
+
+export function collectImportFolders(paths: string[]): string[] {
+  const folders = new Set<string>();
+  for (const path of paths) {
+    const segments = normalizeResourcePath(path).split("/");
+    segments.pop();
+    for (let i = 1; i <= segments.length; i += 1) folders.add(segments.slice(0, i).join("/"));
+  }
+  return [...folders].sort((a, b) => a.localeCompare(b));
 }
 
 /**

@@ -2071,6 +2071,106 @@ export class Store {
       .run(now, publishId, workspaceId);
   }
 
+  async recordPresence(input: {
+    publishId: string;
+    releaseId?: string | null;
+    visitorKey: string;
+    userId?: string | null;
+    displayName?: string | null;
+    avatarUrl?: string | null;
+    referrerDomain?: string | null;
+    deviceClass?: string | null;
+  }): Promise<{
+    visitorCount: number;
+    viewers: Array<{
+      visitorKey: string;
+      userId: string | null;
+      displayName: string | null;
+      avatarUrl: string | null;
+    }>;
+  }> {
+    const now = nowIso();
+    const inserted = (await this.db
+      .prepare(
+        `WITH inserted AS (
+           INSERT INTO publish_visitors
+             (publish_id, visitor_key, user_id, display_name, avatar_url, first_seen_at, last_seen_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT (publish_id, visitor_key) DO NOTHING
+           RETURNING visitor_key
+         )
+         SELECT COUNT(*) AS inserted FROM inserted`,
+      )
+      .get(
+        input.publishId,
+        input.visitorKey,
+        input.userId ?? null,
+        input.displayName ?? null,
+        input.avatarUrl ?? null,
+        now,
+        now,
+      )) as { inserted?: number } | undefined;
+    await this.db
+      .prepare(
+        `UPDATE publish_visitors
+         SET user_id = ?, display_name = ?, avatar_url = ?, last_seen_at = ?
+         WHERE publish_id = ? AND visitor_key = ?`,
+      )
+      .run(
+        input.userId ?? null,
+        input.displayName ?? null,
+        input.avatarUrl ?? null,
+        now,
+        input.publishId,
+        input.visitorKey,
+      );
+    if (Number(inserted?.inserted ?? 0) > 0) {
+      await this.db
+        .prepare(
+          "INSERT INTO publish_access_events (id, publish_id, release_id, ts_bucket, referrer_domain, device_class, hashed_visitor, status_code) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .run(
+          nextId("pae"),
+          input.publishId,
+          input.releaseId ?? null,
+          now.slice(0, 16),
+          input.referrerDomain ?? null,
+          input.deviceClass ?? null,
+          input.visitorKey,
+          200,
+        );
+      await this.db
+        .prepare("UPDATE publishes SET view_count = view_count + 1, updated_at = ? WHERE id = ?")
+        .run(now, input.publishId);
+    }
+    const activeSince = new Date(Date.now() - 90_000).toISOString();
+    const countRow = (await this.db
+      .prepare("SELECT COUNT(*) AS n FROM publish_visitors WHERE publish_id = ?")
+      .get(input.publishId)) as { n?: number } | undefined;
+    const legacyCountRow = (await this.db
+      .prepare(
+        "SELECT COUNT(DISTINCT hashed_visitor) AS n FROM publish_access_events WHERE publish_id = ? AND hashed_visitor IS NOT NULL",
+      )
+      .get(input.publishId)) as { n?: number } | undefined;
+    const rows = (await this.db
+      .prepare(
+        `SELECT visitor_key, user_id, display_name, avatar_url
+         FROM publish_visitors
+         WHERE publish_id = ? AND last_seen_at >= ?
+         ORDER BY last_seen_at DESC LIMIT 12`,
+      )
+      .all(input.publishId, activeSince)) as Row[];
+    return {
+      visitorCount: Math.max(Number(countRow?.n ?? 0), Number(legacyCountRow?.n ?? 0)),
+      viewers: rows.map((row) => ({
+        visitorKey: str(row.visitor_key),
+        userId: row.user_id === null ? null : str(row.user_id),
+        displayName: row.display_name === null ? null : str(row.display_name),
+        avatarUrl: row.avatar_url === null ? null : str(row.avatar_url),
+      })),
+    };
+  }
+
   async recordAccessEvent(input: {
     publishId: string;
     releaseId?: string | null;
@@ -2103,6 +2203,12 @@ export class Store {
     views: number;
     uniqueVisitors: number;
     daily: Array<{ day: string; views: number; uniqueVisitors: number }>;
+    activeViewers: Array<{
+      visitorKey: string;
+      userId: string | null;
+      displayName: string | null;
+      avatarUrl: string | null;
+    }>;
   }> {
     const views = num(
       (await this.db
@@ -2123,17 +2229,35 @@ export class Store {
       )
       .all(publishId)) as Array<{ day: string; views: number; unique_visitors: number }>;
     const uniqueRow = (await this.db
+      .prepare(`SELECT COUNT(*) AS n FROM publish_visitors WHERE publish_id = ?`)
+      .get(publishId)) as { n: number };
+    const legacyUniqueRow = (await this.db
       .prepare(
         "SELECT COUNT(DISTINCT hashed_visitor) AS n FROM publish_access_events WHERE publish_id = ? AND hashed_visitor IS NOT NULL",
       )
       .get(publishId)) as { n: number };
+    const activeSince = new Date(Date.now() - 90_000).toISOString();
+    const activeRows = (await this.db
+      .prepare(
+        `SELECT visitor_key, user_id, display_name, avatar_url
+         FROM publish_visitors
+         WHERE publish_id = ? AND last_seen_at >= ?
+         ORDER BY last_seen_at DESC LIMIT 12`,
+      )
+      .all(publishId, activeSince)) as Row[];
     return {
       views,
-      uniqueVisitors: Number(uniqueRow?.n ?? 0),
+      uniqueVisitors: Math.max(Number(uniqueRow?.n ?? 0), Number(legacyUniqueRow?.n ?? 0)),
       daily: rows.map((row) => ({
         day: str(row.day),
         views: Number(row.views ?? 0),
         uniqueVisitors: Number(row.unique_visitors ?? 0),
+      })),
+      activeViewers: activeRows.map((row) => ({
+        visitorKey: str(row.visitor_key),
+        userId: row.user_id === null ? null : str(row.user_id),
+        displayName: row.display_name === null ? null : str(row.display_name),
+        avatarUrl: row.avatar_url === null ? null : str(row.avatar_url),
       })),
     };
   }

@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { DomainError } from "../platform/errors.js";
 import {
+  collectImportFolders,
   downloadableAssetContent,
   extractAndUploadResources,
   parseImportedDocumentFile,
+  resolveImportReference,
 } from "./assets.js";
 
 describe("parseImportedDocumentFile", () => {
@@ -110,5 +112,21 @@ describe("extractAndUploadResources", () => {
     );
     expect(uploaded).toBe(0);
     expect(out).toBe(markdown);
+  });
+});
+
+describe("folder import paths", () => {
+  it("resolves links relative to the importing document", () => {
+    expect(resolveImportReference("guides/setup/intro.md", "../images/logo.png")).toBe(
+      "guides/images/logo.png",
+    );
+    expect(resolveImportReference("guides/setup/intro.md", "../api.md#auth")).toBe("guides/api.md");
+  });
+
+  it("collects parent directories without duplicating paths", () => {
+    expect(collectImportFolders(["README.md", "guides/setup.md", "guides/api/auth.md"])).toEqual([
+      "guides",
+      "guides/api",
+    ]);
   });
 });

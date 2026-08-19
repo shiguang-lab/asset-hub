@@ -514,6 +514,33 @@ select {
   flex-direction: column;
   overflow: hidden;
 }
+.sg-content-viewport-document-preview {
+  overflow: hidden !important;
+}
+.sg-content-viewport-document-preview > .sg-content {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.sg-asset-detail-page {
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+.sg-asset-detail-header,
+.sg-asset-detail-page > .ant-tabs {
+  flex: 0 0 auto;
+}
+.sg-asset-detail-content {
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow: auto;
+  padding-bottom: 24px;
+}
 .sg-document-editor-page {
   min-width: 0;
 }

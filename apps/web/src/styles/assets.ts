@@ -12,6 +12,12 @@ export const AssetsGlobalStyles = createGlobalStyle(css`
   gap: 16px;
   margin-bottom: 14px;
 }
+.sg-docs-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+}
 .sg-assets-head .sg-h1 {
   margin: 0 0 5px;
   font-size: 24px;

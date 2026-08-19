@@ -1,4 +1,5 @@
 import { Button, Empty, Field, Modal, Select, Input as UiInput, useToast } from "@shiguang/ui";
+import { useDeleteConfirm } from "../../shared/useDeleteConfirm";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Dropdown, Input, Tooltip } from "antd";
 import {
@@ -30,12 +31,23 @@ import {
   Trash2,
   Users,
 } from "lucide-react";
-import { type ReactNode, useEffect, useMemo, useState } from "react";
+import {
+  type Dispatch,
+  type ReactNode,
+  type SetStateAction,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import { useNavigate } from "react-router-dom";
 import { getAuthSession } from "../../auth/session.js";
 import { type Asset, api, publishedShortUrl } from "../../entities/api.js";
 import { isOwnedBySession, ownerDisplayName } from "../../shared/owner.js";
-import { useShellBreadcrumb } from "../../shell/layout.js";
+import {
+  type DocumentImportResult,
+  useShellBreadcrumb,
+  useShellDocumentActions,
+} from "../../shell/layout.js";
 import { PublishDialog } from "../publishing/publish-dialog.js";
 
 const ME = "dev-user";
@@ -292,6 +304,72 @@ function readFolderAssignments(): Record<string, string> {
   return {};
 }
 
+function folderIdForImportPath(prefix: string, path: string): string {
+  return `${prefix}-${path
+    .split("/")
+    .map((part) => part.replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 32))
+    .join("-")}`;
+}
+
+function restoreImportedDocumentFolders(
+  result: DocumentImportResult,
+  activeFolderId: string,
+  setFolders: Dispatch<SetStateAction<DocumentFolder[]>>,
+  setFolderAssignments: Dispatch<SetStateAction<Record<string, string>>>,
+  setExpandedFolderIds: Dispatch<SetStateAction<string[]>>,
+): void {
+  if (typeof window === "undefined") return;
+  try {
+    const rootParentId = activeFolderId === "root" ? null : activeFolderId;
+    const prefix = activeFolderId === "root" ? "import" : `import-${activeFolderId}`;
+    const folderIdByPath = new Map<string, string>();
+
+    setFolders((current) => {
+      const existingIds = new Set(current.map((folder) => folder.id));
+      const newFolders: DocumentFolder[] = [];
+      for (const path of result.folders) {
+        const parts = path.split("/").filter(Boolean);
+        let parentPath = "";
+        let parentId = rootParentId;
+        for (const name of parts) {
+          const currentPath = parentPath ? `${parentPath}/${name}` : name;
+          const id = folderIdForImportPath(prefix, currentPath);
+          folderIdByPath.set(currentPath, id);
+          if (!existingIds.has(id) && !newFolders.some((folder) => folder.id === id)) {
+            newFolders.push({ id, name, parentId });
+            existingIds.add(id);
+          }
+          parentPath = currentPath;
+          parentId = id;
+        }
+      }
+      if (newFolders.length === 0) return current;
+      const merged = new Map(current.map((folder) => [folder.id, folder]));
+      for (const folder of newFolders) merged.set(folder.id, folder);
+      return [...merged.values()];
+    });
+
+    const nextAssignments: Record<string, string> = {};
+    for (const entry of result.entries) {
+      const directory = entry.path.split("/").slice(0, -1).join("/");
+      const folderId = directory ? folderIdByPath.get(directory) : rootParentId;
+      if (folderId) {
+        nextAssignments[entry.asset.id] = folderId;
+      }
+    }
+    if (Object.keys(nextAssignments).length > 0) {
+      setFolderAssignments((current) => ({ ...current, ...nextAssignments }));
+    }
+    if (rootParentId) {
+      setExpandedFolderIds((current) =>
+        current.includes(rootParentId) ? current : [...current, rootParentId],
+      );
+    }
+  } catch {
+    // Folder restoration is a UI enhancement; importing the assets still succeeds.
+  }
+}
+
 function inferredFolderId(document: Asset): string {
   if (document.title.includes("Dashboard")) return "data";
   if (
@@ -333,7 +411,9 @@ function relationBadges(relations: RelationRow[] | undefined): string[] {
 
 export function DocumentsPage() {
   const navigate = useNavigate();
+  const documentActions = useShellDocumentActions();
   const toast = useToast();
+  const { confirmDelete } = useDeleteConfirm();
   const queryClient = useQueryClient();
   const authSession = getAuthSession();
   const [filter, setFilter] = useState<FilterId>("all");
@@ -388,6 +468,28 @@ export function DocumentsPage() {
     window.localStorage.setItem(FOLDER_ASSIGNMENTS_STORAGE_KEY, JSON.stringify(folderAssignments));
   }, [folderAssignments]);
 
+  useEffect(() => {
+    if (!documentActions?.registerImportHandler) return;
+    return documentActions.registerImportHandler((result) => {
+      restoreImportedDocumentFolders(
+        result,
+        activeFolderId,
+        setFolders,
+        setFolderAssignments,
+        setExpandedFolderIds,
+      );
+      void queryClient.invalidateQueries({ queryKey: ["assets", "document"] });
+      void queryClient.invalidateQueries({ queryKey: ["home"] });
+    });
+  }, [
+    documentActions,
+    activeFolderId,
+    setFolders,
+    setFolderAssignments,
+    setExpandedFolderIds,
+    queryClient,
+  ]);
+
   const { data: docs } = useQuery<{ items: Asset[]; total: number }>({
     queryKey: ["assets", "document"],
     queryFn: () => loadDocumentAssets(),
@@ -407,6 +509,14 @@ export function DocumentsPage() {
       void queryClient.invalidateQueries({ queryKey: ["home"] });
     },
   });
+
+  const confirmDeleteDocument = (doc: Asset) => {
+    confirmDelete({
+      title: `删除文档「${doc.title}」？`,
+      content: "删除后可在回收站恢复。",
+      onConfirm: () => batchMutation.mutate({ action: "delete", ids: [doc.id] }),
+    });
+  };
 
   const demoMode = import.meta.env.DEV && (docs?.items?.length ?? 0) === 0;
   const all = useMemo(() => (demoMode ? DEMO_DOCUMENTS : (docs?.items ?? [])), [demoMode, docs]);
@@ -818,9 +928,23 @@ export function DocumentsPage() {
           <h1 className="sg-h1">文档</h1>
           <p className="sg-assets-sub">创建、管理和整理你的在线文档</p>
         </div>
-        <Button variant="primary" onClick={() => navigate("/documents/new")}>
-          <Plus size={15} /> 新建文档
-        </Button>
+        <div className="sg-docs-head-actions">
+          <Button
+            className="sg-assets-head-btn"
+            onClick={() => documentActions?.openDocumentFilePicker()}
+          >
+            <FileText size={15} /> 导入文件
+          </Button>
+          <Button
+            className="sg-assets-head-btn"
+            onClick={() => documentActions?.openDocumentFolderPicker()}
+          >
+            <FolderOpen size={15} /> 导入目录
+          </Button>
+          <Button variant="primary" onClick={() => navigate("/documents/new")}>
+            <Plus size={15} /> 新建文档
+          </Button>
+        </div>
       </div>
 
       <div className="sg-docs-stats">
@@ -1094,9 +1218,7 @@ export function DocumentsPage() {
                                 <button
                                   type="button"
                                   className="danger"
-                                  onClick={() =>
-                                    batchMutation.mutate({ action: "delete", ids: [d.id] })
-                                  }
+                                  onClick={() => confirmDeleteDocument(d)}
                                 >
                                   删除
                                 </button>
@@ -1353,15 +1475,13 @@ export function DocumentsPage() {
                                       移动到目录
                                     </button>
                                     {filter !== "trash" ? (
-                                      <button
-                                        type="button"
-                                        className="danger"
-                                        onClick={() =>
-                                          batchMutation.mutate({ action: "delete", ids: [d.id] })
-                                        }
-                                      >
-                                        删除
-                                      </button>
+                                    <button
+                                      type="button"
+                                      className="danger"
+                                      onClick={() => confirmDeleteDocument(d)}
+                                    >
+                                      删除
+                                    </button>
                                     ) : (
                                       <button
                                         type="button"

@@ -23,8 +23,12 @@ export const SearchGlobalStyles = createGlobalStyle(css`
 .sg-header.search-mode .sg-search {
   width: min(810px, 52vw);
   max-width: 810px;
+  height: 40px;
   border-color: #373241;
   background: #151821;
+}
+.sg-header.search-mode .sg-search .ant-input {
+  font-size: 15px;
 }
 .sg-search-suffix {
   position: relative;
@@ -82,30 +86,32 @@ export const SearchGlobalStyles = createGlobalStyle(css`
   display: flex;
   height: 62px;
   align-items: end;
-  gap: 24px;
+  gap: 28px;
   overflow-x: auto;
   border-bottom: 1px solid var(--sg-border);
 }
 .sg-global-search-tabs button {
   position: relative;
   display: inline-flex;
-  height: 52px;
+  height: 56px;
   flex: none;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   padding: 0 2px;
   border: 0;
   color: var(--sg-muted);
   background: transparent;
-  font-size: 10px;
+  font-size: 14px;
   cursor: pointer;
 }
 .sg-global-search-tabs button > span {
-  padding: 2px 5px;
+  min-width: 22px;
+  padding: 2px 6px;
   border-radius: 4px;
   color: #8d889c;
   background: #1a1820;
-  font-size: 8px;
+  font-size: 11px;
+  text-align: center;
 }
 .sg-global-search-tabs button.active {
   color: #c4adff;
@@ -123,12 +129,20 @@ export const SearchGlobalStyles = createGlobalStyle(css`
   display: flex;
   min-width: 0;
   align-items: center;
-  gap: 7px;
-  padding: 14px 0;
+  gap: 12px;
+  padding: 16px 0;
 }
 .sg-global-search-filters > .ant-select {
-  width: 86px;
+  width: 112px;
   flex: none;
+}
+.sg-global-search-filters .ant-select-selector {
+  min-height: 38px;
+  padding-inline: 11px !important;
+}
+.sg-global-search-filters .ant-select-selection-item,
+.sg-global-search-filters .ant-select-selection-placeholder {
+  font-size: 13px;
 }
 .sg-global-search-filters > label {
   display: inline-flex;
@@ -137,7 +151,7 @@ export const SearchGlobalStyles = createGlobalStyle(css`
   gap: 7px;
   margin-left: 2px;
   color: var(--sg-fg-2);
-  font-size: 9px;
+  font-size: 13px;
   cursor: pointer;
 }
 .sg-global-search-filters > label input {
@@ -170,16 +184,16 @@ export const SearchGlobalStyles = createGlobalStyle(css`
   background: #fff;
   transform: translateX(13px);
 }
-.sg-global-search-filters > div {
+.sg-global-search-sort {
   display: flex;
   align-items: center;
   gap: 4px;
   margin-left: auto;
   color: var(--sg-muted);
-  font-size: 9px;
+  font-size: 13px;
 }
-.sg-global-search-filters > div .ant-select {
-  width: 94px;
+.sg-global-search-sort .ant-select {
+  width: 112px;
 }
 .sg-global-search-layout {
   display: grid;
@@ -203,7 +217,7 @@ export const SearchGlobalStyles = createGlobalStyle(css`
 .sg-global-search-results h2 {
   margin: 0 0 7px 3px;
   color: var(--sg-fg-2);
-  font-size: 9.5px;
+  font-size: 13px;
   font-weight: 650;
 }
 .sg-global-search-result {
@@ -274,7 +288,7 @@ button.sg-global-search-icon {
   border: 0;
   color: var(--sg-fg);
   background: transparent;
-  font-size: 10px;
+  font-size: 14px;
   font-weight: 650;
   text-align: left;
   text-overflow: ellipsis;
@@ -287,7 +301,7 @@ button.sg-global-search-icon {
   border-radius: 3px;
   color: #b99cff;
   background: rgba(124, 60, 255, 0.12);
-  font-size: 7px;
+  font-size: 11px;
   font-weight: 500;
 }
 .sg-global-search-result p {
@@ -295,14 +309,14 @@ button.sg-global-search-icon {
   overflow: hidden;
   margin: 5px 0;
   color: var(--sg-fg-2);
-  font-size: 8.5px;
+  font-size: 13px;
   line-height: 1.55;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
 }
 .sg-global-search-result small {
   color: var(--sg-muted);
-  font-size: 7.5px;
+  font-size: 12px;
 }
 .sg-global-search-visual {
   position: relative;
@@ -325,11 +339,11 @@ button.sg-global-search-icon {
 }
 .sg-global-search-visual small {
   color: #9e83d7;
-  font-size: 5px;
+  font-size: 9px;
 }
 .sg-global-search-visual b {
   margin-top: 3px;
-  font-size: 7px;
+  font-size: 11px;
 }
 .sg-global-search-visual i {
   position: absolute;
@@ -348,7 +362,7 @@ button.sg-global-search-icon {
   border-radius: 4px;
   color: var(--sg-success);
   background: rgba(52, 199, 137, 0.1);
-  font-size: 7px;
+  font-size: 11px;
 }
 .sg-global-search-more {
   display: flex;
@@ -362,7 +376,7 @@ button.sg-global-search-icon {
   border-top: 1px solid var(--sg-border);
   color: var(--sg-fg-2);
   background: transparent;
-  font-size: 8.5px;
+  font-size: 13px;
   cursor: pointer;
 }
 .sg-global-search-preview {
@@ -387,7 +401,7 @@ button.sg-global-search-icon {
 .sg-global-search-preview > header h2 {
   margin: 0;
   overflow: hidden;
-  font-size: 11px;
+  font-size: 15px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -395,7 +409,7 @@ button.sg-global-search-icon {
   margin: 4px 0 0;
   overflow: hidden;
   color: var(--sg-muted);
-  font-size: 7.5px;
+  font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -437,7 +451,7 @@ button.sg-global-search-icon {
   border: 0;
   color: var(--sg-muted);
   background: transparent;
-  font-size: 9px;
+  font-size: 13px;
   cursor: pointer;
 }
 .sg-global-search-preview-tabs button.active {
@@ -460,11 +474,11 @@ button.sg-global-search-icon {
 .sg-global-search-preview-body h3 {
   margin: 0 0 10px;
   color: var(--sg-fg);
-  font-size: 12px;
+  font-size: 15px;
 }
 .sg-global-search-preview-body p,
 .sg-global-search-preview-body li {
-  font-size: 9px;
+  font-size: 13px;
   line-height: 1.8;
 }
 .sg-global-search-preview-body ul,
@@ -481,7 +495,7 @@ button.sg-global-search-icon {
 }
 .sg-global-search-chart > span {
   color: var(--sg-fg-2);
-  font-size: 8px;
+  font-size: 12px;
 }
 .sg-global-search-chart svg {
   display: block;
@@ -500,7 +514,7 @@ button.sg-global-search-icon {
   justify-content: space-between;
   margin-top: 6px;
   color: var(--sg-muted);
-  font-size: 6.5px;
+  font-size: 10px;
 }
 .sg-global-search-preview-empty {
   display: flex;
@@ -508,7 +522,7 @@ button.sg-global-search-icon {
   align-items: center;
   justify-content: center;
   color: var(--sg-muted);
-  font-size: 9px;
+  font-size: 13px;
 }
 .sg-global-search-related {
   display: grid;
@@ -520,7 +534,7 @@ button.sg-global-search-icon {
   border-radius: 5px;
   color: var(--sg-fg-2);
   background: #171820;
-  font-size: 9px;
+  font-size: 13px;
   text-align: left;
   cursor: pointer;
 }
@@ -559,7 +573,7 @@ button.sg-global-search-icon {
 }
 .sg-global-search-start p {
   margin: 0;
-  font-size: 10px;
+  font-size: 13px;
 }
 .sg-global-search-start > div {
   display: flex;
@@ -572,12 +586,12 @@ button.sg-global-search-icon {
   border-radius: 5px;
   color: var(--sg-fg-2);
   background: var(--sg-bg-2);
-  font-size: 9px;
+  font-size: 13px;
   cursor: pointer;
 }
 .sg-global-search-loading {
   gap: 10px;
-  font-size: 10px;
+  font-size: 13px;
 }
 .sg-global-search-loading svg {
   color: #b99cff;
@@ -598,7 +612,7 @@ button.sg-global-search-icon {
   color: #e1d8f8;
   background: #1c1830;
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.28);
-  font-size: 10px;
+  font-size: 13px;
   cursor: pointer;
 }
 
@@ -615,7 +629,7 @@ button.sg-global-search-icon {
   .sg-global-search-filters {
     flex-wrap: wrap;
   }
-  .sg-global-search-filters > div {
+  .sg-global-search-sort {
     margin-left: 0;
   }
 }
@@ -643,10 +657,10 @@ button.sg-global-search-icon {
     overflow-x: auto;
   }
   .sg-global-search-filters > .ant-select {
-    width: 82px;
+    width: 112px;
   }
   .sg-global-search-filters > label,
-  .sg-global-search-filters > div {
+  .sg-global-search-sort {
     flex: none;
   }
   .sg-global-search-layout {

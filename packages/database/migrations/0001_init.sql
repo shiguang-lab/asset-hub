@@ -522,3 +522,19 @@ CREATE TABLE IF NOT EXISTS usage_records (
   metadata_json TEXT NOT NULL DEFAULT '{}',
   created_at TEXT NOT NULL
 );
+
+-- Public document presence is keyed by publish + stable visitor identity. The
+-- table keeps the unique visitor count and the short-lived heartbeat state in
+-- one place so refreshes remain idempotent.
+CREATE TABLE IF NOT EXISTS publish_visitors (
+  publish_id TEXT NOT NULL REFERENCES publishes(id),
+  visitor_key TEXT NOT NULL,
+  user_id TEXT,
+  display_name TEXT,
+  avatar_url TEXT,
+  first_seen_at TEXT NOT NULL,
+  last_seen_at TEXT NOT NULL,
+  PRIMARY KEY (publish_id, visitor_key)
+);
+CREATE INDEX IF NOT EXISTS idx_publish_visitors_active
+  ON publish_visitors(publish_id, last_seen_at);

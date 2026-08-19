@@ -65,9 +65,20 @@ export async function uploadFile<T>(
   file: File,
   fields: Record<string, string> = {},
 ): Promise<T> {
+  return uploadFiles(path, [file], fields);
+}
+
+export async function uploadFiles<T>(
+  path: string,
+  files: File[],
+  fields: Record<string, string> = {},
+): Promise<T> {
   const form = new FormData();
   for (const [key, value] of Object.entries(fields)) form.append(key, value);
-  form.append("file", file);
+  for (const file of files) {
+    const relativePath = (file as File & { webkitRelativePath?: string }).webkitRelativePath;
+    form.append("file", file, relativePath || file.name);
+  }
   const res = await fetch(`${API_BASE}${path}`, {
     method: "POST",
     credentials: "include",

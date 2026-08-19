@@ -21,7 +21,7 @@ export async function buildApp(config: ServiceConfig): Promise<FastifyInstance> 
   const logger = createLogger("api", config.logLevel);
   const app = Fastify({
     logger: { level: config.logLevel, name: "api" },
-    bodyLimit: 16 * 1024 * 1024,
+    bodyLimit: 64 * 1024 * 1024,
     requestTimeout: 60_000,
   });
 
@@ -31,7 +31,10 @@ export async function buildApp(config: ServiceConfig): Promise<FastifyInstance> 
     exposedHeaders: ["etag", "x-request-id"],
   });
   void app.register(multipart, {
-    limits: { fileSize: 50 * 1024 * 1024, files: 1 },
+    // Directory imports arrive as one multipart part per file. Keep the per-file
+    // limit while allowing a reasonably sized documentation tree.
+    preservePath: true,
+    limits: { fileSize: 50 * 1024 * 1024, files: 2_000 },
   });
 
   const dbConfig = loadDatabaseConfig();

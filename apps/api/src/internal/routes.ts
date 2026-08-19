@@ -691,6 +691,8 @@ export function registerInternalRoutes(app: FastifyInstance): void {
       ? await ctx.store.getRelease(publish.activeReleaseId)
       : null;
     const asset = await ctx.store.getAssetAny(publish.assetId);
+    const publisher = asset ? await ctx.store.getUserProfile(asset.ownerSubject) : null;
+    const stats = await ctx.store.getPublishStats(publish.id);
     return {
       publish: {
         id: publish.id,
@@ -710,7 +712,26 @@ export function registerInternalRoutes(app: FastifyInstance): void {
             createdAt: release.createdAt,
           }
         : null,
-      asset: asset ? { id: asset.id, type: asset.type, title: asset.title } : null,
+      asset: asset
+        ? {
+            id: asset.id,
+            type: asset.type,
+            title: asset.title,
+            ownerSubject: asset.ownerSubject,
+            ownerDisplayName: asset.ownerDisplayName ?? null,
+          }
+        : null,
+      publisher: publisher
+        ? {
+            name: publisher.name,
+            avatarUrl: publisher.avatarUrl,
+          }
+        : null,
+      stats: {
+        views: stats.views,
+        uniqueVisitors: stats.uniqueVisitors,
+        activeViewers: stats.activeViewers,
+      },
     };
   });
 
@@ -784,6 +805,22 @@ export function registerInternalRoutes(app: FastifyInstance): void {
       .parse(req.body);
     await ctx.store.recordAccessEvent(body);
     return { ok: true };
+  });
+
+  app.post("/internal/v1/presence", async (req) => {
+    const body = z
+      .object({
+        publishId: z.string(),
+        releaseId: z.string().optional().nullable(),
+        visitorKey: z.string().min(8).max(180),
+        userId: z.string().max(180).optional().nullable(),
+        displayName: z.string().max(120).optional().nullable(),
+        avatarUrl: z.string().url().max(2_000).optional().nullable(),
+        referrerDomain: z.string().max(255).optional().nullable(),
+        deviceClass: z.string().max(40).optional().nullable(),
+      })
+      .parse(req.body);
+    return await ctx.store.recordPresence(body);
   });
 }
 

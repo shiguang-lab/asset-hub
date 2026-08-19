@@ -256,7 +256,13 @@ async function buildAndAttachRelease(
   const content = await ctx.store.readContent(assetId);
 
   // 内容级 asset: 引用：递归收集 + 私有权校验（快照打包，见 content-reference-implementation.md）
-  const referenced = await collectPublishReferences(ctx, workspaceId, content, new Set([asset.id]));
+  const referenced = await collectPublishReferences(
+    ctx,
+    workspaceId,
+    content,
+    new Set([asset.id]),
+    asset.title || asset.id,
+  );
   const referencePaths = new Map<string, string>();
   for (const [id, ref] of referenced) {
     const path = publishReferencePath(id, ref.asset);
@@ -501,6 +507,7 @@ async function collectPublishReferences(
   workspaceId: string,
   content: AssetContent | null,
   visited: Set<string>,
+  parentPath: string,
 ): Promise<Map<string, CollectedReference>> {
   const collected = new Map<string, CollectedReference>();
   const text = content?.text ?? "";
@@ -510,16 +517,29 @@ async function collectPublishReferences(
     visited.add(ref.assetId);
     const target = await ctx.store.getAsset(workspaceId, ref.assetId);
     if (!target) continue;
-    if (target.visibility === "private" || target.deletedAt) {
+    if (target.deletedAt) {
+      throw badRequest(
+        "REFERENCE_DELETED",
+        `发布「${parentPath}」失败：引用了已删除的资产「${target.title || ref.assetId}」(id=${ref.assetId})`,
+      );
+    }
+    if (target.visibility === "private") {
       throw badRequest(
         "REFERENCE_PRIVATE",
-        `被引用资产「${target.title || ref.assetId}」为私有或已删除，无法发布`,
+        `发布「${parentPath}」失败：引用了私有资产「${target.title || ref.assetId}」(id=${ref.assetId})`,
       );
     }
     const targetContent = await ctx.store.readContent(ref.assetId);
     collected.set(ref.assetId, { asset: target, content: targetContent, kind: ref.kind });
     if (target.type === "document" || target.type === "report" || target.type === "html") {
-      const nested = await collectPublishReferences(ctx, workspaceId, targetContent, visited);
+      const childPath = `${parentPath} → ${target.title || ref.assetId}`;
+      const nested = await collectPublishReferences(
+        ctx,
+        workspaceId,
+        targetContent,
+        visited,
+        childPath,
+      );
       for (const [nestedId, value] of nested) collected.set(nestedId, value);
     }
   }

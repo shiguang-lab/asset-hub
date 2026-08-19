@@ -25,7 +25,7 @@ function addHeadingAnchors(html: string, source: string): string {
   const anchors = extractHeadingAnchors(source);
   let index = 0;
   return html.replace(/<h([1-4])>/g, (_match, level: string) => {
-    const anchor = anchors[index++] ?? `sg-heading-${index - 1}`;
+    const anchor = anchors[index++] ?? `${index - 1}`;
     return `<h${level} id="${anchor}">`;
   });
 }
@@ -47,7 +47,7 @@ function extractHeadingAnchors(markdown: string): string[] {
       .replace(/[`*_~]/g, "")
       .trim();
     if (!text) continue;
-    anchors.push(`sg-heading-${anchors.length}-${slugify(text)}`);
+    anchors.push(`${anchors.length}-${slugify(text)}`);
   }
   return anchors;
 }
