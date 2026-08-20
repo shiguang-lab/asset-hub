@@ -174,12 +174,27 @@ export const DocumentsGlobalStyles = createGlobalStyle(css`
   text-align: right;
 }
 .sg-docs-table td {
-  height: 62px;
+  height: 64px;
   padding: 10px 14px;
   border-bottom: 1px solid var(--sg-border);
   color: var(--sg-fg-2);
   font-size: 13px;
   vertical-align: middle;
+}
+.sg-docs-table .sg-asset-name-copy {
+  gap: 0;
+  justify-content: center;
+  min-height: 32px;
+}
+.sg-docs-table .sg-vis,
+.sg-docs-table .sg-docs-actions {
+  vertical-align: middle;
+}
+.sg-docs-table .sg-vis {
+  line-height: 1;
+}
+.sg-docs-table .sg-vis svg {
+  margin-top: -2px;
 }
 .sg-docs-table tbody tr:last-of-type td {
   border-bottom: 0;

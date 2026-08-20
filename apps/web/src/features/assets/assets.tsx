@@ -1,6 +1,6 @@
-import { Button, Empty, formatRelative, Progress, Select, useToast } from "@shiguang/ui";
+import { Empty, formatRelative, Loading, useToast } from "@shiguang/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Dropdown, Input, Tooltip } from "antd";
+import { Button, Dropdown, Input, Progress, Select, Tooltip } from "antd";
 import {
   BookOpen,
   ChartNoAxesCombined,
@@ -27,10 +27,10 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { getAuthSession } from "../../auth/session.js";
-import { useDeleteConfirm } from "../../shared/useDeleteConfirm";
+import { canWriteWorkspace, getAuthSession } from "../../auth/session.js";
 import { type Asset, api } from "../../entities/api.js";
 import { isOwnedBySession, ownerDisplayName } from "../../shared/owner.js";
+import { useDeleteConfirm } from "../../shared/useDeleteConfirm";
 
 const TYPE_ORDER = [
   { id: "all", label: "全部" },
@@ -156,6 +156,7 @@ export function AssetsPage() {
   const { confirmDelete } = useDeleteConfirm();
   const queryClient = useQueryClient();
   const authSession = getAuthSession();
+  const workspaceWritable = canWriteWorkspace(authSession);
   const [type, setType] = useState("all");
   const [q, setQ] = useState("");
   const [visibility, setVisibility] = useState("all");
@@ -171,7 +172,7 @@ export function AssetsPage() {
 
   const includeDeleted = quick === "trash";
 
-  const { data } = useQuery<Asset[]>({
+  const { data, isLoading } = useQuery<Asset[]>({
     queryKey: ["assets", "all"],
     queryFn: loadAllAssets,
   });
@@ -456,7 +457,7 @@ export function AssetsPage() {
                       style={{ width: 140 }}
                     />
                     <Button
-                      size="sm"
+                      size="small"
                       onClick={() =>
                         tagInput &&
                         batchMutation.mutate({
@@ -469,8 +470,9 @@ export function AssetsPage() {
                       加标签
                     </Button>
                     <Button
-                      size="sm"
-                      variant="danger"
+                      size="small"
+                      type="primary"
+                      danger
                       onClick={() =>
                         confirmDeleteAssets(
                           all
@@ -485,20 +487,22 @@ export function AssetsPage() {
                 )}
                 {includeDeleted && (
                   <Button
-                    size="sm"
+                    size="small"
                     onClick={() => batchMutation.mutate({ action: "restore", ids: [...selected] })}
                   >
                     恢复
                   </Button>
                 )}
-                <Button size="sm" variant="ghost" onClick={() => setSelected(new Set())}>
+                <Button size="small" type="text" onClick={() => setSelected(new Set())}>
                   取消
                 </Button>
               </div>
             )}
           </div>
 
-          {paged.length === 0 ? (
+          {isLoading ? (
+            <Loading loading minHeight={320} />
+          ) : paged.length === 0 ? (
             <Empty
               title={
                 includeDeleted
@@ -602,14 +606,16 @@ export function AssetsPage() {
                             popupRender={() => (
                               <div className="sg-asset-menu" onClick={(e) => e.stopPropagation()}>
                                 <button type="button" onClick={() => navigate(assetHref(asset))}>
-                                  打开
+                                  打开资产
                                 </button>
-                                <button
-                                  type="button"
-                                  onClick={() => navigate(`/assets/${asset.id}`)}
-                                >
-                                  详情
-                                </button>
+                                {workspaceWritable && !includeDeleted ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => navigate(`/assets/${asset.id}/edit`)}
+                                  >
+                                    编辑资产
+                                  </button>
+                                ) : null}
                                 {!includeDeleted ? (
                                   <button
                                     type="button"
@@ -651,7 +657,7 @@ export function AssetsPage() {
             </div>
           )}
 
-          {paged.length > 0 && (
+          {!isLoading && paged.length > 0 && (
             <div className="sg-pager">
               <span className="sg-pager-total">共 {items.length} 项</span>
               <div className="sg-pager-pages">
@@ -694,7 +700,7 @@ export function AssetsPage() {
                 每页
                 <Select
                   value={String(pageSize)}
-                  onChange={(v) => setPageSize(Number(v))}
+                  onChange={(v: string) => setPageSize(Number(v))}
                   className="sg-pager-size-select"
                   options={[
                     { value: "10", label: "10 项" },
@@ -740,7 +746,7 @@ export function AssetsPage() {
               {storageSummary.used} <em>/ {storageSummary.quota}</em>
             </div>
             <div className="sg-storage-bar">
-              <Progress value={storageSummary.pct} />
+              <Progress percent={Math.max(0, Math.min(100, storageSummary.pct))} />
             </div>
             <div className="sg-subtle">
               {assetSummary.active} 个资产 · 回收站 {assetSummary.deleted} 个
@@ -788,15 +794,5 @@ export function AssetsPage() {
 }
 
 function assetHref(asset: Asset): string {
-  return asset.type === "document" || asset.type === "report"
-    ? `/documents/${asset.id}`
-    : asset.type === "html"
-      ? `/html/${asset.id}`
-      : asset.type === "presentation"
-        ? `/presentations/${asset.id}`
-        : asset.type === "dataset"
-          ? `/datasets/${asset.id}`
-          : asset.type === "knowledge"
-            ? `/knowledge/${asset.id}`
-            : `/assets/${asset.id}`;
+  return `/assets/${asset.id}`;
 }

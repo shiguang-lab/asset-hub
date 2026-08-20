@@ -1,7 +1,6 @@
-import { Button, Empty, Field, Modal, Select, Input as UiInput, useToast } from "@shiguang/ui";
-import { useDeleteConfirm } from "../../shared/useDeleteConfirm";
+import { Empty, Field, Loading, useToast } from "@shiguang/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Dropdown, Input, Tooltip } from "antd";
+import { Button, Dropdown, Input, Modal, Select, Tooltip } from "antd";
 import {
   BarChart3,
   Check,
@@ -43,6 +42,7 @@ import { useNavigate } from "react-router-dom";
 import { getAuthSession } from "../../auth/session.js";
 import { type Asset, api, publishedShortUrl } from "../../entities/api.js";
 import { isOwnedBySession, ownerDisplayName } from "../../shared/owner.js";
+import { useDeleteConfirm } from "../../shared/useDeleteConfirm";
 import {
   type DocumentImportResult,
   useShellBreadcrumb,
@@ -490,12 +490,18 @@ export function DocumentsPage() {
     queryClient,
   ]);
 
-  const { data: docs } = useQuery<{ items: Asset[]; total: number }>({
+  const { data: docs, isLoading: documentsLoading } = useQuery<{
+    items: Asset[];
+    total: number;
+  }>({
     queryKey: ["assets", "document"],
     queryFn: () => loadDocumentAssets(),
   });
 
-  const { data: trashed } = useQuery<{ items: Asset[]; total: number }>({
+  const { data: trashed, isLoading: trashedLoading } = useQuery<{
+    items: Asset[];
+    total: number;
+  }>({
     queryKey: ["assets", "document", "trash"],
     queryFn: () => loadDocumentAssets(true),
   });
@@ -521,6 +527,7 @@ export function DocumentsPage() {
   const demoMode = import.meta.env.DEV && (docs?.items?.length ?? 0) === 0;
   const all = useMemo(() => (demoMode ? DEMO_DOCUMENTS : (docs?.items ?? [])), [demoMode, docs]);
   const deleted = useMemo(() => trashed?.items ?? [], [trashed]);
+  const listLoading = filter === "trash" ? trashedLoading : documentsLoading;
   const visibleFolderIds = useMemo(() => {
     if (activeFolderId === "root") return null;
     const ids = new Set([activeFolderId]);
@@ -941,7 +948,7 @@ export function DocumentsPage() {
           >
             <FolderOpen size={15} /> 导入目录
           </Button>
-          <Button variant="primary" onClick={() => navigate("/documents/new")}>
+          <Button type="primary" onClick={() => navigate("/documents/new")}>
             <Plus size={15} /> 新建文档
           </Button>
         </div>
@@ -1086,7 +1093,9 @@ export function DocumentsPage() {
             </div>
           </div>
 
-          {filter === "all" && activeFolderId === "root" && (
+          {listLoading ? <Loading loading minHeight={360} /> : null}
+
+          {!listLoading && filter === "all" && activeFolderId === "root" && (
             <section className="sg-docs-recent-section">
               <div className="sg-row-between" style={{ marginBottom: 12 }}>
                 <h2 className="sg-h3" style={{ margin: 0 }}>
@@ -1112,7 +1121,7 @@ export function DocumentsPage() {
                   title="还没有文档"
                   hint="创建第一份 Markdown 文档，或从模板快速开始。"
                   action={
-                    <Button variant="primary" onClick={() => navigate("/documents/new")}>
+                    <Button type="primary" onClick={() => navigate("/documents/new")}>
                       <Plus size={15} /> 新建文档
                     </Button>
                   }
@@ -1155,7 +1164,9 @@ export function DocumentsPage() {
               <span className="sg-subtle">共 {items.length} 项</span>
             </div>
 
-            {paged.length === 0 ? (
+            {listLoading ? (
+              <Loading loading minHeight={300} />
+            ) : paged.length === 0 ? (
               <Empty
                 title={
                   filter === "trash"
@@ -1202,8 +1213,11 @@ export function DocumentsPage() {
                               <button type="button" onClick={() => navigate(`/documents/${d.id}`)}>
                                 打开
                               </button>
-                              <button type="button" onClick={() => navigate(`/assets/${d.id}`)}>
-                                详情
+                              <button
+                                type="button"
+                                onClick={() => navigate(`/documents/${d.id}/preview`)}
+                              >
+                                文档预览
                               </button>
                               <button type="button" onClick={() => copyLink(d)}>
                                 复制链接
@@ -1283,8 +1297,8 @@ export function DocumentsPage() {
                         </span>
                         <div className="sg-docs-actions">
                           <Button
-                            size="sm"
-                            variant="ghost"
+                            size="small"
+                            type="text"
                             className="sg-docs-action-btn ai"
                             title="AI 助手"
                             onClick={(e) => {
@@ -1295,8 +1309,8 @@ export function DocumentsPage() {
                             <Sparkles size={16} />
                           </Button>
                           <Button
-                            size="sm"
-                            variant="ghost"
+                            size="small"
+                            type="text"
                             className="sg-docs-action-btn"
                             title="分享"
                             onClick={(e) => {
@@ -1307,8 +1321,8 @@ export function DocumentsPage() {
                             <Share2 size={15} />
                           </Button>
                           <Button
-                            size="sm"
-                            variant="ghost"
+                            size="small"
+                            type="text"
                             className="sg-docs-action-btn"
                             title={d.publishedUrl ? "复制发布链接" : "发布"}
                             aria-label={d.publishedUrl ? "复制发布链接" : "发布"}
@@ -1410,8 +1424,8 @@ export function DocumentsPage() {
                           <td className="c-menu">
                             <div className="sg-docs-actions">
                               <Button
-                                size="sm"
-                                variant="ghost"
+                                size="small"
+                                type="text"
                                 className="sg-docs-action-btn ai"
                                 title="AI 助手"
                                 onClick={(e) => {
@@ -1422,8 +1436,8 @@ export function DocumentsPage() {
                                 <Sparkles size={16} />
                               </Button>
                               <Button
-                                size="sm"
-                                variant="ghost"
+                                size="small"
+                                type="text"
                                 className="sg-docs-action-btn"
                                 title="分享"
                                 onClick={(e) => {
@@ -1434,8 +1448,8 @@ export function DocumentsPage() {
                                 <Share2 size={15} />
                               </Button>
                               <Button
-                                size="sm"
-                                variant="ghost"
+                                size="small"
+                                type="text"
                                 className="sg-docs-action-btn"
                                 title={d.publishedUrl ? "复制发布链接" : "发布"}
                                 aria-label={d.publishedUrl ? "复制发布链接" : "发布"}
@@ -1461,9 +1475,9 @@ export function DocumentsPage() {
                                     </button>
                                     <button
                                       type="button"
-                                      onClick={() => navigate(`/assets/${d.id}`)}
+                                      onClick={() => navigate(`/documents/${d.id}/preview`)}
                                     >
-                                      详情
+                                      文档预览
                                     </button>
                                     <button type="button" onClick={() => copyLink(d)}>
                                       复制链接
@@ -1475,13 +1489,13 @@ export function DocumentsPage() {
                                       移动到目录
                                     </button>
                                     {filter !== "trash" ? (
-                                    <button
-                                      type="button"
-                                      className="danger"
-                                      onClick={() => confirmDeleteDocument(d)}
-                                    >
-                                      删除
-                                    </button>
+                                      <button
+                                        type="button"
+                                        className="danger"
+                                        onClick={() => confirmDeleteDocument(d)}
+                                      >
+                                        删除
+                                      </button>
                                     ) : (
                                       <button
                                         type="button"
@@ -1574,16 +1588,17 @@ export function DocumentsPage() {
 
       <Modal
         open={Boolean(moveDialog)}
-        onClose={() => setMoveDialog(null)}
+        onCancel={() => setMoveDialog(null)}
         title="移动到目录"
         footer={
           <div className="sg-docs-move-footer">
             <Button onClick={() => setMoveDialog(null)}>取消</Button>
-            <Button variant="primary" onClick={confirmMoveToFolder}>
+            <Button type="primary" onClick={confirmMoveToFolder}>
               移动
             </Button>
           </div>
         }
+        destroyOnHidden
       >
         <div className="sg-docs-move-dialog">
           <p className="sg-docs-move-hint">
@@ -1616,16 +1631,17 @@ export function DocumentsPage() {
 
       <Modal
         open={Boolean(folderDialog)}
-        onClose={() => setFolderDialog(null)}
+        onCancel={() => setFolderDialog(null)}
         title={folderDialog?.mode === "rename" ? "重命名目录" : "新建目录"}
         footer={
-          <Button variant="primary" disabled={!newFolderName.trim()} onClick={saveFolder}>
+          <Button type="primary" disabled={!newFolderName.trim()} onClick={saveFolder}>
             {folderDialog?.mode === "rename" ? "保存" : "创建目录"}
           </Button>
         }
+        destroyOnHidden
       >
         <Field label="目录名称">
-          <UiInput
+          <Input
             value={newFolderName}
             onChange={(event) => setNewFolderName(event.target.value)}
             onKeyDown={(event) => {

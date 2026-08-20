@@ -15,10 +15,13 @@
 ## 2. 路由
 
 ```text
-GET /p/{slug}                    # 文档/报告/演示入口
-GET /p/{slug}/assets/{path...}   # 当前 release 静态资源
-GET /s/{shortSlug}               # 短链
-POST /p/{slug}/unlock            # 密码校验
+GET /s/{shortSlug}               # 用户可见的分享入口（内部代理，不重定向）
+GET /s/{shortSlug}/r/{refKey}    # 当前 release 的引用文档快照
+GET /s/{shortSlug}/assets/{path...} # 当前 release 静态资源
+GET /p/{slug}                    # 兼容/内部 canonical 入口
+GET /p/{slug}/assets/{path...}   # 兼容/内部静态资源入口
+POST /s/{shortSlug}/unlock       # 分享入口密码校验
+POST /p/{slug}/unlock            # 兼容入口密码校验
 GET /health/live
 GET /health/ready
 ```
@@ -36,7 +39,7 @@ sequenceDiagram
   participant S3 as SeaweedFS
   participant N as NATS/analytics
 
-  V->>CDN: GET /p/slug
+  V->>CDN: GET /s/shareToken
   CDN->>G: cache miss
   G->>API: resolve publish metadata
   API-->>G: policy + release manifest

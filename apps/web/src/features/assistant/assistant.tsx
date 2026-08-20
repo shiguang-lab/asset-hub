@@ -1,5 +1,5 @@
-import { Button, Progress } from "@shiguang/ui";
 import { useQuery } from "@tanstack/react-query";
+import { Button, Progress } from "antd";
 import {
   ChartNoAxesCombined,
   FileText,
@@ -80,7 +80,7 @@ export function AssistantPage() {
             <span className="sg-subtle" style={{ fontSize: 12 }}>
               支持搜索、写作、调研、演示与数据分析
             </span>
-            <Button variant="primary" onClick={() => submit(input)} disabled={!input.trim()}>
+            <Button type="primary" onClick={() => submit(input)} disabled={!input.trim()}>
               <Send size={14} /> 发送
             </Button>
           </div>
@@ -124,7 +124,7 @@ export function AssistantPage() {
             <h3 className="sg-h3" style={{ margin: 0 }}>
               今日待办 {home?.runningTasks?.length ?? 0}
             </h3>
-            <Button size="sm" variant="ghost" onClick={() => navigate("/tasks")}>
+            <Button size="small" type="text" onClick={() => navigate("/tasks")}>
               查看任务
             </Button>
           </div>
@@ -143,7 +143,12 @@ export function AssistantPage() {
             <span className="sg-subtle">本月剩余 AI Credits</span>
             <strong>{credits.toLocaleString("zh-CN")}</strong>
           </div>
-          <Progress value={Math.min(100, Math.max(0, (credits / 10_000) * 100))} />
+          <Progress
+            percent={Math.max(
+              0,
+              Math.min(100, Math.min(100, Math.max(0, (credits / 10_000) * 100))),
+            )}
+          />
           <div className="sg-subtle" style={{ fontSize: 12, marginTop: 6 }}>
             额度上限 10,000
           </div>

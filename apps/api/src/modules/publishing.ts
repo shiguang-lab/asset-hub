@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   type AssetLinkResolver,
   type PresentationRenderDocument,
@@ -28,6 +29,24 @@ import type { AppContext } from "../types.js";
 export function registerPublishing(app: FastifyInstance): void {
   const ctx: AppContext = app.ctx;
 
+  app.get("/api/v1/assets/:id/publish-references", async (req) => {
+    const { id } = req.params as { id: string };
+    const asset = await requireAssetAccess(ctx, req.actor, id, "manage");
+    const content = await ctx.store.readContent(id);
+    const { references } = await collectPublishReferences(
+      ctx,
+      req.actor.workspaceId,
+      content,
+      new Set([asset.id]),
+      asset.title || asset.id,
+      true,
+    );
+    return {
+      references,
+      privateReferences: references.filter((ref) => ref.visibility === "private"),
+    };
+  });
+
   app.post("/api/v1/publishes", async (req) => {
     const body = z
       .object({
@@ -37,6 +56,7 @@ export function registerPublishing(app: FastifyInstance): void {
         expiresAt: z.string().nullish(),
         allowDownload: z.boolean().default(true),
         allowCopy: z.boolean().default(true),
+        allowPrivateReferences: z.boolean().default(false),
       })
       .parse(req.body);
     if (body.visibility === "password" && !body.password) {
@@ -47,6 +67,7 @@ export function registerPublishing(app: FastifyInstance): void {
     if (!["document", "html", "report", "presentation", "file", "dataset"].includes(asset.type)) {
       throw badRequest("NOT_PUBLISHABLE", "该类型资产暂不支持发布");
     }
+    const allowPrivate = body.allowPrivateReferences;
     const publish = await ctx.store.createPublish(req.actor, {
       assetId: body.assetId,
       visibility: body.visibility,
@@ -55,7 +76,7 @@ export function registerPublishing(app: FastifyInstance): void {
       allowDownload: body.allowDownload,
       allowCopy: body.allowCopy,
     });
-    await buildAndAttachRelease(ctx, req.actor.workspaceId, publish.id, asset.id);
+    await buildAndAttachRelease(ctx, req.actor.workspaceId, publish.id, asset.id, allowPrivate);
     const updated = await ctx.store.getPublish(req.actor.workspaceId, publish.id);
     if (!updated) throw notFound("发布");
     const shortUrl = `${ctx.config.publicGatewayBase}/s/${updated.shortSlug}`;
@@ -141,6 +162,7 @@ export function registerPublishing(app: FastifyInstance): void {
         expiresAt: z.string().nullable().optional(),
         allowDownload: z.boolean().optional(),
         allowCopy: z.boolean().optional(),
+        allowPrivateReferences: z.boolean().optional(),
       })
       .parse(req.body);
     const publish = await ctx.store.getPublish(req.actor.workspaceId, id);
@@ -173,7 +195,15 @@ export function registerPublishing(app: FastifyInstance): void {
         visibility: body.visibility,
       },
     );
-    if (updated) await buildAndAttachRelease(ctx, req.actor.workspaceId, id, updated.assetId);
+    if (updated) {
+      await buildAndAttachRelease(
+        ctx,
+        req.actor.workspaceId,
+        id,
+        updated.assetId,
+        body.allowPrivateReferences ?? false,
+      );
+    }
     return updated
       ? {
           ...updated,
@@ -220,7 +250,14 @@ export function registerPublishing(app: FastifyInstance): void {
     const { id } = req.params as { id: string };
     const publish = await ctx.store.getPublish(req.actor.workspaceId, id);
     if (!publish) throw notFound("发布");
-    await buildAndAttachRelease(ctx, req.actor.workspaceId, id, publish.assetId);
+    const body = z.object({ allowPrivateReferences: z.boolean().optional() }).parse(req.body ?? {});
+    await buildAndAttachRelease(
+      ctx,
+      req.actor.workspaceId,
+      id,
+      publish.assetId,
+      body.allowPrivateReferences ?? false,
+    );
     const updated = await ctx.store.getPublish(req.actor.workspaceId, id);
     await ctx.bus.emit({
       eventId: nextId("evt"),
@@ -248,6 +285,7 @@ async function buildAndAttachRelease(
   workspaceId: string,
   publishId: string,
   assetId: string,
+  allowPrivate = false,
 ): Promise<void> {
   const publish = await ctx.store.getPublish(workspaceId, publishId);
   if (!publish) throw notFound("发布");
@@ -256,12 +294,13 @@ async function buildAndAttachRelease(
   const content = await ctx.store.readContent(assetId);
 
   // 内容级 asset: 引用：递归收集 + 私有权校验（快照打包，见 content-reference-implementation.md）
-  const referenced = await collectPublishReferences(
+  const { collected: referenced } = await collectPublishReferences(
     ctx,
     workspaceId,
     content,
     new Set([asset.id]),
     asset.title || asset.id,
+    allowPrivate,
   );
   const referencePaths = new Map<string, string>();
   for (const [id, ref] of referenced) {
@@ -348,9 +387,11 @@ async function buildAndAttachRelease(
   // 渲染被引用文档 + 打包被引用文件（图片/文件 blob），并把快照写入 manifest
   const referenceSnapshot: Array<{
     assetId: string;
+    refKey: string;
     versionId: string;
     path: string;
     kind: "link" | "image";
+    title: string;
   }> = [];
   const manifestFiles = bundle.manifest.files as Array<Record<string, unknown>>;
   for (const [id, ref] of referenced) {
@@ -366,15 +407,25 @@ async function buildAndAttachRelease(
           : { markdown: ref.content?.text ?? "" }),
         resolveAssetLink,
       });
-      const nestedIndex = nested.files.find((file) => file.path === "index.html");
+      const nestedIndex = nested.files.find((file) =>
+        ref.asset.type === "html" ? file.path === "index.html" : file.path === "index.md",
+      );
       if (nestedIndex) {
-        bundle.files.push({ path, content: nestedIndex.content, mediaType: "text/html" });
+        const mediaType = nestedIndex.mediaType;
+        bundle.files.push({ path, content: nestedIndex.content, mediaType });
         manifestFiles.push({
           path,
-          mediaType: "text/html",
+          mediaType,
           size: Buffer.byteLength(nestedIndex.content),
         });
-        referenceSnapshot.push({ assetId: id, versionId, path, kind: "link" });
+        referenceSnapshot.push({
+          assetId: id,
+          refKey: publishReferenceKey(publish.id, id),
+          versionId,
+          path,
+          kind: "link",
+          title: ref.asset.title,
+        });
       }
     } else if (ref.asset.type === "presentation") {
       const presentationHtml =
@@ -392,7 +443,14 @@ async function buildAndAttachRelease(
           mediaType: "text/html",
           size: Buffer.byteLength(presentationHtml),
         });
-        referenceSnapshot.push({ assetId: id, versionId, path, kind: "link" });
+        referenceSnapshot.push({
+          assetId: id,
+          refKey: publishReferenceKey(publish.id, id),
+          versionId,
+          path,
+          kind: "link",
+          title: ref.asset.title,
+        });
       }
     } else if (
       ref.asset.type === "dataset" ||
@@ -405,14 +463,28 @@ async function buildAndAttachRelease(
       );
       bundle.files.push({ path, content: viewer, mediaType: "text/html" });
       manifestFiles.push({ path, mediaType: "text/html", size: Buffer.byteLength(viewer) });
-      referenceSnapshot.push({ assetId: id, versionId, path, kind: "link" });
+      referenceSnapshot.push({
+        assetId: id,
+        refKey: publishReferenceKey(publish.id, id),
+        versionId,
+        path,
+        kind: "link",
+        title: ref.asset.title,
+      });
     } else if (ref.asset.type === "file") {
       const blob = await ctx.store.getAssetBlob(workspaceId, id);
       if (!blob) continue;
       const data = await ctx.storage.get(blob.objectKey);
       if (!data) continue;
       binaryFiles.push({ path, data, mediaType: blob.mediaType });
-      referenceSnapshot.push({ assetId: id, versionId, path, kind: ref.kind });
+      referenceSnapshot.push({
+        assetId: id,
+        refKey: publishReferenceKey(publish.id, id),
+        versionId,
+        path,
+        kind: ref.kind,
+        title: ref.asset.title,
+      });
     }
   }
   bundle.manifest.references = referenceSnapshot;
@@ -426,19 +498,19 @@ async function buildAndAttachRelease(
   bundle.manifest.attachments = attachments;
 
   const index = bundle.files.find((file) => file.path === "index.html");
-  if (publish.allowDownload) {
+  if (publish.allowDownload && index) {
     const actions = [
       ...(mainDownload
         ? [
             {
               label: asset.type === "file" ? "下载文件" : "下载文档",
-              href: `/p/${publish.slug}/download`,
+              href: `/s/${publish.shortSlug}/download`,
             },
           ]
         : []),
       ...attachments.map((attachment) => ({
         label: `下载附件：${attachment.name}`,
-        href: `/p/${publish.slug}/attachments/${attachment.id}`,
+        href: `/s/${publish.shortSlug}/attachments/${attachment.id}`,
       })),
     ];
     if (index) index.content = injectPublishDownloadActions(index.content, actions);
@@ -498,8 +570,27 @@ function publishReferencePath(assetId: string, target: Asset): string | null {
   if (target.type === "file") {
     return `refs/${assetId}/${safeReleaseFileName(target.title || "file")}`;
   }
-  // document/report/html/presentation/dataset/chart/source 都渲染为 HTML 页面
-  return `refs/${assetId}/index.html`;
+  // document/report are rendered by the SSR reader; other asset types keep
+  // their existing HTML/manifest snapshot representation.
+  return target.type === "document" || target.type === "report"
+    ? `refs/${assetId}/index.md`
+    : `refs/${assetId}/index.html`;
+}
+
+function publishReferenceKey(publishId: string, assetId: string): string {
+  return createHash("sha256").update(`${publishId}:${assetId}`).digest("base64url").slice(0, 12);
+}
+
+interface PublishReference {
+  id: string;
+  title: string;
+  type: string;
+  visibility: Asset["visibility"];
+}
+
+interface CollectedReferences {
+  collected: Map<string, CollectedReference>;
+  references: PublishReference[];
 }
 
 async function collectPublishReferences(
@@ -508,8 +599,10 @@ async function collectPublishReferences(
   content: AssetContent | null,
   visited: Set<string>,
   parentPath: string,
-): Promise<Map<string, CollectedReference>> {
+  allowPrivate: boolean,
+): Promise<CollectedReferences> {
   const collected = new Map<string, CollectedReference>();
+  const references: PublishReference[] = [];
   const text = content?.text ?? "";
   const refs = [...parseAssetReferences(text), ...parseHtmlAssetReferences(text)];
   for (const ref of refs) {
@@ -523,12 +616,16 @@ async function collectPublishReferences(
         `发布「${parentPath}」失败：引用了已删除的资产「${target.title || ref.assetId}」(id=${ref.assetId})`,
       );
     }
-    if (target.visibility === "private") {
-      throw badRequest(
-        "REFERENCE_PRIVATE",
-        `发布「${parentPath}」失败：引用了私有资产「${target.title || ref.assetId}」(id=${ref.assetId})`,
-      );
-    }
+    const isPrivate = target.visibility === "private";
+    references.push({
+      id: target.id,
+      title: target.title || ref.assetId,
+      type: target.type,
+      visibility: target.visibility,
+    });
+    // A private reference can remain in the source document while being
+    // intentionally excluded from this public release snapshot.
+    if (isPrivate && !allowPrivate) continue;
     const targetContent = await ctx.store.readContent(ref.assetId);
     collected.set(ref.assetId, { asset: target, content: targetContent, kind: ref.kind });
     if (target.type === "document" || target.type === "report" || target.type === "html") {
@@ -539,11 +636,13 @@ async function collectPublishReferences(
         targetContent,
         visited,
         childPath,
+        allowPrivate,
       );
-      for (const [nestedId, value] of nested) collected.set(nestedId, value);
+      for (const [nestedId, value] of nested.collected) collected.set(nestedId, value);
+      references.push(...nested.references);
     }
   }
-  return collected;
+  return { collected, references };
 }
 
 function generatedDownloadFor(

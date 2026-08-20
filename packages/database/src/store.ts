@@ -2203,12 +2203,6 @@ export class Store {
     views: number;
     uniqueVisitors: number;
     daily: Array<{ day: string; views: number; uniqueVisitors: number }>;
-    activeViewers: Array<{
-      visitorKey: string;
-      userId: string | null;
-      displayName: string | null;
-      avatarUrl: string | null;
-    }>;
   }> {
     const views = num(
       (await this.db
@@ -2228,38 +2222,27 @@ export class Store {
          ORDER BY day DESC LIMIT 30`,
       )
       .all(publishId)) as Array<{ day: string; views: number; unique_visitors: number }>;
-    const uniqueRow = (await this.db
-      .prepare(`SELECT COUNT(*) AS n FROM publish_visitors WHERE publish_id = ?`)
-      .get(publishId)) as { n: number };
-    const legacyUniqueRow = (await this.db
-      .prepare(
-        "SELECT COUNT(DISTINCT hashed_visitor) AS n FROM publish_access_events WHERE publish_id = ? AND hashed_visitor IS NOT NULL",
-      )
-      .get(publishId)) as { n: number };
-    const activeSince = new Date(Date.now() - 90_000).toISOString();
-    const activeRows = (await this.db
-      .prepare(
-        `SELECT visitor_key, user_id, display_name, avatar_url
-         FROM publish_visitors
-         WHERE publish_id = ? AND last_seen_at >= ?
-         ORDER BY last_seen_at DESC LIMIT 12`,
-      )
-      .all(publishId, activeSince)) as Row[];
     return {
       views,
-      uniqueVisitors: Math.max(Number(uniqueRow?.n ?? 0), Number(legacyUniqueRow?.n ?? 0)),
+      uniqueVisitors: await this.getPublishVisitorCount(publishId),
       daily: rows.map((row) => ({
         day: str(row.day),
         views: Number(row.views ?? 0),
         uniqueVisitors: Number(row.unique_visitors ?? 0),
       })),
-      activeViewers: activeRows.map((row) => ({
-        visitorKey: str(row.visitor_key),
-        userId: row.user_id === null ? null : str(row.user_id),
-        displayName: row.display_name === null ? null : str(row.display_name),
-        avatarUrl: row.avatar_url === null ? null : str(row.avatar_url),
-      })),
     };
+  }
+
+  async getPublishVisitorCount(publishId: string): Promise<number> {
+    const uniqueRow = (await this.db
+      .prepare("SELECT COUNT(*) AS n FROM publish_visitors WHERE publish_id = ?")
+      .get(publishId)) as { n?: number } | undefined;
+    const legacyUniqueRow = (await this.db
+      .prepare(
+        "SELECT COUNT(DISTINCT hashed_visitor) AS n FROM publish_access_events WHERE publish_id = ? AND hashed_visitor IS NOT NULL",
+      )
+      .get(publishId)) as { n?: number } | undefined;
+    return Math.max(Number(uniqueRow?.n ?? 0), Number(legacyUniqueRow?.n ?? 0));
   }
 
   async getWorkspacePublishStats(

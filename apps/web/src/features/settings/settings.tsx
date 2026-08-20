@@ -1,17 +1,6 @@
-import {
-  Button,
-  Card,
-  Field,
-  formatDate,
-  Input,
-  Scrollbar,
-  Select,
-  Switch,
-  Table,
-  Tabs,
-  useToast,
-} from "@shiguang/ui";
+import { Field, formatDate, Scrollbar, Table, useToast } from "@shiguang/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Button, Card, Input, Select, Switch, Tabs } from "antd";
 import { useState } from "react";
 import {
   addOrganizationMember,
@@ -30,23 +19,23 @@ export function SettingsPage() {
   const session = getAuthSession();
   const canManageWorkspace = isWorkspaceAdmin(session);
   const tabs = [
-    { id: "profile", label: "个人与 AI" },
-    { id: "team", label: "团队与权限" },
+    { key: "profile", label: "个人与 AI" },
+    { key: "team", label: "团队与权限" },
     ...(canManageWorkspace
       ? [
-          { id: "mcp", label: "MCP 连接" },
-          { id: "tokens", label: "API Token" },
-          { id: "git", label: "Git 集成" },
-          { id: "domains", label: "自定义域名" },
-          { id: "publish", label: "发布" },
-          { id: "audit", label: "安全审计" },
+          { key: "mcp", label: "MCP 连接" },
+          { key: "tokens", label: "API Token" },
+          { key: "git", label: "Git 集成" },
+          { key: "domains", label: "自定义域名" },
+          { key: "publish", label: "发布" },
+          { key: "audit", label: "安全审计" },
         ]
       : []),
   ];
   return (
     <div>
       <h1 className="sg-h1 sg-mb">设置</h1>
-      <Tabs tabs={tabs} active={tab} onChange={setTab} />
+      <Tabs items={tabs} activeKey={tab} onChange={setTab} />
       {tab === "profile" && <ProfileSettings />}
       {tab === "team" && <TeamSettings />}
       {tab === "mcp" && <McpSettings />}
@@ -162,7 +151,7 @@ function GitSettings() {
           </Field>
         </div>
         <Button
-          variant="primary"
+          type="primary"
           disabled={!name.trim() || !repoUrl.trim()}
           onClick={() => create.mutate()}
         >
@@ -195,10 +184,10 @@ function GitSettings() {
                 </td>
                 <td>
                   <div className="sg-row">
-                    <Button size="sm" onClick={() => sync.mutate(c.id)}>
+                    <Button size="small" onClick={() => sync.mutate(c.id)}>
                       同步
                     </Button>
-                    <Button size="sm" variant="danger" onClick={() => remove.mutate(c.id)}>
+                    <Button size="small" type="primary" danger onClick={() => remove.mutate(c.id)}>
                       删除
                     </Button>
                   </div>
@@ -278,7 +267,7 @@ function DomainSettings() {
               onChange={(e) => setDomain(e.target.value)}
               placeholder="docs.example.com"
             />
-            <Button variant="primary" disabled={!domain.trim()} onClick={() => create.mutate()}>
+            <Button type="primary" disabled={!domain.trim()} onClick={() => create.mutate()}>
               添加
             </Button>
           </div>
@@ -309,7 +298,7 @@ function DomainSettings() {
                 className=""
                 style={{ width: 220 }}
               />
-              <Button size="sm" variant="danger" onClick={() => remove.mutate(d.id)}>
+              <Button size="small" type="primary" danger onClick={() => remove.mutate(d.id)}>
                 删除
               </Button>
             </div>
@@ -325,7 +314,7 @@ function DomainSettings() {
                   placeholder="粘贴验证 Token"
                   style={{ maxWidth: 240 }}
                 />
-                <Button size="sm" variant="primary" onClick={() => verify.mutate(d.id)}>
+                <Button size="small" type="primary" onClick={() => verify.mutate(d.id)}>
                   验证
                 </Button>
               </div>
@@ -419,8 +408,8 @@ function TeamSettings() {
             style={{ width: 120 }}
           />
           <Button
-            variant="primary"
-            size="sm"
+            type="primary"
+            size="small"
             disabled={!loginName.trim() || invite.isPending}
             onClick={() => invite.mutate()}
           >
@@ -467,8 +456,9 @@ function TeamSettings() {
                 <td>
                   {(canManage || member.userId === session.id) && (
                     <Button
-                      size="sm"
-                      variant="danger"
+                      size="small"
+                      type="primary"
+                      danger
                       disabled={remove.isPending}
                       onClick={() => remove.mutate(member.userId)}
                     >
@@ -550,7 +540,7 @@ function ProfileSettings() {
         <span>邮件通知（P1）</span>
         <Switch checked={notify || (data?.profile.notifyEmail ?? false)} onChange={setNotify} />
       </div>
-      <Button variant="primary" className="sg-mt" onClick={() => save.mutate()}>
+      <Button type="primary" className="sg-mt" onClick={() => save.mutate()}>
         保存
       </Button>
     </Card>
@@ -634,8 +624,9 @@ function McpSettings() {
               </Field>
             </div>
             <Button
-              size="sm"
-              variant="danger"
+              size="small"
+              type="primary"
+              danger
               className="sg-mt"
               onClick={() => update.mutate({ enabled: false })}
             >
@@ -726,7 +717,7 @@ function TokenSettings() {
         <Switch checked={write} onChange={setWrite} />
       </div>
       <Button
-        variant="primary"
+        type="primary"
         className="sg-mt"
         disabled={!name.trim()}
         onClick={() => create.mutate()}
@@ -761,7 +752,7 @@ function TokenSettings() {
               <td>{t.revokedAt ? "已撤销" : "有效"}</td>
               <td>
                 {!t.revokedAt && (
-                  <Button size="sm" variant="danger" onClick={() => revoke.mutate(t.id)}>
+                  <Button size="small" type="primary" danger onClick={() => revoke.mutate(t.id)}>
                     撤销
                   </Button>
                 )}

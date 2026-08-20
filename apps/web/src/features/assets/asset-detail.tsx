@@ -1,21 +1,7 @@
-import {
-  Button,
-  Card,
-  Empty,
-  Field,
-  formatDate,
-  Input,
-  Modal,
-  Scrollbar,
-  Select,
-  StatusBadge,
-  Table,
-  Tabs,
-  Tag,
-  useToast,
-} from "@shiguang/ui";
+import { Empty, Field, formatDate, Scrollbar, StatusBadge, Table, useToast } from "@shiguang/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Download } from "lucide-react";
+import { Button, Card, Input, Modal, Select, Switch, Tabs, Tag } from "antd";
+import { Download, FilePenLine, Pencil } from "lucide-react";
 import { useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { canWriteWorkspace, getAuthSession, isWorkspaceAdmin } from "../../auth/session.js";
@@ -28,8 +14,9 @@ import {
 } from "../../entities/api.js";
 import { DocumentMarkdown } from "../../shared/document-markdown.js";
 import { SandboxHtmlPreview } from "../../shared/sandbox-preview.js";
-import { PublishDialog } from "../publishing/publish-dialog.js";
 import { useDeleteConfirm } from "../../shared/useDeleteConfirm";
+import { PublishDialog } from "../publishing/publish-dialog.js";
+import { assetContentEditorHref } from "./asset-edit.js";
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -133,6 +120,17 @@ export function AssetDetailPage() {
     },
   });
 
+  const toggleVisibility = useMutation({
+    mutationFn: (visibility: "private" | "public") =>
+      api<Asset>(`/assets/${id}`, { method: "PATCH", body: { visibility } }),
+    onSuccess: (updated) => {
+      toast("success", updated.visibility === "public" ? "资产已设为公开" : "资产已设为私有");
+      void queryClient.invalidateQueries({ queryKey: ["asset", id] });
+      void queryClient.invalidateQueries({ queryKey: ["assets"] });
+    },
+    onError: (error: Error) => toast("error", error.message),
+  });
+
   const deleteAsset = useMutation({
     mutationFn: () => api(`/assets/${id}`, { method: "DELETE" }),
     onSuccess: () => {
@@ -146,6 +144,7 @@ export function AssetDetailPage() {
   const canManageAsset = workspaceAdmin || asset.ownerSubject === session?.id;
   const published = publishes?.find((p) => p.assetId === asset.id && p.status === "active");
   const content = asset.content;
+  const contentEditorHref = assetContentEditorHref(asset);
 
   return (
     <div className="sg-asset-detail-page">
@@ -163,21 +162,34 @@ export function AssetDetailPage() {
           </div>
         </div>
         <div className="sg-row">
-          {workspaceWritable && (asset.type === "document" || asset.type === "report") ? (
-            <Button onClick={() => navigate(`/documents/${asset.id}`)}>编辑</Button>
+          {canManageAsset ? (
+            <span className="sg-row" title="独立控制资产本身的公有/私有状态">
+              <span className="sg-subtle">{asset.visibility === "public" ? "公开" : "私有"}</span>
+              <Switch
+                checked={asset.visibility === "public"}
+                checkedChildren="公开"
+                unCheckedChildren="私有"
+                loading={toggleVisibility.isPending}
+                onChange={(checked) => toggleVisibility.mutate(checked ? "public" : "private")}
+              />
+            </span>
           ) : null}
-          {workspaceWritable && asset.type === "html" ? (
-            <Button onClick={() => navigate(`/html/${asset.id}`)}>编辑</Button>
+          {workspaceWritable ? (
+            <Button
+              icon={<Pencil size={15} />}
+              onClick={() => navigate(`/assets/${asset.id}/edit`)}
+            >
+              编辑资产
+            </Button>
           ) : null}
-          {workspaceWritable && asset.type === "presentation" ? (
-            <Button onClick={() => navigate(`/presentations/${asset.id}`)}>编辑</Button>
-          ) : null}
-          {asset.type === "dataset" ? (
-            <Button onClick={() => navigate(`/datasets/${asset.id}`)}>打开数据</Button>
+          {workspaceWritable && contentEditorHref ? (
+            <Button icon={<FilePenLine size={15} />} onClick={() => navigate(contentEditorHref)}>
+              编辑内容
+            </Button>
           ) : null}
           {asset.type === "file" ? (
             <Button
-              variant="primary"
+              type="primary"
               onClick={() =>
                 void downloadFile(`/assets/${asset.id}/download`, asset.title).catch((error) =>
                   toast("error", error instanceof Error ? error.message : "下载失败"),
@@ -207,17 +219,18 @@ export function AssetDetailPage() {
           )}
           {canManageAsset &&
             (published ? (
-              <Button variant="primary" onClick={() => setPublishOpen(true)}>
+              <Button type="primary" onClick={() => setPublishOpen(true)}>
                 发布设置
               </Button>
             ) : (
-              <Button variant="primary" onClick={() => setPublishOpen(true)}>
+              <Button type="primary" onClick={() => setPublishOpen(true)}>
                 发布
               </Button>
             ))}
           {canManageAsset && (
             <Button
-              variant="danger"
+              type="primary"
+              danger
               onClick={() =>
                 confirmDelete({
                   title: `删除资产「${asset.title}」？`,
@@ -233,13 +246,13 @@ export function AssetDetailPage() {
       </div>
 
       <Tabs
-        tabs={[
-          { id: "content", label: "内容" },
-          { id: "info", label: "信息" },
-          { id: "versions", label: "版本" },
-          { id: "relations", label: "关系" },
+        items={[
+          { key: "content", label: "内容" },
+          { key: "info", label: "信息" },
+          { key: "versions", label: "版本" },
+          { key: "relations", label: "关系" },
         ]}
-        active={tab}
+        activeKey={tab}
         onChange={setTab}
       />
 
@@ -256,7 +269,7 @@ export function AssetDetailPage() {
                     : ""}
                 </span>
                 <Button
-                  variant="primary"
+                  type="primary"
                   onClick={() =>
                     void downloadFile(`/assets/${asset.id}/download`, asset.title).catch((error) =>
                       toast("error", error instanceof Error ? error.message : "下载失败"),
@@ -333,8 +346,9 @@ export function AssetDetailPage() {
                               <span className="sg-badge">{entry.principal_id}</span>
                               <span className="sg-badge sg-badge-accent">{entry.role}</span>
                               <Button
-                                size="sm"
-                                variant="danger"
+                                size="small"
+                                type="primary"
+                                danger
                                 onClick={() => revokeShare.mutate(entry.principal_id)}
                               >
                                 取消
@@ -375,7 +389,7 @@ export function AssetDetailPage() {
                     <td>
                       {canManageAsset && (
                         <Button
-                          size="sm"
+                          size="small"
                           onClick={() =>
                             api(`/assets/${id}/versions/${v.id}/restore`, { method: "POST" }).then(
                               () => toast("success", "已恢复该版本"),
@@ -411,7 +425,7 @@ export function AssetDetailPage() {
                     </div>
                     {target && (
                       <Button
-                        size="sm"
+                        size="small"
                         onClick={() => {
                           const href =
                             target.type === "document" || target.type === "report"
@@ -437,13 +451,14 @@ export function AssetDetailPage() {
 
       <Modal
         open={kbModal}
-        onClose={() => setKbModal(false)}
+        onCancel={() => setKbModal(false)}
         title="加入知识库"
         footer={
-          <Button variant="primary" disabled={!kbId} onClick={() => addToKb.mutate(kbId)}>
+          <Button type="primary" disabled={!kbId} onClick={() => addToKb.mutate(kbId)}>
             加入
           </Button>
         }
+        destroyOnHidden
       >
         <Select
           value={kbId}
@@ -460,13 +475,14 @@ export function AssetDetailPage() {
 
       <Modal
         open={shareModal}
-        onClose={() => setShareModal(false)}
+        onCancel={() => setShareModal(false)}
         title="分享给工作区成员"
         footer={
-          <Button variant="primary" disabled={!shareSubject.trim()} onClick={() => share.mutate()}>
+          <Button type="primary" disabled={!shareSubject.trim()} onClick={() => share.mutate()}>
             分享
           </Button>
         }
+        destroyOnHidden
       >
         <div className="sg-col">
           <Field label="成员 subject">

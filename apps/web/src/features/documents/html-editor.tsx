@@ -2,8 +2,9 @@ import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { html } from "@codemirror/lang-html";
 import { Compartment, EditorState } from "@codemirror/state";
 import { EditorView, highlightActiveLine, keymap, lineNumbers } from "@codemirror/view";
-import { Button, useToast } from "@shiguang/ui";
+import { useToast } from "@shiguang/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Button } from "antd";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { type Asset, api } from "../../entities/api.js";
@@ -106,10 +107,10 @@ export function HtmlEditorPage() {
           }}
         />
         <div className="sg-row">
-          <Button size="sm" onClick={() => setPreview((p) => !p)}>
+          <Button size="small" onClick={() => setPreview((p) => !p)}>
             {preview ? "回到源码" : "运行预览"}
           </Button>
-          <Button size="sm" variant="primary" onClick={save}>
+          <Button size="small" type="primary" onClick={save}>
             保存
           </Button>
         </div>

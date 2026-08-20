@@ -1,4 +1,5 @@
-import { Button, Empty } from "@shiguang/ui";
+import { Empty } from "@shiguang/ui";
+import { Button } from "antd";
 import { Link } from "react-router-dom";
 
 export function NotFoundPage() {
@@ -8,7 +9,7 @@ export function NotFoundPage() {
       hint="该页面不存在或链接已失效。"
       action={
         <Link to="/">
-          <Button variant="primary">返回首页</Button>
+          <Button type="primary">返回首页</Button>
         </Link>
       }
     />

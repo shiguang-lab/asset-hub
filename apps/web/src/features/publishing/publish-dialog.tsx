@@ -1,5 +1,6 @@
-import { Button, Field, Input, Modal, Switch, useToast } from "@shiguang/ui";
+import { Field, useToast } from "@shiguang/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Button, Input, Modal, Switch } from "antd";
 import QRCode from "qrcode";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { type Asset, api, PUBLIC_GATEWAY_BASE, type Publish } from "../../entities/api.js";
@@ -12,6 +13,13 @@ interface PublishDraft {
   expiresAt: string;
   allowDownload: boolean;
   allowCopy: boolean;
+}
+
+interface PublishReference {
+  id: string;
+  title: string;
+  type: string;
+  visibility: string;
 }
 
 const ACCESS_OPTIONS: Array<{ id: ShareVisibility; label: string; description: string }> = [
@@ -69,6 +77,8 @@ export function PublishDialog({
   const [activePublish, setActivePublish] = useState<Publish | null>(null);
   const [qrUrl, setQrUrl] = useState("");
   const [copied, setCopied] = useState(false);
+  const [referenceConfirmOpen, setReferenceConfirmOpen] = useState(false);
+  const [referenceDecision, setReferenceDecision] = useState<boolean | null>(null);
   const lastSyncedPublishId = useRef<string | null>(null);
 
   const { data: existingPublishes = [] } = useQuery<Publish[]>({
@@ -76,6 +86,14 @@ export function PublishDialog({
     queryFn: () => api<Publish[]>("/publishes", { params: { assetId: asset.id } }),
     enabled: open,
   });
+  const { data: referenceData, isLoading: referencesLoading } = useQuery<{
+    references: PublishReference[];
+  }>({
+    queryKey: ["publish-references", asset.id],
+    queryFn: () => api(`/assets/${asset.id}/publish-references`),
+    enabled: open,
+  });
+  const references = referenceData?.references ?? [];
   const existingPublish = existingPublishes.find((publish) => publish.status === "active") ?? null;
   const publish = activePublish ?? existingPublish;
   const shareUrl = publish?.shortUrl ?? "";
@@ -94,6 +112,8 @@ export function PublishDialog({
     setActivePublish(null);
     setQrUrl("");
     setCopied(false);
+    setReferenceConfirmOpen(false);
+    setReferenceDecision(null);
   }, [open]);
 
   // Sync form fields once per publish identity (initial open, or when the query
@@ -166,10 +186,10 @@ export function PublishDialog({
   });
 
   const createPublish = useMutation({
-    mutationFn: () =>
+    mutationFn: (allowPrivateReferences: boolean) =>
       api<Publish>("/publishes", {
         method: "POST",
-        body: { assetId: asset.id, ...settingsPayload() },
+        body: { assetId: asset.id, ...settingsPayload(), allowPrivateReferences },
       }),
     onSuccess: (next) => {
       setActivePublish(next);
@@ -182,8 +202,11 @@ export function PublishDialog({
   });
 
   const updatePublish = useMutation({
-    mutationFn: () =>
-      api<Publish>(`/publishes/${publish?.id}`, { method: "PATCH", body: settingsPayload() }),
+    mutationFn: (allowPrivateReferences: boolean) =>
+      api<Publish>(`/publishes/${publish?.id}`, {
+        method: "PATCH",
+        body: { ...settingsPayload(), allowPrivateReferences },
+      }),
     onSuccess: (next) => {
       setActivePublish(next);
       setPassword("");
@@ -291,30 +314,43 @@ export function PublishDialog({
     window.location.href = `mailto:?subject=${encodeURIComponent(asset.title)}&body=${encodeURIComponent(shareUrl)}`;
   };
 
+  const submitPublish = () => {
+    if (references.length > 0 && referenceDecision === null) {
+      setReferenceConfirmOpen(true);
+      return;
+    }
+    const allowPrivateReferences = referenceDecision ?? false;
+    if (publish) updatePublish.mutate(allowPrivateReferences);
+    else createPublish.mutate(allowPrivateReferences);
+  };
+
+  const confirmReferenceDecision = (allowPrivateReferences: boolean) => {
+    setReferenceDecision(allowPrivateReferences);
+    setReferenceConfirmOpen(false);
+    if (publish) updatePublish.mutate(allowPrivateReferences);
+    else createPublish.mutate(allowPrivateReferences);
+  };
+
   return (
     <Modal
       open={open}
-      onClose={onClose}
+      onCancel={onClose}
       title={publish ? "分享设置" : "发布并分享"}
-      wide
-      footer={
-        <div className="sg-row">
-          <Button onClick={onClose}>取消</Button>
-          {!publish ? <Button onClick={saveDraft}>保存草稿</Button> : null}
-          <Button
-            variant="primary"
-            disabled={!canSave || createPublish.isPending || updatePublish.isPending}
-            onClick={() => (publish ? updatePublish.mutate() : createPublish.mutate())}
-          >
-            {createPublish.isPending || updatePublish.isPending
-              ? "保存中…"
-              : publish
-                ? "保存设置"
-                : "发布并生成短链"}
+      width={820}
+      destroyOnHidden
+      onOk={submitPublish}
+      okText={publish ? "保存设置" : "发布并生成短链"}
+      cancelText="取消"
+      confirmLoading={createPublish.isPending || updatePublish.isPending}
+      okButtonProps={{ disabled: !canSave || referencesLoading }}
+    >
+      {!publish ? (
+        <div style={{ marginBottom: 12, textAlign: "right" }}>
+          <Button type="link" onClick={saveDraft}>
+            保存草稿
           </Button>
         </div>
-      }
-    >
+      ) : null}
       <div className="sg-grid" style={{ gridTemplateColumns: "1fr 1fr", gap: 24 }}>
         <div className="sg-col">
           <div>
@@ -395,22 +431,22 @@ export function PublishDialog({
                   {shareUrl}
                 </a>
                 <div className="sg-row sg-wrap">
-                  <Button size="sm" variant="primary" onClick={() => void copyLink()}>
+                  <Button size="small" type="primary" onClick={() => void copyLink()}>
                     {copied ? "已复制" : "复制链接"}
                   </Button>
                   <Button
-                    size="sm"
+                    size="small"
                     onClick={() => window.open(shareUrl, "_blank", "noopener,noreferrer")}
                   >
                     打开链接
                   </Button>
-                  <Button size="sm" onClick={() => void downloadPoster(shareUrl)}>
+                  <Button size="small" onClick={() => void downloadPoster(shareUrl)}>
                     下载海报
                   </Button>
-                  <Button size="sm" onClick={() => void copyEmbedCode()}>
+                  <Button size="small" onClick={() => void copyEmbedCode()}>
                     复制嵌入代码
                   </Button>
-                  <Button size="sm" onClick={emailShare}>
+                  <Button size="small" onClick={emailShare}>
                     邮件分享
                   </Button>
                 </div>
@@ -435,6 +471,31 @@ export function PublishDialog({
           ) : null}
         </div>
       </div>
+      <Modal
+        open={referenceConfirmOpen}
+        title="确认发布关联资源"
+        onCancel={() => confirmReferenceDecision(false)}
+        onOk={() => confirmReferenceDecision(true)}
+        cancelText="仅发布当前文档"
+        okText="一起发布并允许访问"
+        confirmLoading={createPublish.isPending || updatePublish.isPending}
+        width={560}
+        destroyOnHidden
+      >
+        <p className="sg-subtle">
+          当前文档引用了以下资源。选择“一起发布”会把它们纳入本次发布快照；选择“仅发布当前文档”不会阻止当前文档发布，但这些引用在公开页面中不可访问。
+        </p>
+        <div className="sg-col" style={{ maxHeight: 260, overflowY: "auto" }}>
+          {references.map((reference) => (
+            <div key={reference.id} className="sg-row-between sg-card" style={{ padding: 12 }}>
+              <span>{reference.title}</span>
+              <span className="sg-subtle">
+                {reference.visibility === "private" ? "私有" : "已公开"} · {reference.type}
+              </span>
+            </div>
+          ))}
+        </div>
+      </Modal>
     </Modal>
   );
 }

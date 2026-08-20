@@ -1,5 +1,24 @@
 import { describe, expect, it } from "vitest";
-import { injectPublishAccessPolicy, injectPublishDownloadActions } from "./render.js";
+import {
+  buildReleaseBundle,
+  injectPublishAccessPolicy,
+  injectPublishDownloadActions,
+} from "./render.js";
+
+describe("buildReleaseBundle", () => {
+  it("stores Markdown for SSR without generating a static HTML entry", () => {
+    const bundle = buildReleaseBundle({
+      assetType: "document",
+      title: "示例文档",
+      markdown: "# 标题\n\n正文",
+    });
+
+    expect(bundle.manifest.entrypoint).toBe("index.md");
+    expect(bundle.files).toEqual([
+      { path: "index.md", content: "# 标题\n\n正文", mediaType: "text/markdown" },
+    ]);
+  });
+});
 
 describe("injectPublishDownloadActions", () => {
   it("adds escaped download links before the closing body", () => {

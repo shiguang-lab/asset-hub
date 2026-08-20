@@ -1,15 +1,6 @@
-import {
-  Avatar,
-  Button,
-  Empty,
-  Input,
-  Modal,
-  Select,
-  StatusBadge,
-  Switch,
-  useToast,
-} from "@shiguang/ui";
+import { Avatar, Empty, StatusBadge, useToast } from "@shiguang/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Button, Input, Modal, Select, Switch } from "antd";
 import {
   ArrowRight,
   BarChart3,
@@ -431,16 +422,19 @@ export function TasksPage() {
                       </span>
                       {partial && (
                         <div className="sg-task-inline-actions">
-                          <Button size="sm" onClick={() => navigate(`/tasks/${task.id}`)}>
+                          <Button size="small" onClick={() => navigate(`/tasks/${task.id}`)}>
                             查看结果
                           </Button>
-                          <Button size="sm" variant="primary" onClick={() => void retryTask(task)}>
+                          <Button size="small" type="primary" onClick={() => void retryTask(task)}>
                             重试失败项
                           </Button>
                         </div>
                       )}
                       {task.status === "completed" && (
-                        <Button size="sm" onClick={() => navigate(`/tasks/${task.id}?tab=preview`)}>
+                        <Button
+                          size="small"
+                          onClick={() => navigate(`/tasks/${task.id}?tab=preview`)}
+                        >
                           查看结果
                         </Button>
                       )}
@@ -582,7 +576,14 @@ export function TasksPage() {
           </section>
         </aside>
       </div>
-      <Modal open={scheduleOpen} onClose={() => setScheduleOpen(false)} title="定时任务" wide>
+      <Modal
+        open={scheduleOpen}
+        onCancel={() => setScheduleOpen(false)}
+        title="定时任务"
+        width={820}
+        footer={null}
+        destroyOnHidden
+      >
         <div className="sg-schedule-form">
           <Input
             value={scheduleName}
@@ -605,7 +606,7 @@ export function TasksPage() {
             ]}
           />
           <Button
-            variant="primary"
+            type="primary"
             disabled={!scheduleName.trim() || !scheduleGoal.trim()}
             onClick={() => createSchedule.mutate()}
           >
@@ -1024,7 +1025,7 @@ export function TaskNewPage() {
               {step === 1 ? "取消" : "上一步"}
             </Button>
             <Button
-              variant="primary"
+              type="primary"
               disabled={!canContinue || createTask.isPending}
               onClick={() => (step < 4 ? setStep((value) => value + 1) : createTask.mutate())}
             >
@@ -1251,7 +1252,7 @@ export function TaskDetailPage() {
               更多 <ChevronDown size={13} />
             </Button>
             {active && (
-              <Button variant="danger" onClick={() => void action("cancel")}>
+              <Button type="primary" danger onClick={() => void action("cancel")}>
                 取消任务
               </Button>
             )}
@@ -1353,7 +1354,7 @@ export function TaskDetailPage() {
                   暂停任务
                 </Button>
               )}
-              <Button variant="danger" onClick={() => void action("cancel")}>
+              <Button type="primary" danger onClick={() => void action("cancel")}>
                 <X size={14} />
                 取消任务
               </Button>
@@ -1830,11 +1831,11 @@ function TaskPreview({
                   {asset.type} · {asset.status}
                 </small>
               </span>
-              <Button size="sm" onClick={() => onOpen(asset)}>
+              <Button size="small" onClick={() => onOpen(asset)}>
                 打开
               </Button>
               {asset.type === "file" && (
-                <Button size="sm" onClick={() => onDownload(asset)}>
+                <Button size="small" onClick={() => onDownload(asset)}>
                   <Download size={13} />
                   下载
                 </Button>

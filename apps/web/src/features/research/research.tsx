@@ -1,5 +1,6 @@
-import { Button, Card, Empty, Field, Input, Select, Spinner, useToast } from "@shiguang/ui";
+import { Empty, Field, useToast } from "@shiguang/ui";
 import { useMutation, useQuery } from "@tanstack/react-query";
+import { Button, Card, Input, Select, Spin } from "antd";
 import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { api, type Task, type Template } from "../../entities/api.js";
@@ -18,7 +19,7 @@ export function ResearchPage() {
           <h1 className="sg-h1">深度调研</h1>
           <p className="sg-subtle">输入目标 → AI 推荐范围 → 后台执行 → 输出报告、来源与数据。</p>
         </div>
-        <Button variant="primary" onClick={() => navigate("/research/new")}>
+        <Button type="primary" onClick={() => navigate("/research/new")}>
           + 新建调研
         </Button>
       </div>
@@ -27,7 +28,7 @@ export function ResearchPage() {
           title="还没有调研任务"
           hint="发起一次行业研究、竞品分析或主题调研。"
           action={
-            <Button variant="primary" onClick={() => navigate("/research/new")}>
+            <Button type="primary" onClick={() => navigate("/research/new")}>
               新建调研
             </Button>
           }
@@ -35,7 +36,7 @@ export function ResearchPage() {
       ) : (
         <div className="sg-col">
           {research.map((task) => (
-            <Card key={task.id} onClick={() => navigate(`/tasks/${task.id}`)}>
+            <Card key={task.id} onClick={() => navigate(`/tasks/${task.id}`)} hoverable>
               <div className="sg-row-between">
                 <strong>{task.goal}</strong>
                 <span
@@ -204,7 +205,7 @@ export function ResearchNewPage() {
             onClick={() => previewMutation.mutate()}
             disabled={!goal.trim() || previewMutation.isPending}
           >
-            {previewMutation.isPending ? <Spinner size={14} /> : "AI 生成推荐范围"}
+            {previewMutation.isPending ? <Spin size="small" /> : "AI 生成推荐范围"}
           </Button>
           <span className="sg-hint">复杂调研建议先让 AI 生成可调整的研究范围。</span>
         </div>
@@ -240,8 +241,8 @@ export function ResearchNewPage() {
         )}
 
         <Button
-          variant="primary"
-          size="lg"
+          type="primary"
+          size="large"
           disabled={!goal.trim() || createMutation.isPending}
           onClick={() => createMutation.mutate()}
         >

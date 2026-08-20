@@ -9,19 +9,9 @@ import {
 } from "@codemirror/language";
 import { Compartment, EditorState } from "@codemirror/state";
 import { EditorView, highlightActiveLine, keymap, lineNumbers } from "@codemirror/view";
-import {
-  Button,
-  Card,
-  Empty,
-  Modal,
-  Scrollbar,
-  Select,
-  Tabs,
-  Textarea,
-  useToast,
-} from "@shiguang/ui";
+import { Empty, Scrollbar, useToast } from "@shiguang/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Dropdown } from "antd";
+import { Button, Card, Dropdown, Input, Modal, Select, Switch, Tabs } from "antd";
 import {
   Download,
   FileDiff,
@@ -42,10 +32,10 @@ import {
   publishedShortUrl,
   uploadFile,
 } from "../../entities/api.js";
-import { useDeleteConfirm } from "../../shared/useDeleteConfirm";
 import { loadDocumentLocal, saveDocumentLocal } from "../../shared/document-local.js";
 import { DocumentMarkdown } from "../../shared/document-markdown.js";
 import { loadDraft, markSynced, saveDraft } from "../../shared/draft.js";
+import { useDeleteConfirm } from "../../shared/useDeleteConfirm";
 import { useShellBreadcrumb } from "../../shell/layout.js";
 import { PublishDialog } from "../publishing/publish-dialog.js";
 
@@ -162,6 +152,17 @@ export function DocumentEditorPage() {
     queryKey: ["asset", id],
     queryFn: () => api<Asset>(`/assets/${id}`),
     enabled: Boolean(id),
+  });
+
+  const toggleVisibility = useMutation({
+    mutationFn: (visibility: "private" | "public") =>
+      api<Asset>(`/assets/${id}`, { method: "PATCH", body: { visibility } }),
+    onSuccess: (updated) => {
+      toast("success", updated.visibility === "public" ? "文档已设为公开" : "文档已设为私有");
+      void refetch();
+      void queryClient.invalidateQueries({ queryKey: ["assets"] });
+    },
+    onError: (error: Error) => toast("error", error.message),
   });
 
   const { data: linkPickerData } = useQuery<{ items: Asset[] }>({
@@ -658,14 +659,28 @@ export function DocumentEditorPage() {
         </div>
         <div className="sg-row">
           <SaveBadge state={saveState} />
-          <Button size="sm" onClick={() => navigate(`/documents/${id}/preview`)}>
+          {asset ? (
+            <span className="sg-row" title="独立控制文档本身的公有/私有状态">
+              <Switch
+                size="small"
+                checked={asset.visibility === "public"}
+                checkedChildren="公开"
+                unCheckedChildren="私有"
+                loading={toggleVisibility.isPending}
+                onChange={(checked) => toggleVisibility.mutate(checked ? "public" : "private")}
+              />
+            </span>
+          ) : null}
+          <Button size="small" onClick={() => navigate(`/documents/${id}/preview`)}>
             ◎ 预览
           </Button>
-          <Button size="sm" onClick={() => setPublishOpen(true)}>
+          <Button size="small" onClick={() => setPublishOpen(true)}>
             发布 / 分享
           </Button>
           <Dropdown
-            trigger={["click"]}
+            trigger={["hover"]}
+            mouseEnterDelay={0}
+            mouseLeaveDelay={0.15}
             placement="bottomRight"
             popupRender={() => (
               <div className="sg-asset-menu">
@@ -703,16 +718,16 @@ export function DocumentEditorPage() {
               </div>
             )}
           >
-            <Button size="sm" variant="ghost" aria-label="更多操作" title="更多操作">
+            <button type="button" className="sg-asset-more" aria-label="更多操作" title="更多操作">
               <MoreHorizontal size={16} />
-            </Button>
+            </button>
           </Dropdown>
         </div>
       </div>
 
       <Tabs
-        tabs={["内容编辑", "图表管理", "附件管理", "版本历史"].map((t) => ({ id: t, label: t }))}
-        active={tab}
+        items={["内容编辑", "图表管理", "附件管理", "版本历史"].map((t) => ({ key: t, label: t }))}
+        activeKey={tab}
         onChange={setTab}
       />
 
@@ -723,7 +738,7 @@ export function DocumentEditorPage() {
               全部图表（{charts.length}）
             </h3>
             <div className="sg-row">
-              <Button size="sm" variant="primary" onClick={() => setChartModal(true)}>
+              <Button size="small" type="primary" onClick={() => setChartModal(true)}>
                 + 新建图表
               </Button>
             </div>
@@ -765,8 +780,8 @@ export function DocumentEditorPage() {
               附件管理（{attachments.length}）
             </h3>
             <Button
-              size="sm"
-              variant="primary"
+              size="small"
+              type="primary"
               disabled={attachmentUploading}
               onClick={() => attachmentInputRef.current?.click()}
             >
@@ -859,8 +874,8 @@ export function DocumentEditorPage() {
                   <div className="sg-row" style={{ gap: 6 }}>
                     {version.id !== asset?.currentVersionId && (
                       <Button
-                        size="sm"
-                        variant="ghost"
+                        size="small"
+                        type="text"
                         onClick={() =>
                           setDiffVersionId(diffVersionId === version.id ? null : version.id)
                         }
@@ -873,8 +888,8 @@ export function DocumentEditorPage() {
                       <span className="sg-badge sg-badge-success">当前版本</span>
                     ) : (
                       <Button
-                        size="sm"
-                        variant="ghost"
+                        size="small"
+                        type="text"
                         onClick={() => restoreMutation.mutate(version.id)}
                         disabled={restoreMutation.isPending}
                       >
@@ -956,10 +971,10 @@ export function DocumentEditorPage() {
 
           <section className="sg-document-editor-main">
             <div className="sg-editor-toolbar">
-              <Button size="sm" variant="ghost" onClick={() => openLinkPicker("link")}>
+              <Button size="small" type="text" onClick={() => openLinkPicker("link")}>
                 <Link2 size={14} /> 插入引用
               </Button>
-              <Button size="sm" variant="ghost" onClick={() => openLinkPicker("image")}>
+              <Button size="small" type="text" onClick={() => openLinkPicker("image")}>
                 <ImagePlus size={14} /> 插入图片
               </Button>
               <span className="sg-subtle" style={{ marginLeft: 8 }}>
@@ -968,8 +983,8 @@ export function DocumentEditorPage() {
               {["rewrite", "summarize", "expand", "translate", "explain"].map((action) => (
                 <Button
                   key={action}
-                  size="sm"
-                  variant="ghost"
+                  size="small"
+                  type="text"
                   onClick={() => aiAction.mutate(action)}
                 >
                   {action === "rewrite"
@@ -1046,7 +1061,7 @@ export function DocumentEditorPage() {
                   if (event.key === "Enter") addComment();
                 }}
               />
-              <Button size="sm" disabled={!commentText.trim()} onClick={addComment}>
+              <Button size="small" disabled={!commentText.trim()} onClick={addComment}>
                 发送
               </Button>
             </div>
@@ -1072,13 +1087,13 @@ export function DocumentEditorPage() {
             </div>
             <h4 style={{ marginTop: 16 }}>快捷操作</h4>
             <Button
-              size="sm"
-              variant="ghost"
+              size="small"
+              type="text"
               onClick={() => navigate(`/presentations/new?asset=${id}`)}
             >
               生成演示
             </Button>
-            <Button size="sm" variant="ghost" onClick={exportMarkdown}>
+            <Button size="small" type="text" onClick={exportMarkdown}>
               <Download size={14} /> 导出 Markdown
             </Button>
           </Scrollbar>
@@ -1087,13 +1102,14 @@ export function DocumentEditorPage() {
 
       <Modal
         open={linkPickerOpen}
-        onClose={() => setLinkPickerOpen(false)}
+        onCancel={() => setLinkPickerOpen(false)}
         title={linkPickerMode === "image" ? "选择图片" : "插入文档引用"}
         footer={
           <div className="sg-row">
             <Button onClick={() => setLinkPickerOpen(false)}>取消</Button>
           </div>
         }
+        destroyOnHidden
       >
         <div className="sg-col" style={{ gap: 12 }}>
           <input
@@ -1125,16 +1141,17 @@ export function DocumentEditorPage() {
 
       <Modal
         open={chartModal}
-        onClose={() => setChartModal(false)}
+        onCancel={() => setChartModal(false)}
         title="新建图表"
         footer={
           <div className="sg-row">
             <Button onClick={() => setChartModal(false)}>取消</Button>
-            <Button variant="primary" onClick={insertChart}>
+            <Button type="primary" onClick={insertChart}>
               插入图表
             </Button>
           </div>
         }
+        destroyOnHidden
       >
         <div className="sg-col" style={{ gap: 12 }}>
           <label className="sg-label" htmlFor="document-chart-name">
@@ -1165,13 +1182,13 @@ export function DocumentEditorPage() {
 
       <Modal
         open={aiModal}
-        onClose={() => setAiModal(false)}
+        onCancel={() => setAiModal(false)}
         title="AI 修改预览"
         footer={
           <div className="sg-row">
             <Button onClick={() => setAiModal(false)}>取消</Button>
             <Button
-              variant="primary"
+              type="primary"
               disabled={!aiResult}
               onClick={() => aiResult && applyPatch.mutate(aiResult.patchId)}
             >
@@ -1179,10 +1196,11 @@ export function DocumentEditorPage() {
             </Button>
           </div>
         }
-        wide
+        width={820}
+        destroyOnHidden
       >
         <p className="sg-hint">AI 输出先预览，应用后才会写入文档（不会静默覆盖）。</p>
-        <Textarea readOnly value={aiResult?.proposed ?? ""} style={{ minHeight: 260 }} />
+        <Input.TextArea readOnly value={aiResult?.proposed ?? ""} style={{ minHeight: 260 }} />
       </Modal>
 
       {publishOpen && asset && (

@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
 import { Modal, Radio } from "antd";
+import { useEffect, useState } from "react";
 
 export type ImportResolutionValue = "skip" | "replace" | "rename";
 
@@ -40,7 +40,15 @@ export function ImportConflictModal({
       <p style={{ marginTop: 0, color: "var(--sg-text-muted, #888)" }}>
         以下文档与当前 workspace 已有文档重名，请为每一项选择处理方式：
       </p>
-      <div style={{ display: "flex", flexDirection: "column", gap: 4, maxHeight: 380, overflowY: "auto" }}>
+      <div
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          gap: 4,
+          maxHeight: 380,
+          overflowY: "auto",
+        }}
+      >
         {conflicts.map((conflict) => (
           <div
             key={conflict.title}

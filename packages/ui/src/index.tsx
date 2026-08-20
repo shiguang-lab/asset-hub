@@ -1,33 +1,16 @@
-import type { InputProps as AntInputProps } from "antd";
 import {
   Avatar as AntAvatar,
-  Button as AntButton,
-  Card as AntCard,
   Empty as AntEmpty,
-  Input as AntInput,
-  Modal as AntModal,
-  Progress as AntProgress,
-  Select as AntSelect,
-  Skeleton as AntSkeleton,
-  Switch as AntSwitch,
-  Tabs as AntTabs,
   Tag as AntTag,
   App,
   theme as antdTheme,
-  Spin,
 } from "antd";
 import { createStyles } from "antd-style";
-import {
-  type CSSProperties,
-  createContext,
-  type HTMLAttributes,
-  type ReactNode,
-  useContext,
-  useMemo,
-  useState,
-} from "react";
+import type { CSSProperties, HTMLAttributes, ReactNode } from "react";
+import { useId } from "react";
 
 export { UiGlobalStyles } from "./global-styles.js";
+export { MARKDOWN_SURFACE_STYLES, MarkdownSurfaceStyles } from "./markdown-surface.js";
 
 export function cx(...parts: Array<string | false | null | undefined>): string {
   return parts.filter(Boolean).join(" ");
@@ -67,35 +50,186 @@ export function Scrollbar({ children, className, ...props }: HTMLAttributes<HTML
   );
 }
 
-/* ---------------- theme ---------------- */
-
-interface ThemeContextValue {
-  theme: "light" | "dark";
-  toggle: () => void;
+const BRAND_LOADING_STYLES = `
+.sg-brand-loading {
+  --sg-loader-size: 52px;
+  display: flex;
+  min-height: 160px;
+  width: 100%;
+  box-sizing: border-box;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  color: #4e6df5;
+  opacity: 0;
+  animation: sg-loader-appear .18s ease-out .18s forwards;
 }
-const ThemeContext = createContext<ThemeContextValue>({ theme: "dark", toggle: () => undefined });
+.sg-brand-loading__stage {
+  width: var(--sg-loader-size);
+  height: var(--sg-loader-size);
+}
+.sg-brand-loading__svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+.sg-brand-loading__reveal {
+  fill: none;
+  stroke: #fff;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+}
+.sg-brand-loading__reveal--ring {
+  stroke-width: 3.4;
+  animation: sg-loader-draw-ring 2.6s cubic-bezier(.65, 0, .35, 1) infinite;
+}
+.sg-brand-loading__reveal--mark {
+  stroke-width: 3.6;
+  animation: sg-loader-draw-mark 2.6s cubic-bezier(.65, 0, .35, 1) infinite;
+}
+.sg-brand-loading__detail {
+  fill: #fff;
+  opacity: 0;
+  animation: sg-loader-reveal-details 2.6s ease-in-out infinite;
+}
+.sg-brand-loading__art { filter: drop-shadow(0 5px 9px rgba(63, 97, 238, .2)); }
+.sg-brand-loading__art--base { opacity: .14; filter: none; }
+.sg-brand-loading__label {
+  display: inline-flex;
+  min-height: 22px;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.5;
+  white-space: nowrap;
+  text-shadow: 0 0 14px rgba(78, 109, 245, .15);
+}
+.sg-brand-loading__dots { display: inline-flex; gap: 3px; transform: translateY(3px); }
+.sg-brand-loading__dots span {
+  width: 4px;
+  height: 4px;
+  border-radius: 999px;
+  background: currentColor;
+  animation: sg-loader-dot 1.1s ease-in-out infinite;
+}
+.sg-brand-loading__dots span:nth-child(2) { animation-delay: .16s; }
+.sg-brand-loading__dots span:nth-child(3) { animation-delay: .32s; }
+@keyframes sg-loader-appear { to { opacity: 1; } }
+@keyframes sg-loader-draw-ring {
+  0%, 5% { stroke-dashoffset: 1; }
+  48%, 78% { stroke-dashoffset: 0; }
+  100% { stroke-dashoffset: -1; }
+}
+@keyframes sg-loader-draw-mark {
+  0%, 10% { stroke-dashoffset: 1; }
+  54%, 78% { stroke-dashoffset: 0; }
+  100% { stroke-dashoffset: -1; }
+}
+@keyframes sg-loader-reveal-details {
+  0%, 46% { opacity: 0; }
+  58%, 78% { opacity: 1; }
+  100% { opacity: 0; }
+}
+@keyframes sg-loader-dot {
+  0%, 100% { opacity: .35; transform: translateY(0); }
+  50% { opacity: 1; transform: translateY(-4px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sg-brand-loading__reveal, .sg-brand-loading__detail, .sg-brand-loading__dots span {
+    animation-duration: .01ms;
+    animation-iteration-count: 1;
+  }
+  .sg-brand-loading__reveal { stroke-dashoffset: 0; }
+  .sg-brand-loading__detail { opacity: 1; }
+}
+`;
 
-/** Kept for backward compatibility; the app now uses apps/web/src/theme/ThemeProvider. */
-export function ThemeProvider({ children }: { children: ReactNode }) {
-  const [theme, setTheme] = useState<"light" | "dark">("dark");
-  const value = useMemo(
-    () => ({ theme, toggle: () => setTheme((t) => (t === "dark" ? "light" : "dark")) }),
-    [theme],
+function BrandLoading({
+  minHeight,
+  className,
+}: {
+  minHeight: CSSProperties["minHeight"];
+  className?: string;
+}) {
+  const instanceId = useId().replace(/[^a-zA-Z0-9_-]/g, "");
+  const maskId = `sg-loading-mask-${instanceId}`;
+  return (
+    <output
+      className={cx("sg-brand-loading", className)}
+      style={{ minHeight }}
+      aria-live="polite"
+      aria-label="加载中"
+    >
+      <style data-sg-brand-loading="true">{BRAND_LOADING_STYLES}</style>
+      <div className="sg-brand-loading__stage" aria-hidden="true">
+        <svg className="sg-brand-loading__svg" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+          <mask id={maskId} x="0" y="0" width="32" height="32" maskUnits="userSpaceOnUse">
+            <circle
+              className="sg-brand-loading__reveal sg-brand-loading__reveal--ring"
+              cx="16"
+              cy="16"
+              r="11"
+              pathLength="1"
+            />
+            <path
+              className="sg-brand-loading__reveal sg-brand-loading__reveal--mark"
+              d="M14 25V12a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h11a1 1 0 0 0 1-1v-4H9"
+              pathLength="1"
+            />
+            <rect className="sg-brand-loading__detail" x="18" y="7" width="6" height="6" rx="1" />
+          </mask>
+          <image
+            className="sg-brand-loading__art sg-brand-loading__art--base"
+            href="/favicon.svg"
+            width="32"
+            height="32"
+          />
+          <image
+            className="sg-brand-loading__art"
+            href="/favicon.svg"
+            width="32"
+            height="32"
+            mask={`url(#${maskId})`}
+          />
+        </svg>
+      </div>
+      <span className="sg-brand-loading__label">
+        <span>加载中</span>
+        <span className="sg-brand-loading__dots" aria-hidden="true">
+          <span />
+          <span />
+          <span />
+        </span>
+      </span>
+    </output>
   );
-  return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
 }
 
-export const useTheme = (): ThemeContextValue => useContext(ThemeContext);
+export function Loading({
+  loading = false,
+  children,
+  className,
+  minHeight = 160,
+}: {
+  loading?: boolean;
+  children?: ReactNode;
+  className?: string;
+  minHeight?: CSSProperties["minHeight"];
+}) {
+  if (!loading) return <>{children ?? null}</>;
+  return <BrandLoading minHeight={minHeight} className={className} />;
+}
 
 /* ---------------- toast ---------------- */
 
 export type ToastKind = "info" | "success" | "error" | "warning";
 
-/** No-op passthrough; toast rendering is handled by antd <App> + useToast(). */
-export function ToastProvider({ children }: { children: ReactNode }) {
-  return children;
-}
-
+/** Toast rendering is handled by antd <App> + useToast(). */
 export const useToast = (): ((kind: ToastKind, message: string) => void) => {
   const { message } = App.useApp();
   return (kind, text) => {
@@ -104,102 +238,6 @@ export const useToast = (): ((kind: ToastKind, message: string) => void) => {
 };
 
 /* ---------------- primitives ---------------- */
-
-export function Button({
-  children,
-  variant,
-  size,
-  className,
-  onClick,
-  disabled,
-  type = "button",
-  title,
-  style,
-}: {
-  children: ReactNode;
-  variant?: "primary" | "danger" | "ghost";
-  size?: "sm" | "lg";
-  className?: string;
-  onClick?: (e: React.MouseEvent<HTMLElement>) => void;
-  disabled?: boolean;
-  type?: "button" | "submit";
-  title?: string;
-  style?: CSSProperties;
-}) {
-  const antdType =
-    variant === "primary" || variant === "danger"
-      ? "primary"
-      : variant === "ghost"
-        ? "text"
-        : "default";
-  const antdSize = size === "sm" ? "small" : size === "lg" ? "large" : "middle";
-  return (
-    <AntButton
-      type={antdType}
-      danger={variant === "danger"}
-      size={antdSize}
-      className={className}
-      onClick={onClick}
-      disabled={disabled}
-      title={title}
-      style={style}
-      htmlType={type}
-    >
-      {children}
-    </AntButton>
-  );
-}
-
-export function IconButton({
-  children,
-  onClick,
-  title,
-  danger,
-}: {
-  children: ReactNode;
-  onClick?: () => void;
-  title?: string;
-  danger?: boolean;
-}) {
-  return (
-    <AntButton type="text" size="small" danger={danger} title={title} onClick={onClick}>
-      {children}
-    </AntButton>
-  );
-}
-
-export function Input(props: React.InputHTMLAttributes<HTMLInputElement>) {
-  const { size: _size, ...rest } = props;
-  return <AntInput {...(rest as AntInputProps)} />;
-}
-
-export function Textarea(props: React.TextareaHTMLAttributes<HTMLTextAreaElement>) {
-  return <AntInput.TextArea {...props} />;
-}
-
-export function Select({
-  value,
-  onChange,
-  options,
-  className,
-  style,
-}: {
-  value: string;
-  onChange: (value: string) => void;
-  options: Array<{ value: string; label: string }>;
-  className?: string;
-  style?: CSSProperties;
-}) {
-  return (
-    <AntSelect
-      className={className}
-      style={style}
-      value={value}
-      onChange={onChange}
-      options={options}
-    />
-  );
-}
 
 export function Field({
   label,
@@ -219,132 +257,12 @@ export function Field({
   );
 }
 
-export function Card({
-  children,
-  className,
-  onClick,
-  style,
-}: {
-  children: ReactNode;
-  className?: string;
-  onClick?: () => void;
-  style?: CSSProperties;
-}) {
-  return (
-    <AntCard className={className} style={style} onClick={onClick} hoverable={Boolean(onClick)}>
-      {children}
-    </AntCard>
-  );
-}
-
-const TONE_COLOR: Record<string, string> = {
-  accent: "purple",
-  success: "green",
-  warning: "orange",
-  danger: "red",
-};
-
-export function Badge({
-  children,
-  tone,
-}: {
-  children: ReactNode;
-  tone?: "accent" | "success" | "warning" | "danger";
-}) {
-  return <AntTag color={tone ? TONE_COLOR[tone] : undefined}>{children}</AntTag>;
-}
-
-export function Tag({ children }: { children: ReactNode }) {
-  return <AntTag>{children}</AntTag>;
-}
-
-export function Tabs({
-  tabs,
-  active,
-  onChange,
-}: {
-  tabs: Array<{ id: string; label: string }>;
-  active: string;
-  onChange: (id: string) => void;
-}) {
-  return (
-    <AntTabs
-      activeKey={active}
-      onChange={onChange}
-      items={tabs.map((t) => ({ key: t.id, label: t.label }))}
-    />
-  );
-}
-
 export function Table({ children }: { children: ReactNode }) {
   return (
     <Scrollbar>
       <table className="sg-table">{children}</table>
     </Scrollbar>
   );
-}
-
-export function Modal({
-  open,
-  onClose,
-  title,
-  children,
-  footer,
-  wide,
-}: {
-  open: boolean;
-  onClose: () => void;
-  title: string;
-  children: ReactNode;
-  footer?: ReactNode;
-  wide?: boolean;
-}) {
-  return (
-    <AntModal
-      open={open}
-      onCancel={onClose}
-      title={title}
-      footer={footer ?? null}
-      width={wide ? 820 : 520}
-      destroyOnHidden
-    >
-      {children}
-    </AntModal>
-  );
-}
-
-export function Dropdown({ trigger, children }: { trigger: ReactNode; children: ReactNode }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <span
-      className="sg-dropdown"
-      onMouseEnter={() => setOpen(true)}
-      onMouseLeave={() => setOpen(false)}
-    >
-      <span>{trigger}</span>
-      {open && <div className="sg-dropdown-menu">{children}</div>}
-    </span>
-  );
-}
-
-export function DropdownItem({
-  children,
-  onClick,
-  danger,
-}: {
-  children: ReactNode;
-  onClick?: () => void;
-  danger?: boolean;
-}) {
-  return (
-    <button type="button" className={cx("sg-dropdown-item", danger && "danger")} onClick={onClick}>
-      {children}
-    </button>
-  );
-}
-
-export function Progress({ value, className }: { value: number; className?: string }) {
-  return <AntProgress className={className} percent={Math.max(0, Math.min(100, value))} />;
 }
 
 export function Empty({
@@ -371,30 +289,6 @@ export function Empty({
   );
 }
 
-export function Spinner({ size = 22 }: { size?: number }) {
-  return <Spin size={size <= 16 ? "small" : "default"} />;
-}
-
-export function Switch({
-  checked,
-  onChange,
-}: {
-  checked: boolean;
-  onChange: (v: boolean) => void;
-}) {
-  return <AntSwitch checked={checked} onChange={onChange} />;
-}
-
-export function Skeleton({
-  width = "100%",
-  height = 16,
-}: {
-  width?: number | string;
-  height?: number;
-}) {
-  return <AntSkeleton.Button active size="small" style={{ width, height, borderRadius: 6 }} />;
-}
-
 export function Avatar({ name, size = 30 }: { name: string; size?: number }) {
   const { token } = antdTheme.useToken();
   return (
@@ -406,6 +300,13 @@ export function Avatar({ name, size = 30 }: { name: string; size?: number }) {
     </AntAvatar>
   );
 }
+
+const TONE_COLOR: Record<string, string> = {
+  accent: "purple",
+  success: "green",
+  warning: "orange",
+  danger: "red",
+};
 
 export function StatusBadge({ status }: { status: string }) {
   const map: Record<string, { label: string; tone?: "accent" | "success" | "warning" | "danger" }> =
@@ -437,8 +338,10 @@ export function StatusBadge({ status }: { status: string }) {
       link: { label: "链接", tone: "accent" },
     };
   const item = map[status] ?? { label: status };
-  return <Badge tone={item.tone}>{item.label}</Badge>;
+  return <AntTag color={item.tone ? TONE_COLOR[item.tone] : undefined}>{item.label}</AntTag>;
 }
+
+/* ---------------- utils ---------------- */
 
 export function formatRelative(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();

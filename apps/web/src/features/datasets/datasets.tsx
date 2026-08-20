@@ -1,15 +1,6 @@
-import {
-  Button,
-  Card,
-  Empty,
-  Input,
-  Scrollbar,
-  Select,
-  StatusBadge,
-  Tabs,
-  useToast,
-} from "@shiguang/ui";
+import { Empty, Scrollbar, StatusBadge, useToast } from "@shiguang/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Button, Card, Input, Select, Tabs } from "antd";
 import * as echarts from "echarts";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
@@ -55,7 +46,7 @@ export function DatasetsPage() {
       ) : (
         <div className="sg-grid" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
           {data?.map((d) => (
-            <Card key={d.id} onClick={() => navigate(`/datasets/${d.id}`)}>
+            <Card key={d.id} onClick={() => navigate(`/datasets/${d.id}`)} hoverable>
               <div className="sg-row-between">
                 <strong>{d.name}</strong>
                 <StatusBadge status={d.status} />
@@ -242,14 +233,14 @@ export function DatasetDetailPage() {
       )}
 
       <Tabs
-        tabs={[
-          { id: "table", label: "数据表" },
-          { id: "query", label: "查询构建" },
-          { id: "charts", label: "图表" },
-          { id: "views", label: "保存视图" },
-          { id: "quality", label: "质量" },
+        items={[
+          { key: "table", label: "数据表" },
+          { key: "query", label: "查询构建" },
+          { key: "charts", label: "图表" },
+          { key: "views", label: "保存视图" },
+          { key: "quality", label: "质量" },
         ]}
-        active={tab}
+        activeKey={tab}
         onChange={setTab}
       />
 
@@ -328,14 +319,14 @@ export function DatasetDetailPage() {
               共 {queryResult.data?.total.toLocaleString() ?? "-"} 行
             </span>
             <Button
-              size="sm"
+              size="small"
               disabled={query.offset === 0}
               onClick={() => setQuery((q) => ({ ...q, offset: Math.max(0, q.offset - q.limit) }))}
             >
               上一页
             </Button>
             <Button
-              size="sm"
+              size="small"
               disabled={(queryResult.data?.rows.length ?? 0) < query.limit}
               onClick={() => setQuery((q) => ({ ...q, offset: q.offset + q.limit }))}
             >
@@ -383,7 +374,7 @@ export function DatasetDetailPage() {
                 style={{ maxWidth: 160 }}
               />
             )}
-            <Button size="sm" onClick={applyFilter}>
+            <Button size="small" onClick={applyFilter}>
               + 添加
             </Button>
           </div>
@@ -393,8 +384,9 @@ export function DatasetDetailPage() {
                 {f.column} {f.op} {f.value}
               </span>
               <Button
-                size="sm"
-                variant="danger"
+                size="small"
+                type="primary"
+                danger
                 onClick={() =>
                   setQuery((q) => ({ ...q, filters: q.filters.filter((_, j) => j !== i) }))
                 }
@@ -410,7 +402,7 @@ export function DatasetDetailPage() {
               placeholder="视图名称"
               style={{ maxWidth: 200 }}
             />
-            <Button size="sm" disabled={!viewName} onClick={() => saveView.mutate()}>
+            <Button size="small" disabled={!viewName} onClick={() => saveView.mutate()}>
               保存视图
             </Button>
           </div>
@@ -420,7 +412,7 @@ export function DatasetDetailPage() {
           <div className="sg-row">
             <Input placeholder="图表名" id="chart-name" style={{ maxWidth: 160 }} />
             <Button
-              size="sm"
+              size="small"
               onClick={() => {
                 const name =
                   (document.getElementById("chart-name") as HTMLInputElement)?.value || "图表";
@@ -457,7 +449,7 @@ export function DatasetDetailPage() {
               <div key={v.id} className="sg-row-between">
                 <strong>{v.name}</strong>
                 <Button
-                  size="sm"
+                  size="small"
                   onClick={() => {
                     const saved = v.query as {
                       filters?: unknown;

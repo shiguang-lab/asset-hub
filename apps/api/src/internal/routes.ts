@@ -692,7 +692,7 @@ export function registerInternalRoutes(app: FastifyInstance): void {
       : null;
     const asset = await ctx.store.getAssetAny(publish.assetId);
     const publisher = asset ? await ctx.store.getUserProfile(asset.ownerSubject) : null;
-    const stats = await ctx.store.getPublishStats(publish.id);
+    const visitorCount = await ctx.store.getPublishVisitorCount(publish.id);
     return {
       publish: {
         id: publish.id,
@@ -728,9 +728,7 @@ export function registerInternalRoutes(app: FastifyInstance): void {
           }
         : null,
       stats: {
-        views: stats.views,
-        uniqueVisitors: stats.uniqueVisitors,
-        activeViewers: stats.activeViewers,
+        uniqueVisitors: visitorCount,
       },
     };
   });

@@ -85,10 +85,10 @@ MVP 采用**快照**，理由：
 快照模式下的发布重写规则：
 
 1. 发布时解析正文 `asset:` 引用 → 经 `relations`/资产表取目标资产。
-2. 递归渲染目标：文档 → `refs/<assetId>/index.html`；图片/file → `refs/<assetId>/<fileName>`。
-3. 重写正文：`href="asset:<id>"` → `href="refs/<id>/index.html"`；`src="asset:<id>"` → `src="refs/<id>/<fileName>"`。
+2. 递归收集目标：文档 → `refs/<assetId>/index.md`（由 SSR 阅读器渲染）；图片/file → `refs/<assetId>/<fileName>`。
+3. 重写正文：文档引用进入同一发布版本的 SSR 引用路由；图片/file 继续解析为 `refs/<id>/<fileName>`。
 4. 循环引用防护：递归时维护「已收集」集合，重复/环直接复用已生成路径。
-5. manifest 增加 `references` 快照：`[{ assetId, versionId, path, kind }]`，供追溯与「引用更新后重新发布」。
+5. manifest 增加 `references` 快照：`[{ assetId, refKey, versionId, path, kind, title }]`；公开链接使用 `/s/<shortSlug>/r/<refKey>`，内部仍按 `assetId` 定位快照。
 
 ## 6. 端到端数据流（推荐方案汇总）
 
@@ -100,7 +100,8 @@ flowchart LR
   R --> V[关系视图 / 反向引用]
   R --> PUB[发布]
   M --> PUB
-  PUB -->|递归渲染 + 重写链接| B[(release bundle\nindex.html + refs/*)]
+  PUB -->|保存 Markdown 快照 + 生成引用清单| B[(release bundle\nindex.md + refs/*)]
+  B -->|/s/:shortSlug 与 /s/:shortSlug/r/:refKey| SSR[SSR 阅读器]
   B -->|manifest.references 快照| PUB
 ```
 
@@ -110,8 +111,8 @@ flowchart LR
 | --- | --- | --- |
 | D1 | 引用语法 | ✅ 接受 `[显示文本](asset:<assetId>)` 为主语法（图片同用 `![alt](asset:<id>)`） |
 | D2 | 事实源 | ✅ 接受「正文为事实源、`relations` 保存时自动投影」 |
-| D3 | 发布语义 | ✅ 接受「默认快照，实时链接 P1」 |
-| 私有权 | 被引用资产为 `private` | ✅ **拦截并提示**（不降级、不打包） |
+| D3 | 发布语义 | ✅ 当前文档始终发布；关联资源由二次确认决定是否进入快照并允许访问 |
+| 私有权 | 被引用资产为 `private` | ✅ 不再阻断当前文档发布；仅在用户确认“一起发布”时纳入当前 release 快照 |
 | 引用/附件边界 | content-link 与 attachment 并存 | 按推荐：用 `provenance.sources` 区分，二者互不干扰（实现细节见实现设计文档） |
 
 > 附：`asset_relations` 存在 `UNIQUE(source_asset_id, target_asset_id, relation_type)`，且当前 `addRelation` 遇重不合并 provenance、也没有 `deleteRelation`。因此 D2 的「自动投影」需要在存储层补两件事：`addRelation` 合并 provenance、新增 `deleteRelation`；否则正文删掉某条引用时无法精确清理投影（会误删同名附件关系）。详见实现设计。

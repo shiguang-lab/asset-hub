@@ -1,18 +1,6 @@
-import {
-  Avatar,
-  Button,
-  Card,
-  Empty,
-  Field,
-  formatRelative,
-  Input,
-  Select,
-  StatusBadge,
-  Tabs,
-  Textarea,
-  useToast,
-} from "@shiguang/ui";
+import { Avatar, Empty, Field, formatRelative, StatusBadge, useToast } from "@shiguang/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Button, Card, Input, Select, Tabs } from "antd";
 import {
   BarChart3,
   BookOpen,
@@ -824,7 +812,7 @@ export function KnowledgePage() {
                         ? "当前工作区成员可访问此知识库。"
                         : "仅指定团队成员可以访问。"}
                     </p>
-                    <Button size="sm" onClick={openSelected}>
+                    <Button size="small" onClick={openSelected}>
                       管理权限
                     </Button>
                   </div>
@@ -834,7 +822,7 @@ export function KnowledgePage() {
                     <SlidersHorizontal size={27} />
                     <strong>知识库设置</strong>
                     <p>管理名称、描述、索引策略与知识库状态。</p>
-                    <Button size="sm" onClick={openSelected}>
+                    <Button size="small" onClick={openSelected}>
                       进入设置
                     </Button>
                   </div>
@@ -857,7 +845,7 @@ export function KnowledgePage() {
               <div className="sg-knowledge-detail-actions">
                 <Button onClick={openSelected}>导入文档</Button>
                 <Button
-                  variant="primary"
+                  type="primary"
                   onClick={() => navigate(`/documents/new?knowledgeBaseId=${selected.id}`)}
                 >
                   新建文档
@@ -898,14 +886,14 @@ export function KnowledgeNewPage() {
           <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="知识库名称" />
         </Field>
         <Field label="描述（可选）">
-          <Textarea
+          <Input.TextArea
             value={description}
             onChange={(e) => setDescription(e.target.value)}
             placeholder="这个知识库用来做什么？"
             style={{ minHeight: 90 }}
           />
         </Field>
-        <Button variant="primary" disabled={!name.trim()} onClick={() => mutation.mutate()}>
+        <Button type="primary" disabled={!name.trim()} onClick={() => mutation.mutate()}>
           创建
         </Button>
       </Card>
@@ -1012,18 +1000,18 @@ export function KnowledgeDetailPage() {
             {kb.description} · {kb.sourceCount} 个来源 · {kb.chunkCount} 个分块
           </p>
         </div>
-        <Button variant="primary" onClick={() => setTab("sources")}>
+        <Button type="primary" onClick={() => setTab("sources")}>
           + 添加来源
         </Button>
       </div>
 
       <Tabs
-        tabs={[
-          { id: "ask", label: "Ask 问答" },
-          { id: "search", label: "搜索资料" },
-          { id: "sources", label: `资料管理 (${kb.sourceCount})` },
+        items={[
+          { key: "ask", label: "Ask 问答" },
+          { key: "search", label: "搜索资料" },
+          { key: "sources", label: `资料管理 (${kb.sourceCount})` },
         ]}
-        active={tab}
+        activeKey={tab}
         onChange={setTab}
       />
 
@@ -1037,7 +1025,7 @@ export function KnowledgeDetailPage() {
                 placeholder="基于知识库提问，例如：越南消费金融的主要玩家有哪些？"
               />
               <Button
-                variant="primary"
+                type="primary"
                 onClick={() => setAskQuery(askQuery)}
                 disabled={!askQuery.trim()}
               >
@@ -1151,7 +1139,7 @@ export function KnowledgeDetailPage() {
                 />
               )}
               <Button
-                variant="primary"
+                type="primary"
                 disabled={addSource.isPending}
                 onClick={() => addSource.mutate()}
               >
@@ -1186,11 +1174,16 @@ export function KnowledgeDetailPage() {
                   </div>
                   <div className="sg-row">
                     {s.status === "failed" && (
-                      <Button size="sm" onClick={() => retrySource.mutate(s.id)}>
+                      <Button size="small" onClick={() => retrySource.mutate(s.id)}>
                         重试
                       </Button>
                     )}
-                    <Button size="sm" variant="danger" onClick={() => removeSource.mutate(s.id)}>
+                    <Button
+                      size="small"
+                      type="primary"
+                      danger
+                      onClick={() => removeSource.mutate(s.id)}
+                    >
                       移除
                     </Button>
                   </div>

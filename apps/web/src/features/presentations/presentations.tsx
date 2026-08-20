@@ -13,8 +13,9 @@ import {
   updateLinkHref,
   updateTextContent,
 } from "@shiguang/content";
-import { Avatar, Button, Empty, Modal, Scrollbar, Select, Textarea, useToast } from "@shiguang/ui";
+import { Avatar, Empty, Scrollbar, useToast } from "@shiguang/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Button, Input, Modal, Select } from "antd";
 import {
   ChevronLeft,
   ChevronRight,
@@ -466,7 +467,7 @@ export function PresentationsPage() {
                 }
                 action={
                   tab !== "trash" ? (
-                    <Button variant="primary" onClick={() => navigate("/presentations/new")}>
+                    <Button type="primary" onClick={() => navigate("/presentations/new")}>
                       新建在线演示
                     </Button>
                   ) : undefined
@@ -984,25 +985,25 @@ export function PresentationEditorPage() {
           </span>
         </div>
         <div className="sg-row">
-          <Button size="sm" disabled={!canUndo} onClick={undo} aria-label="撤销">
+          <Button size="small" disabled={!canUndo} onClick={undo} aria-label="撤销">
             ↺ 撤销
           </Button>
-          <Button size="sm" disabled={!canRedo} onClick={redo} aria-label="重做">
+          <Button size="small" disabled={!canRedo} onClick={redo} aria-label="重做">
             ↻ 重做
           </Button>
-          <Button size="sm" onClick={() => openAiEdit("presentation")}>
+          <Button size="small" onClick={() => openAiEdit("presentation")}>
             ✦ AI 整篇
           </Button>
-          <Button size="sm" onClick={() => openAiEdit("page")}>
+          <Button size="small" onClick={() => openAiEdit("page")}>
             ✦ AI 本页
           </Button>
-          <Button size="sm" onClick={() => saveMutation.mutate()}>
+          <Button size="small" onClick={() => saveMutation.mutate()}>
             保存
           </Button>
-          <Button size="sm" onClick={() => navigate(`/presentations/${id}/play`)}>
+          <Button size="small" onClick={() => navigate(`/presentations/${id}/play`)}>
             ▶ 播放
           </Button>
-          <Button size="sm" variant="primary" onClick={() => setPublishOpen(true)}>
+          <Button size="small" type="primary" onClick={() => setPublishOpen(true)}>
             发布
           </Button>
         </div>
@@ -1013,12 +1014,12 @@ export function PresentationEditorPage() {
           <div className="sg-row-between" style={{ padding: "4px 4px 10px" }}>
             <strong style={{ fontSize: 13 }}>页面（{pages.length}）</strong>
             <div className="sg-row">
-              <Button size="sm" variant="ghost" onClick={addPage} aria-label="新增页面">
+              <Button size="small" type="text" onClick={addPage} aria-label="新增页面">
                 +
               </Button>
               <Button
-                size="sm"
-                variant="ghost"
+                size="small"
+                type="text"
                 disabled={!activePageId}
                 onClick={() => moveActivePage(-1)}
                 aria-label="上移"
@@ -1026,8 +1027,8 @@ export function PresentationEditorPage() {
                 ↑
               </Button>
               <Button
-                size="sm"
-                variant="ghost"
+                size="small"
+                type="text"
                 disabled={!activePageId}
                 onClick={() => moveActivePage(1)}
                 aria-label="下移"
@@ -1035,8 +1036,8 @@ export function PresentationEditorPage() {
                 ↓
               </Button>
               <Button
-                size="sm"
-                variant="ghost"
+                size="small"
+                type="text"
                 disabled={!activePageId}
                 onClick={duplicateActivePage}
                 aria-label="复制页面"
@@ -1044,8 +1045,8 @@ export function PresentationEditorPage() {
                 ⧉
               </Button>
               <Button
-                size="sm"
-                variant="ghost"
+                size="small"
+                type="text"
                 disabled={!activePageId}
                 onClick={removeActivePage}
                 aria-label="删除页面"
@@ -1152,7 +1153,7 @@ export function PresentationEditorPage() {
                       onChange={(e) => editLink(el.id, e.target.value)}
                       placeholder="链接 URL"
                     />
-                    <Textarea
+                    <Input.TextArea
                       value={el.text}
                       onChange={(e) => editText(el.id, e.target.value)}
                       placeholder="链接文本"
@@ -1160,7 +1161,7 @@ export function PresentationEditorPage() {
                     />
                   </>
                 ) : (
-                  <Textarea
+                  <Input.TextArea
                     value={el.text}
                     onChange={(e) => editText(el.id, e.target.value)}
                     placeholder="文本内容"
@@ -1211,29 +1212,30 @@ export function PresentationEditorPage() {
 
       <Modal
         open={aiEditOpen}
-        onClose={() => setAiEditOpen(false)}
+        onCancel={() => setAiEditOpen(false)}
         title={aiScope === "page" ? "AI 重写本页" : "AI 修改整篇演示"}
         footer={
           <div className="sg-row">
             <Button onClick={() => setAiEditOpen(false)}>取消</Button>
             {aiProposal == null ? (
-              <Button variant="primary" disabled={aiEdit.isPending} onClick={() => aiEdit.mutate()}>
+              <Button type="primary" disabled={aiEdit.isPending} onClick={() => aiEdit.mutate()}>
                 {aiEdit.isPending ? "生成中…" : "生成"}
               </Button>
             ) : (
-              <Button variant="primary" onClick={applyAiProposal}>
+              <Button type="primary" onClick={applyAiProposal}>
                 应用修改
               </Button>
             )}
           </div>
         }
+        destroyOnHidden
       >
         <div className="sg-col" style={{ gap: 12 }}>
           <div className="sg-option-row">
             <span>作用范围</span>
             <span>{aiScope === "page" ? "当前页" : "整个演示"}</span>
           </div>
-          <Textarea
+          <Input.TextArea
             value={aiInstruction}
             onChange={(e) => setAiInstruction(e.target.value)}
             placeholder="例如：让内容更精炼、更有冲击力"

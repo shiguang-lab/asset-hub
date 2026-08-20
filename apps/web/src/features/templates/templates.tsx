@@ -1,5 +1,6 @@
-import { Button, Card, Empty, Tabs, useToast } from "@shiguang/ui";
+import { Empty, useToast } from "@shiguang/ui";
 import { useMutation, useQuery } from "@tanstack/react-query";
+import { Button, Card, Tabs } from "antd";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, type Template } from "../../entities/api.js";
@@ -27,11 +28,11 @@ export function TemplatesPage() {
     <div>
       <h1 className="sg-h1 sg-mb">模板中心</h1>
       <Tabs
-        tabs={[
-          { id: "research", label: "调研模板" },
-          { id: "presentation", label: "演示模板" },
+        items={[
+          { key: "research", label: "调研模板" },
+          { key: "presentation", label: "演示模板" },
         ]}
-        active={type}
+        activeKey={type}
         onChange={setType}
       />
       {(data?.length ?? 0) === 0 ? (
@@ -46,7 +47,7 @@ export function TemplatesPage() {
               </p>
               <div className="sg-row-between">
                 <span className="sg-subtle">已使用 {t.usageCount} 次</span>
-                <Button size="sm" variant="primary" onClick={() => useTemplate.mutate(t.id)}>
+                <Button size="small" type="primary" onClick={() => useTemplate.mutate(t.id)}>
                   使用
                 </Button>
               </div>

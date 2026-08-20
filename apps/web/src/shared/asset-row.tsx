@@ -1,4 +1,5 @@
-import { Card, formatRelative, StatusBadge } from "@shiguang/ui";
+import { formatRelative, StatusBadge } from "@shiguang/ui";
+import { Card } from "antd";
 import { useNavigate } from "react-router-dom";
 import type { Asset } from "../entities/api.js";
 
@@ -15,7 +16,7 @@ export function AssetRow({ asset, actions }: { asset: Asset; actions?: React.Rea
             ? `/datasets/${asset.id}`
             : `/assets/${asset.id}`;
   return (
-    <Card onClick={() => navigate(href)}>
+    <Card hoverable onClick={() => navigate(href)}>
       <div className="sg-row-between">
         <div className="sg-col" style={{ gap: 2, minWidth: 0 }}>
           <strong style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>

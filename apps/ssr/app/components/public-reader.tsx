@@ -1,6 +1,8 @@
 "use client";
 
-import { extractMarkdownToc } from "@shiguang/markdown-viewer/toc";
+import {useRequest} from "ahooks";
+import {Avatar, Button, Menu as AntMenu, type MenuProps, Tooltip} from "antd";
+import {createStyles} from "antd-style";
 import {
   AlignJustify,
   AlignLeft,
@@ -15,20 +17,18 @@ import {
   MoreHorizontal,
   StretchHorizontal,
 } from "lucide-react";
-import dynamic from "next/dynamic";
-import { type MouseEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {type MouseEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState,} from "react";
 
-const InteractiveMarkdown = dynamic(
-  () => import("./interactive-markdown").then((module) => module.InteractiveMarkdown),
-  { ssr: false },
-);
+import {rewriteAssetLinks} from "../render/rewrite-asset-links";
+import {isClient} from "../utils/environment";
+import {InteractiveMarkdown} from "./interactive-markdown";
+import {SeoSnapshot} from "./seo-snapshot";
 
 export interface PublicReaderContent {
   title: string;
   markdown: string;
   visibility: string;
   visitorCount: number;
-  activeViewers: PublicViewer[];
   publisher: {
     name: string;
     avatarUrl: string | null;
@@ -45,360 +45,408 @@ export interface PublicViewer {
   avatarUrl: string | null;
 }
 
-interface PublicSession {
-  authenticated?: boolean;
-  subject?: string;
-  displayName?: string;
-  avatarUrl?: string;
-  user?: { id?: string; username?: string; avatarUrl?: string };
-}
-
 type ContentWidth = "default" | "wide" | "full";
+
+interface PublicTocItem {
+  /** Readable, stable anchor written to both the URL hash and the heading element. */
+  id: string;
+  /** Positional index used to address the matching heading in XMarkdown's rendered DOM. */
+  domIndex: number;
+  level: number;
+  text: string;
+}
 
 const tocOpenStorageKey = "sg-public-toc-open";
 const widthModeStorageKey = "sg-public-width-mode";
+const visitorStorageKey = "sg-public-visitor-fingerprint";
+const ACTIVE_TOC_OFFSET_PX = 32;
+const SCROLL_KEYS = new Set(["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "]);
 
-export function PublicReader({
-  slug,
-  content,
-  serverMarkdownHtml,
-}: {
+interface PresenceResult {
+  visitorCount: number;
+  viewers: PublicViewer[];
+}
+
+function getOrCreateVisitorId(): string {
+  try {
+    const existing = window.localStorage.getItem(visitorStorageKey);
+    if (existing && existing.length >= 16) return existing;
+  } catch {
+    // localStorage can be unavailable in private browsing.
+  }
+  const generated =
+    typeof window.crypto?.randomUUID === "function"
+      ? window.crypto.randomUUID()
+      : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+  try {
+    window.localStorage.setItem(visitorStorageKey, generated);
+  } catch {
+    // The in-memory value still supports presence for this page lifetime.
+  }
+  return generated;
+}
+
+const usePublicReaderStyles = createStyles(({token}) => ({
+  headerButton: {
+    width: 32,
+    height: 32,
+    padding: 0,
+    color: `${token.colorTextSecondary} !important`,
+    border: "0 !important",
+    background: "transparent !important",
+    boxShadow: "none !important",
+    "&:hover": {
+      color: `${token.colorText} !important`,
+      background: `${token.colorFillSecondary} !important`,
+    },
+    "&.sg-public-width-toggle.is-open": {
+      color: `${token.colorText} !important`,
+      border: "1px solid #7aa2ff !important",
+      background: `${token.colorFillSecondary} !important`,
+    },
+  },
+  viewerAvatar: {
+    width: 28,
+    height: 28,
+    fontSize: 11,
+    fontWeight: 700,
+    border: `2px solid ${token.colorBgBase}`,
+    background: "linear-gradient(135deg, #7c5cff, #2c9cdb)",
+  },
+  publisherAvatar: {
+    border: "1px solid rgba(255, 255, 255, 0.12)",
+    background: "linear-gradient(135deg, #8b72ff, #30b8a5)",
+  },
+}));
+
+export interface PublicReaderProps {
   slug: string;
   content: PublicReaderContent;
-  serverMarkdownHtml: string;
-}) {
-  const [tocOpen, setTocOpen] = useState(false);
-  const [widthMode, setWidthMode] = useState<ContentWidth>("default");
-  const [transitionsEnabled, setTransitionsEnabled] = useState(false);
-  const [hasInitialHash, setHasInitialHash] = useState(false);
-  const [initialPositionReady, setInitialPositionReady] = useState(false);
-  const [layoutStateReady, setLayoutStateReady] = useState(false);
+  snapshotHtml: string;
+}
+
+/**
+ * Live public document reader. Mirrors the pattern used by superagentui's
+ * kbDocPreview: XMarkdown renders the markdown content on the client, the TOC
+ * is extracted from rendered heading elements (via useLayoutEffect), and
+ * navigation uses the browser's native
+ * `scrollIntoView` against a heading index — no offsetTop chains, no
+ * hand-injected heading ids, no risk of the DOM positions drifting between
+ * server and client renders.
+ */
+export function PublicReader({slug, content, snapshotHtml}: PublicReaderProps) {
+  const {styles} = usePublicReaderStyles();
+  const rewritten = useMemo(() => rewriteAssetLinks(content), [content]);
+
+  const [toc, setToc] = useState<PublicTocItem[]>([]);
+  const [activeTocId, setActiveTocId] = useState<string | null>(null);
+  const [tocOpen, setTocOpen] = useState(()=>{
+    return isClient()?window.localStorage.getItem(tocOpenStorageKey) !== 'false': true
+  });
+  const [widthMode, setWidthMode] = useState<ContentWidth>(() => {
+    return (isClient() ? window.localStorage.getItem(widthModeStorageKey)??"default" : "default") as ContentWidth
+  });
   const [widthMenuOpen, setWidthMenuOpen] = useState(false);
   const [widthSubmenuOpen, setWidthSubmenuOpen] = useState(false);
-  const [activeTocAnchor, setActiveTocAnchor] = useState<string | null>(null);
-  const [visitorCount, setVisitorCount] = useState(content.visitorCount);
-  const [activeViewers, setActiveViewers] = useState<PublicViewer[]>(content.activeViewers ?? []);
-  const [interactiveReady, setInteractiveReady] = useState(false);
-  const [clientHydrated, setClientHydrated] = useState(false);
+  const [clientReady, setClientReady] = useState(false);
+
+  const {data: presence} = useRequest(
+    async (): Promise<PresenceResult> => {
+      const response = await fetch(`/p/${encodeURIComponent(slug)}/presence`, {
+        method: "POST",
+        credentials: "include",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({visitorId: getOrCreateVisitorId()}),
+      });
+      if (!response.ok) throw new Error("PRESENCE_UNAVAILABLE");
+      return (await response.json()) as PresenceResult;
+    },
+    {
+      ready: clientReady,
+      pollingInterval: 30_000,
+      pollingWhenHidden: false,
+      refreshDeps: [slug],
+    },
+  );
+  const visitorCount = presence?.visitorCount ?? content.visitorCount;
+  const activeViewers = presence?.viewers ?? [];
+
   const layoutRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLElement>(null);
-  const widthMenuRef = useRef<HTMLDivElement>(null);
   const tocNavRef = useRef<HTMLElement>(null);
   const tocLinkRefs = useRef(new Map<string, HTMLAnchorElement>());
-  const tocNavigationLockRef = useRef(false);
-  const scrollAnimationFrameRef = useRef<number | null>(null);
-  const toc = useMemo(() => extractMarkdownToc(content.markdown), [content.markdown]);
 
-  useLayoutEffect(() => {
-    try {
-      const storedTocOpen = window.localStorage.getItem(tocOpenStorageKey);
-      if (storedTocOpen === "true" || storedTocOpen === "false")
-        setTocOpen(storedTocOpen === "true");
-      const storedWidthMode = window.localStorage.getItem(widthModeStorageKey);
-      if (
-        storedWidthMode === "default" ||
-        storedWidthMode === "wide" ||
-        storedWidthMode === "full"
-      ) {
-        setWidthMode(storedWidthMode);
-      }
-    } catch {
-      // localStorage can be unavailable in private browsing or restricted contexts.
+  const activeTocIdRef = useRef<string | null>(null);
+  const headingOffsetsRef = useRef<Array<{ id: string; top: number }>>([]);
+  const scrollFrameIdRef = useRef<number | null>(null);
+  const navigationTargetIdRef = useRef<string | null>(null);
+  const userScrollIntentRef = useRef(false);
+  const widthMenuCloseTimerRef = useRef<number | null>(null);
+
+  const commitActiveToc = useCallback((nextActiveId: string | null) => {
+    if (nextActiveId === activeTocIdRef.current) return;
+    activeTocIdRef.current = nextActiveId;
+    setActiveTocId(nextActiveId);
+  }, []);
+
+  const clearWidthMenuCloseTimer = useCallback(() => {
+    if (widthMenuCloseTimerRef.current !== null) {
+      window.clearTimeout(widthMenuCloseTimerRef.current);
+      widthMenuCloseTimerRef.current = null;
     }
-    setLayoutStateReady(true);
-
-    const syncStoredState = (event: StorageEvent) => {
-      if (
-        event.key === tocOpenStorageKey &&
-        (event.newValue === "true" || event.newValue === "false")
-      ) {
-        setTocOpen(event.newValue === "true");
-      }
-      if (
-        event.key === widthModeStorageKey &&
-        (event.newValue === "default" || event.newValue === "wide" || event.newValue === "full")
-      ) {
-        setWidthMode(event.newValue);
-      }
-    };
-    window.addEventListener("storage", syncStoredState);
-    return () => window.removeEventListener("storage", syncStoredState);
   }, []);
 
-  useEffect(() => {
-    setClientHydrated(true);
-  }, []);
+  const openWidthMenu = useCallback(() => {
+    clearWidthMenuCloseTimer();
+    setWidthMenuOpen(true);
+  }, [clearWidthMenuCloseTimer]);
 
-  useEffect(() => {
-    const frame = window.requestAnimationFrame(() => setTransitionsEnabled(true));
-    return () => window.cancelAnimationFrame(frame);
-  }, []);
+  const scheduleWidthMenuClose = useCallback(() => {
+    clearWidthMenuCloseTimer();
+    widthMenuCloseTimerRef.current = window.setTimeout(() => {
+      setWidthMenuOpen(false);
+      setWidthSubmenuOpen(false);
+      widthMenuCloseTimerRef.current = null;
+    }, 160);
+  }, [clearWidthMenuCloseTimer]);
 
   useLayoutEffect(() => {
-    setVisitorCount(content.visitorCount);
-    setActiveViewers(content.activeViewers ?? []);
-  }, [content.activeViewers, content.visitorCount]);
+    // The initial client render must match the server render. The environment
+    // check mounts the interactive sibling before the browser paints.
+    if (isClient()) setClientReady(true);
+  }, []);
 
   useEffect(() => {
-    let stopped = false;
-    let timer: number | null = null;
-    const visitorStorageKey = "sg-public-visitor-fingerprint";
-    const getVisitorId = () => {
-      const existing = window.localStorage.getItem(visitorStorageKey);
-      if (existing && existing.length >= 16) return existing;
-      const generated =
-        typeof window.crypto?.randomUUID === "function"
-          ? window.crypto.randomUUID()
-          : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
-      window.localStorage.setItem(visitorStorageKey, generated);
-      return generated;
-    };
-    const sendPresence = async () => {
-      const visitorId = getVisitorId();
-      let session: PublicSession | null = null;
-      try {
-        const response = await fetch("/api/auth/session", {
-          credentials: "include",
-          headers: { Accept: "application/json" },
-        });
-        if (response.ok) session = (await response.json()) as PublicSession;
-      } catch {
-        session = null;
-      }
-      const userId = session?.user?.id || session?.subject || null;
-      const displayName = session?.displayName || session?.user?.username || null;
-      const avatarUrl = session?.avatarUrl || session?.user?.avatarUrl || null;
-      try {
-        const response = await fetch(`/p/${encodeURIComponent(slug)}/presence`, {
-          method: "POST",
-          credentials: "include",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ visitorId, userId, displayName, avatarUrl }),
-        });
-        if (!response.ok || stopped) return;
-        const result = (await response.json()) as {
-          visitorCount?: number;
-          viewers?: PublicViewer[];
-        };
-        if (typeof result.visitorCount === "number") setVisitorCount(result.visitorCount);
-        if (Array.isArray(result.viewers)) setActiveViewers(result.viewers);
-      } catch {
-        // Presence is supplementary and must not block document reading.
-      }
-    };
-    void sendPresence();
-    timer = window.setInterval(() => void sendPresence(), 30_000);
     return () => {
-      stopped = true;
-      if (timer !== null) window.clearInterval(timer);
+      clearWidthMenuCloseTimer();
     };
-  }, [slug]);
+  }, [clearWidthMenuCloseTimer]);
 
-  const getHeading = (anchor: string) => {
-    const root = contentRef.current;
-    if (!root) return null;
-    const headingSelector = "h1, h2, h3, h4";
-    const interactiveHeading = Array.from(
-      root.querySelectorAll<HTMLElement>(`.sg-public-interactive-markdown ${headingSelector}`),
-    ).find((heading) => heading.id === anchor);
-    if (interactiveHeading) return interactiveHeading;
-    const seoHeading = Array.from(
-      root.querySelectorAll<HTMLElement>(`.sg-public-seo-markdown ${headingSelector}`),
-    ).find((heading) => heading.id === anchor);
-    return seoHeading ?? null;
-  };
-
-  const resolveHashAnchor = () => {
-    const rawAnchor = decodeURIComponent(window.location.hash.slice(1));
-    if (!rawAnchor) return null;
-    const canonicalAnchor = rawAnchor.replace(/^sg-heading-(?=\d+-)/, "");
-    return toc.find((item) => item.anchor === canonicalAnchor)?.anchor ?? null;
-  };
-
-  const scrollToHeading = (anchor: string, behavior: ScrollBehavior = "smooth") => {
-    const layout = layoutRef.current ?? document.querySelector<HTMLDivElement>(".sg-public-layout");
-    const heading = getHeading(anchor);
-    if (!layout || !heading) return false;
-    const maxScrollTop = Math.max(0, layout.scrollHeight - layout.clientHeight);
-    const targetTop = Math.min(
-      maxScrollTop,
-      Math.max(
-        0,
-        layout.scrollTop +
-          heading.getBoundingClientRect().top -
-          layout.getBoundingClientRect().top -
-          24,
-      ),
-    );
-    if (scrollAnimationFrameRef.current !== null) {
-      window.cancelAnimationFrame(scrollAnimationFrameRef.current);
-      scrollAnimationFrameRef.current = null;
-    }
-    if (behavior === "auto") {
-      layout.scrollTop = targetTop;
-      return true;
-    }
-
-    const startTop = layout.scrollTop;
-    const distance = targetTop - startTop;
-    if (Math.abs(distance) < 1) return true;
-    const duration = Math.min(520, Math.max(260, Math.abs(distance) * 0.18));
-    const startedAt = performance.now();
-    const step = (now: number) => {
-      const progress = Math.min(1, (now - startedAt) / duration);
-      const eased = progress < 0.5 ? 2 * progress * progress : 1 - (2 - 2 * progress) ** 2 / 2;
-      layout.scrollTop = startTop + distance * eased;
-      if (progress < 1 && tocNavigationLockRef.current) {
-        scrollAnimationFrameRef.current = window.requestAnimationFrame(step);
-      } else {
-        scrollAnimationFrameRef.current = null;
-      }
-    };
-    scrollAnimationFrameRef.current = window.requestAnimationFrame(step);
-    return true;
-  };
-
+  // ---------------- Build TOC from rendered DOM ----------------
+  // XMarkdown doesn't add `id` attributes to headings, so build the TOC from its DOM.
   useLayoutEffect(() => {
-    const headings = contentRef.current?.querySelectorAll(
-      ".x-markdown h1, .x-markdown h2, .x-markdown h3, .x-markdown h4, .sg-public-markdown h1, .sg-public-markdown h2, .sg-public-markdown h3, .sg-public-markdown h4",
-    );
-    headings?.forEach((heading, index) => {
-      const item = toc[index];
-      if (item) heading.id = item.anchor;
-    });
-  }, [toc, interactiveReady]);
+    if (!clientReady) return;
+    // Re-read headings after the client markdown source changes.
+    void rewritten;
+    const container = contentRef.current;
+    if (!container) return;
+    const headings = getMarkdownHeadings(container);
+    const nextToc = buildTocFromHeadings(headings);
+    for (const item of nextToc) headings[item.domIndex].id = item.id;
+    navigationTargetIdRef.current = null;
+    userScrollIntentRef.current = false;
+    setToc(nextToc);
+    commitActiveToc(nextToc[0]?.id ?? null);
+  }, [clientReady, commitActiveToc, rewritten]);
 
-  useLayoutEffect(() => {
-    const syncHash = () => {
-      setHasInitialHash(Boolean(window.location.hash));
-      const anchor = resolveHashAnchor();
-      if (!anchor || !getHeading(anchor)) {
-        setInitialPositionReady(true);
-        return;
-      }
-      setActiveTocAnchor(anchor);
-      scrollToHeading(anchor, "auto");
-      if (interactiveReady) setInitialPositionReady(true);
-    };
-    syncHash();
-    window.addEventListener("hashchange", syncHash);
-    return () => window.removeEventListener("hashchange", syncHash);
-  }, [interactiveReady, toc]);
-
-  useLayoutEffect(() => {
-    const hashAnchor = resolveHashAnchor();
-    setActiveTocAnchor(hashAnchor ?? toc[0]?.anchor ?? null);
-  }, [toc]);
-
-  useEffect(() => {
+  // ---------------- Heading offset tracking & active heading ----------------
+  const measureHeadingOffsets = useCallback(() => {
     const layout = layoutRef.current;
-    const contentElement = contentRef.current;
-    if (!layout || !contentElement || toc.length === 0) return;
-
-    const cancelProgrammaticScroll = () => {
-      if (scrollAnimationFrameRef.current !== null) {
-        window.cancelAnimationFrame(scrollAnimationFrameRef.current);
-        scrollAnimationFrameRef.current = null;
-      }
-      tocNavigationLockRef.current = false;
-    };
-    let frame = 0;
-    const updateActiveHeading = () => {
-      frame = 0;
-      const rootTop = layout.getBoundingClientRect().top;
-      const threshold = rootTop + 96;
-      const headings = toc
-        .map((item) => getHeading(item.anchor))
-        .filter((heading): heading is HTMLElement => heading !== null);
-      if (headings.length === 0) return;
-
-      let current = headings[0];
-      if (layout.scrollTop >= layout.scrollHeight - layout.clientHeight - 2) {
-        current = headings[headings.length - 1];
-      } else {
-        for (const heading of headings) {
-          if (heading.getBoundingClientRect().top <= threshold) current = heading;
-          else break;
-        }
-      }
-      setActiveTocAnchor((previous) => (previous === current.id ? previous : current.id));
-    };
-    const onScroll = () => {
-      if (tocNavigationLockRef.current) return;
-      if (frame === 0) frame = window.requestAnimationFrame(updateActiveHeading);
-    };
-    const onUserScrollStart = () => {
-      if (!tocNavigationLockRef.current) return;
-      cancelProgrammaticScroll();
-      if (frame === 0) frame = window.requestAnimationFrame(updateActiveHeading);
-    };
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key)) {
-        onUserScrollStart();
-      }
-    };
-
-    layout.addEventListener("scroll", onScroll, { passive: true });
-    layout.addEventListener("wheel", onUserScrollStart, { passive: true });
-    layout.addEventListener("touchstart", onUserScrollStart, { passive: true });
-    layout.addEventListener("pointerdown", onUserScrollStart, { passive: true });
-    layout.addEventListener("keydown", onKeyDown);
-    updateActiveHeading();
-    return () => {
-      layout.removeEventListener("scroll", onScroll);
-      layout.removeEventListener("wheel", onUserScrollStart);
-      layout.removeEventListener("touchstart", onUserScrollStart);
-      layout.removeEventListener("pointerdown", onUserScrollStart);
-      layout.removeEventListener("keydown", onKeyDown);
-      if (frame !== 0) window.cancelAnimationFrame(frame);
-      cancelProgrammaticScroll();
-    };
-  }, [toc, interactiveReady]);
-
-  useEffect(() => {
-    const onPointerDown = (event: PointerEvent) => {
-      if (!widthMenuRef.current?.contains(event.target as Node)) {
-        setWidthMenuOpen(false);
-        setWidthSubmenuOpen(false);
-      }
-    };
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        setWidthMenuOpen(false);
-        setWidthSubmenuOpen(false);
-      }
-    };
-    document.addEventListener("pointerdown", onPointerDown);
-    document.addEventListener("keydown", onKeyDown);
-    return () => {
-      document.removeEventListener("pointerdown", onPointerDown);
-      document.removeEventListener("keydown", onKeyDown);
-    };
+    const container = contentRef.current;
+    if (!layout || !container) return;
+    const headings = getMarkdownHeadings(container);
+    if (!headings.length) {
+      headingOffsetsRef.current = [];
+      return;
+    }
+    const containerRect = container.getBoundingClientRect();
+    const contentTop = layout.scrollTop - containerRect.top;
+    headingOffsetsRef.current = headings.map((element, index) => ({
+      id: element.id || String(index),
+      top: element.getBoundingClientRect().top + contentTop,
+    }));
   }, []);
 
+  const findActiveTocId = useCallback((): string | null => {
+    const layout = layoutRef.current;
+    if (!layout) return null;
+    const offsets = headingOffsetsRef.current;
+    if (!offsets.length) return null;
+    const targetTop = layout.scrollTop + ACTIVE_TOC_OFFSET_PX;
+    let low = 0;
+    let high = offsets.length - 1;
+    let activeIndex = 0;
+    while (low <= high) {
+      const middle = Math.floor((low + high) / 2);
+      if (offsets[middle].top <= targetTop) {
+        activeIndex = middle;
+        low = middle + 1;
+      } else {
+        high = middle - 1;
+      }
+    }
+    return offsets[activeIndex]?.id ?? null;
+  }, []);
+
+  const scheduleActiveHeadingUpdate = useCallback(() => {
+    if (scrollFrameIdRef.current !== null) return;
+    scrollFrameIdRef.current = window.requestAnimationFrame(() => {
+      scrollFrameIdRef.current = null;
+      if (navigationTargetIdRef.current) return;
+      const next = findActiveTocId();
+      if (next !== null) commitActiveToc(next);
+    });
+  }, [commitActiveToc, findActiveTocId]);
+
+  useLayoutEffect(() => {
+    if (!clientReady) return;
+    const layout = layoutRef.current;
+    const container = contentRef.current;
+    if (!layout || !container) return;
+    let measureTimerId: number | null = null;
+    const scheduleMeasure = () => {
+      if (measureTimerId !== null) window.clearTimeout(measureTimerId);
+      measureTimerId = window.setTimeout(() => {
+        measureTimerId = null;
+        measureHeadingOffsets();
+        scheduleActiveHeadingUpdate();
+      }, 120);
+    };
+    const onContentScroll = () => {
+      if (navigationTargetIdRef.current) {
+        if (!userScrollIntentRef.current) return;
+        navigationTargetIdRef.current = null;
+      }
+      userScrollIntentRef.current = false;
+      scheduleActiveHeadingUpdate();
+    };
+    const onUserScrollIntent = (event: Event) => {
+      if (event.type === "pointermove" && (event as PointerEvent).buttons === 0) return;
+      userScrollIntentRef.current = true;
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (SCROLL_KEYS.has(event.key)) userScrollIntentRef.current = true;
+    };
+    layout.addEventListener("scroll", onContentScroll, {passive: true});
+    layout.addEventListener("wheel", onUserScrollIntent, {passive: true});
+    layout.addEventListener("touchmove", onUserScrollIntent, {passive: true});
+    layout.addEventListener("pointermove", onUserScrollIntent, {passive: true});
+    layout.addEventListener("keydown", onKeyDown);
+    const resizeObserver =
+      typeof ResizeObserver === "undefined" ? null : new ResizeObserver(scheduleMeasure);
+    resizeObserver?.observe(container);
+    // initial measure + first active heading computation
+    const initialFrameId = window.requestAnimationFrame(() => {
+      measureHeadingOffsets();
+      const next = findActiveTocId();
+      if (next !== null) commitActiveToc(next);
+    });
+    return () => {
+      window.cancelAnimationFrame(initialFrameId);
+      if (scrollFrameIdRef.current !== null) {
+        window.cancelAnimationFrame(scrollFrameIdRef.current);
+        scrollFrameIdRef.current = null;
+      }
+      if (measureTimerId !== null) window.clearTimeout(measureTimerId);
+      layout.removeEventListener("scroll", onContentScroll);
+      layout.removeEventListener("wheel", onUserScrollIntent);
+      layout.removeEventListener("touchmove", onUserScrollIntent);
+      layout.removeEventListener("pointermove", onUserScrollIntent);
+      layout.removeEventListener("keydown", onKeyDown);
+      resizeObserver?.disconnect();
+    };
+  }, [
+    clientReady,
+    commitActiveToc,
+    findActiveTocId,
+    measureHeadingOffsets,
+    scheduleActiveHeadingUpdate,
+  ]);
+
+  // Auto-scroll the active toc item into view inside the toc nav.
   useEffect(() => {
-    if (!activeTocAnchor) return;
+    if (!activeTocId) return;
     const nav = tocNavRef.current;
-    const link = tocLinkRefs.current.get(activeTocAnchor);
+    const link = tocLinkRefs.current.get(activeTocId);
     if (!nav || !link) return;
     const linkTop = link.offsetTop;
     const linkBottom = linkTop + link.offsetHeight;
     if (linkTop < nav.scrollTop) nav.scrollTop = linkTop;
     else if (linkBottom > nav.scrollTop + nav.clientHeight)
       nav.scrollTop = linkBottom - nav.clientHeight;
-  }, [activeTocAnchor]);
+  }, [activeTocId]);
 
-  const handleTocClick = (event: MouseEvent<HTMLAnchorElement>, anchor: string) => {
+  // ---------------- Hash navigation on mount ----------------
+  useLayoutEffect(() => {
+    if (!toc.length) return;
+    const hash = window.location.hash;
+    if (!hash) return;
+    const decoded = decodeURIComponent(hash.replace(/^#/, ""));
+    const headings = getMarkdownHeadings(contentRef.current);
+    const legacyIndex = /^\d+$/.test(decoded) ? Number(decoded) : -1;
+    const target =
+      headings.find(
+        (heading) => heading.id === decoded || heading.textContent?.trim() === decoded,
+      ) ?? headings[legacyIndex];
+    if (target) {
+      navigationTargetIdRef.current = target.id;
+      userScrollIntentRef.current = false;
+      commitActiveToc(target.id);
+      target.scrollIntoView({behavior: "auto", block: "start"});
+    }
+  }, [commitActiveToc, toc]);
+
+  // ---------------- Handlers ----------------
+  const handleTocClick = (event: MouseEvent<HTMLAnchorElement>, item: PublicTocItem) => {
     event.preventDefault();
-    if (!getHeading(anchor)) return;
-    setActiveTocAnchor(anchor);
-    tocNavigationLockRef.current = true;
-    scrollToHeading(anchor);
-    window.history.replaceState(null, "", `#${anchor}`);
+    const headings = getMarkdownHeadings(contentRef.current);
+    const target = headings[item.domIndex];
+    if (!target) return;
+    navigationTargetIdRef.current = item.id;
+    userScrollIntentRef.current = false;
+    commitActiveToc(item.id);
+    target.scrollIntoView({behavior: "smooth", block: "start"});
+    try {
+      window.history.replaceState(null, "", `#${encodeURIComponent(item.id)}`);
+    } catch {
+      // ignore
+    }
+  };
+
+  const handleTocToggle = () => {
+    setTocOpen((open) => {
+      const next = !open;
+      try {
+        window.localStorage.setItem(tocOpenStorageKey, String(next));
+      } catch {
+        // ignore
+      }
+      return next;
+    });
   };
 
   const copyLink = async () => {
     await navigator.clipboard?.writeText(window.location.href);
+  };
+
+  const moreMenuItems = useMemo<MenuProps["items"]>(
+    () => [
+      {
+        key: "copy",
+        icon: <Copy size={15}/>,
+        label: "复制链接",
+        onMouseEnter: () => setWidthSubmenuOpen(false),
+      },
+      {
+        key: "width",
+        className: widthSubmenuOpen ? "is-active" : undefined,
+        icon: <AlignJustify size={15}/>,
+        label: "页宽设置",
+        extra: <ChevronRight size={15}/>,
+        onMouseEnter: () => setWidthSubmenuOpen(true),
+      },
+    ],
+    [widthSubmenuOpen],
+  );
+
+  const handleMoreMenuClick: MenuProps["onClick"] = ({key}) => {
+    if (key === "copy") {
+      void copyLink();
+      setWidthMenuOpen(false);
+      setWidthSubmenuOpen(false);
+      return;
+    }
+    if (key === "width") setWidthSubmenuOpen(true);
   };
 
   const publisherName = content.publisher?.name?.trim() || "发布人";
@@ -406,270 +454,289 @@ export function PublicReader({
   const visibleViewers = activeViewers.slice(0, 5);
   const viewerOverflow = Math.max(0, activeViewers.length - visibleViewers.length);
 
+  const pageClassName = [
+    "sg-public-page",
+    `width-${widthMode}`,
+  ]
+    .filter(Boolean)
+    .join(" ");
+
   return (
-    <div
-      className={`sg-public-page width-${widthMode}${tocOpen ? " toc-open" : ""}${transitionsEnabled ? " transitions-enabled" : ""}${hasInitialHash ? " has-initial-hash" : ""}${initialPositionReady ? " initial-position-ready" : ""}${layoutStateReady ? " layout-state-ready" : ""}${clientHydrated ? " client-hydrated" : ""}${interactiveReady ? " client-ready" : ""}`}
-    >
+    <div className={pageClassName}>
       <header className="sg-public-header">
         <div className="sg-public-header-leading">
-          {interactiveReady ? (
-            <button
-              type="button"
-              className={`sg-public-icon-button sg-public-toc-toggle${tocOpen ? " is-open" : ""}`}
-              onClick={() =>
-                setTocOpen((open) => {
-                  const next = !open;
-                  try {
-                    window.localStorage.setItem(tocOpenStorageKey, String(next));
-                  } catch {
-                    // Keep the control usable when localStorage is unavailable.
-                  }
-                  return next;
-                })
-              }
+          <Tooltip title={tocOpen ? "隐藏目录" : "显示目录"}>
+            <Button
+              type="text"
+              className={`${styles.headerButton} sg-public-toc-toggle`}
+              onClick={handleTocToggle}
               aria-label={tocOpen ? "隐藏目录" : "显示目录"}
-              title={tocOpen ? "隐藏目录" : "显示目录"}
-            >
-              {tocOpen ? <AlignLeft size={18} /> : <Menu size={18} />}
-            </button>
-          ) : clientHydrated ? (
-            <span
-              className="sg-public-hydration-skeleton sg-public-header-control-skeleton"
-              aria-hidden="true"
+              icon={
+                <span className="sg-public-toc-toggle-icons" aria-hidden="true">
+                  <Menu className="sg-public-toc-toggle-menu-icon" size={18}/>
+                  <AlignLeft className="sg-public-toc-toggle-close-icon" size={18}/>
+                </span>
+              }
             />
-          ) : (
-            <span className="sg-public-header-control-placeholder" aria-hidden="true" />
-          )}
+          </Tooltip>
           <h1 className="sg-public-header-title" title={content.title}>
             {content.title}
           </h1>
         </div>
         <div className="sg-public-actions">
-          <div className="sg-public-viewer-stack" aria-label="当前浏览的人">
-            {visibleViewers.map((viewer, index) => {
-              const name = viewer.displayName?.trim() || (viewer.userId ? "用户" : "访客");
-              const initial = Array.from(name)[0] ?? "访";
-              return (
-                <span
-                  key={viewer.visitorKey}
-                  className="sg-public-viewer-avatar-wrap"
-                  title={name}
-                  style={{ zIndex: visibleViewers.length - index }}
-                >
-                  <span className="sg-public-viewer-avatar" aria-label={name}>
-                    {viewer.avatarUrl ? (
-                      // biome-ignore lint/performance/noImgElement: viewer avatars may come from an arbitrary public gateway URL.
-                      <img src={viewer.avatarUrl} alt={name} />
-                    ) : (
-                      <span>{initial}</span>
-                    )}
+          {visibleViewers.length > 0 ? (
+            <div className="sg-public-viewer-stack">
+              {visibleViewers.map((viewer, index) => {
+                const name = viewer.displayName?.trim() || (viewer.userId ? "用户" : "访客");
+                const initial = Array.from(name)[0] ?? "访";
+                return (
+                  <span
+                    key={viewer.visitorKey}
+                    className="sg-public-viewer-avatar-wrap"
+                    style={{zIndex: visibleViewers.length - index}}
+                  >
+                    <Avatar className={styles.viewerAvatar} src={viewer.avatarUrl ?? undefined}>
+                      {initial}
+                    </Avatar>
                   </span>
-                  <span className="sg-public-viewer-tooltip" role="tooltip">
-                    {name}
-                  </span>
+                );
+              })}
+              {viewerOverflow > 0 ? (
+                <span className="sg-public-viewer-avatar-wrap sg-public-viewer-overflow-wrap">
+                  <Avatar className={styles.viewerAvatar}>+{viewerOverflow}</Avatar>
                 </span>
-              );
-            })}
-            {viewerOverflow > 0 ? (
-              <span
-                className="sg-public-viewer-avatar-wrap sg-public-viewer-overflow-wrap"
-                title={`${viewerOverflow} 位其他浏览者`}
-              >
-                <span className="sg-public-viewer-avatar sg-public-viewer-overflow">
-                  +{viewerOverflow}
-                </span>
-                <span className="sg-public-viewer-tooltip" role="tooltip">
-                  {viewerOverflow} 位其他浏览者
-                </span>
-              </span>
-            ) : null}
-          </div>
-          <span className="sg-public-visitor-count" title="浏览人数">
-            <Eye size={15} />
+              ) : null}
+            </div>
+          ) : null}
+          <span className="sg-public-visitor-count">
+            <Eye size={15}/>
             <span>{visitorCount}</span>
             <span className="sg-public-visitor-label">浏览人数</span>
           </span>
           <span
-            className={`sg-public-visibility-tag${content.visibility === "public" ? " is-public" : ""}`}
+            className={`sg-public-visibility-tag ${
+              content.visibility === "public" ? "is-public" : "is-private"
+            }`}
           >
-            {content.visibility === "public" ? <Globe2 size={13} /> : <LockKeyhole size={13} />}
+            {content.visibility === "public" ? <Globe2 size={13}/> : <LockKeyhole size={13}/>}
             {content.visibility === "public" ? "公开" : "私有"}
           </span>
-          <div ref={widthMenuRef} className="sg-public-width-menu">
-            <button
-              type="button"
-              className="sg-public-icon-button sg-public-width-toggle"
-              onClick={() => {
-                setWidthMenuOpen((open) => {
-                  if (open) setWidthSubmenuOpen(false);
-                  return !open;
-                });
-              }}
+          <fieldset
+            className="sg-public-width-menu"
+            aria-label="更多操作"
+            onMouseEnter={openWidthMenu}
+            onMouseLeave={scheduleWidthMenuClose}
+            onFocus={openWidthMenu}
+            onBlur={(event) => {
+              if (!event.currentTarget.contains(event.relatedTarget)) {
+                setWidthMenuOpen(false);
+                setWidthSubmenuOpen(false);
+              }
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") {
+                setWidthMenuOpen(false);
+                setWidthSubmenuOpen(false);
+              }
+            }}
+          >
+            <Button
+              type="text"
+              className={`${styles.headerButton} sg-public-width-toggle${
+                widthMenuOpen ? " is-open" : ""
+              }`}
+              aria-label="更多操作"
               aria-expanded={widthMenuOpen}
               aria-haspopup="menu"
-              aria-label="内容宽度"
-              title="内容宽度"
-            >
-              <MoreHorizontal size={18} />
-            </button>
+              icon={<MoreHorizontal size={18}/>}
+            />
             {widthMenuOpen ? (
               <div className="sg-public-width-popover" role="menu" aria-label="更多操作">
-                <button
-                  type="button"
-                  role="menuitem"
-                  className="sg-public-width-option"
-                  onClick={() => {
-                    void copyLink();
-                    setWidthMenuOpen(false);
-                    setWidthSubmenuOpen(false);
-                  }}
-                >
-                  <Copy size={15} />
-                  <span>复制链接</span>
-                </button>
-                <div className="sg-public-width-submenu">
-                  <button
-                    type="button"
-                    role="menuitem"
-                    className={`sg-public-width-option${widthSubmenuOpen ? " is-active" : ""}`}
-                    aria-expanded={widthSubmenuOpen}
-                    aria-haspopup="menu"
-                    onMouseEnter={() => setWidthSubmenuOpen(true)}
-                    onFocus={() => setWidthSubmenuOpen(true)}
-                    onClick={() => setWidthSubmenuOpen(true)}
-                  >
-                    <span className="sg-public-menu-item-leading">
-                      <AlignJustify size={15} />
-                      <span>页宽设置</span>
-                    </span>
-                    <ChevronRight size={15} />
-                  </button>
-                  {widthSubmenuOpen ? (
-                    <div className="sg-public-width-subpopover" role="menu" aria-label="页宽设置">
-                      <p className="sg-public-width-subtitle">
-                        为当前窗口选择合适页宽 <HelpCircle size={14} aria-hidden="true" />
-                      </p>
-                      <div className="sg-public-width-options">
-                        {(
-                          [
-                            ["default", "默认", <AlignJustify key="default" size={15} />],
-                            ["wide", "较宽", <StretchHorizontal key="wide" size={15} />],
-                            ["full", "全宽", <Maximize2 key="full" size={15} />],
-                          ] as const
-                        ).map(([mode, label, icon]) => (
-                          <button
-                            key={mode}
-                            type="button"
-                            role="menuitemradio"
-                            aria-checked={widthMode === mode}
-                            className={`sg-public-width-option sg-public-width-choice${widthMode === mode ? " is-active" : ""}`}
-                            onClick={() => {
-                              setWidthMode(mode);
-                              try {
-                                window.localStorage.setItem(widthModeStorageKey, mode);
-                              } catch {
-                                // Keep the control usable when localStorage is unavailable.
-                              }
-                              setWidthMenuOpen(false);
-                              setWidthSubmenuOpen(false);
-                            }}
-                          >
-                            {icon}
-                            <span>{label}</span>
-                          </button>
-                        ))}
-                      </div>
+                <AntMenu
+                  className="sg-public-actions-menu"
+                  items={moreMenuItems}
+                  selectable={false}
+                  onClick={handleMoreMenuClick}
+                />
+                {widthSubmenuOpen ? (
+                  <div className="sg-public-width-subpopover" role="menu" aria-label="页宽设置">
+                    <p className="sg-public-width-subtitle">
+                      为当前窗口选择合适页宽 <HelpCircle size={14} aria-hidden="true"/>
+                    </p>
+                    <div className="sg-public-width-options">
+                      {(
+                        [
+                          ["default", "默认", <AlignJustify key="default" size={15}/>],
+                          ["wide", "较宽", <StretchHorizontal key="wide" size={15}/>],
+                          ["full", "全宽", <Maximize2 key="full" size={15}/>],
+                        ] as const
+                      ).map(([mode, label, icon]) => (
+                        <button
+                          key={mode}
+                          type="button"
+                          role="menuitemradio"
+                          aria-checked={widthMode === mode}
+                          className={`sg-public-width-option sg-public-width-choice${
+                            widthMode === mode ? " is-active" : ""
+                          }`}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setWidthMode(mode);
+                            try {
+                              window.localStorage.setItem(widthModeStorageKey, mode);
+                            } catch {
+                              // Keep the control usable when localStorage is unavailable.
+                            }
+                            setWidthMenuOpen(false);
+                            setWidthSubmenuOpen(false);
+                          }}
+                        >
+                          {icon}
+                          <span>{label}</span>
+                        </button>
+                      ))}
                     </div>
-                  ) : null}
-                </div>
+                  </div>
+                ) : null}
               </div>
             ) : null}
-          </div>
-          <div className="sg-public-publisher" title={`发布人：${publisherName}`}>
-            {content.publisher?.avatarUrl ? (
-              // biome-ignore lint/performance/noImgElement: publisher avatars may come from an arbitrary public gateway URL.
-              <img src={content.publisher.avatarUrl} alt={publisherName} />
-            ) : (
-              <span>{publisherInitial}</span>
-            )}
-          </div>
+          </fieldset>
+          <Tooltip title={publisherName}>
+            <div className="sg-public-publisher">
+              <Avatar
+                className={styles.publisherAvatar}
+                src={content.publisher?.avatarUrl ?? undefined}
+              >
+                {publisherInitial}
+              </Avatar>
+            </div>
+          </Tooltip>
         </div>
       </header>
-      <div ref={layoutRef} className="sg-public-layout sg-scrollbar">
-        {interactiveReady ? (
-          <aside
-            className={`sg-public-toc sg-scrollbar${tocOpen ? " is-open" : ""}`}
-            aria-label="文档目录"
-            aria-hidden={!tocOpen}
-          >
-            {toc.length > 0 ? (
-              <nav ref={tocNavRef}>
-                {toc.map((item) => (
-                  <a
-                    key={item.anchor}
-                    ref={(link) => {
-                      if (link) tocLinkRefs.current.set(item.anchor, link);
-                      else tocLinkRefs.current.delete(item.anchor);
-                    }}
-                    className={`level-${item.level}${activeTocAnchor === item.anchor ? " is-active" : ""}`}
-                    href={`#${item.anchor}`}
-                    aria-current={activeTocAnchor === item.anchor ? "location" : undefined}
-                    onClick={(event) => handleTocClick(event, item.anchor)}
-                  >
-                    {item.text}
-                  </a>
-                ))}
-              </nav>
-            ) : (
-              <p className="sg-public-toc-empty">本文档暂无目录</p>
-            )}
-          </aside>
-        ) : clientHydrated ? (
-          <aside className="sg-public-toc sg-public-toc-skeleton" aria-hidden="true">
-            <div className="sg-public-skeleton-line is-wide" />
-            {toc.slice(0, 12).map((item, index) => (
-              <div
-                key={`${item.anchor}-skeleton`}
-                className={`sg-public-skeleton-line${index % 4 === 0 ? " is-short" : ""}`}
-              />
-            ))}
-          </aside>
-        ) : null}
-        <main
-          ref={contentRef}
-          className="sg-public-content"
-          onCopy={content.allowCopy ? undefined : (event) => event.preventDefault()}
-          onContextMenu={content.allowCopy ? undefined : (event) => event.preventDefault()}
-        >
-          <div
-            className="sg-public-seo-markdown"
-            dangerouslySetInnerHTML={{ __html: serverMarkdownHtml }}
-          />
-          {clientHydrated && !interactiveReady ? (
-            <div className="sg-public-content-skeleton" aria-hidden="true">
-              <div className="sg-public-skeleton-line is-title" />
-              <div className="sg-public-skeleton-line is-medium" />
-              <div className="sg-public-skeleton-line" />
-              <div className="sg-public-skeleton-line is-wide" />
-              <div className="sg-public-skeleton-line is-wide" />
-              <div className="sg-public-skeleton-line is-short" />
-              <div className="sg-public-skeleton-block" />
-              <div className="sg-public-skeleton-line is-medium" />
-              <div className="sg-public-skeleton-line is-wide" />
-              <div className="sg-public-skeleton-line" />
-              <div className="sg-public-skeleton-line is-short" />
+      <div ref={layoutRef} className="sg-public-layout">
+        <SeoSnapshot title={content.title} html={snapshotHtml}/>
+        {clientReady && isClient() ? (
+          <>
+            <div className='sg-public-toc-container'>
+              <aside
+                className={`sg-public-toc sg-scrollbar${tocOpen ? " is-open" : ""}`}
+                aria-label="文档目录"
+                aria-hidden={!tocOpen}
+              >
+                {toc.length > 0 ? (
+                  <nav ref={tocNavRef}>
+                    {toc.map((item) => (
+                      <a
+                        key={item.id}
+                        ref={(link) => {
+                          if (link) tocLinkRefs.current.set(item.id, link);
+                          else tocLinkRefs.current.delete(item.id);
+                        }}
+                        className={`level-${item.level}${activeTocId === item.id ? " is-active" : ""}`}
+                        href={`#${encodeURIComponent(item.id)}`}
+                        aria-current={activeTocId === item.id ? "location" : undefined}
+                        onClick={(event) => handleTocClick(event, item)}
+                      >
+                        {item.text}
+                      </a>
+                    ))}
+                  </nav>
+                ) : (
+                  <p className="sg-public-toc-empty">本文档暂无目录</p>
+                )}
+              </aside>
             </div>
-          ) : null}
-          <div className="sg-public-interactive-markdown" hidden={!interactiveReady}>
-            <InteractiveMarkdown
-              source={content.markdown}
-              assetLinks={content.assetLinks}
-              onReady={() => setInteractiveReady(true)}
-            />
-          </div>
-          <footer className="sg-public-footer">由 Shiguang Lab 发布 · 内容可追溯</footer>
-        </main>
+            <main
+              ref={contentRef}
+              className="sg-public-container"
+              onCopy={content.allowCopy ? undefined : (event) => event.preventDefault()}
+              onContextMenu={content.allowCopy ? undefined : (event) => event.preventDefault()}
+            >
+              <article className="sg-public-content">
+                <InteractiveMarkdown source={rewritten}/>
+                <footer className="sg-public-footer">由 知序 发布 · 内容可追溯</footer>
+              </article>
+            </main>
+          </>
+        ) : (
+          <PublicReaderSkeleton/>
+        )}
       </div>
     </div>
+  );
+}
+
+// ---------------- Helpers ----------------
+
+function PublicReaderSkeleton() {
+  return (
+    <main className="sg-public-content sg-public-content-skeleton" aria-hidden="true">
+      <div className="sg-public-skeleton-line is-title"/>
+      <div className="sg-public-skeleton-line is-medium"/>
+      <div className="sg-public-skeleton-line"/>
+      <div className="sg-public-skeleton-line is-wide"/>
+      <div className="sg-public-skeleton-line is-wide"/>
+      <div className="sg-public-skeleton-line is-short"/>
+      <div className="sg-public-skeleton-block"/>
+      <div className="sg-public-skeleton-line is-medium"/>
+      <div className="sg-public-skeleton-line is-wide"/>
+      <div className="sg-public-skeleton-line"/>
+      <div className="sg-public-skeleton-line is-short"/>
+    </main>
+  );
+}
+
+const HEADING_SELECTOR = "h1, h2, h3, h4, h5, h6";
+
+function getMarkdownHeadings(container: HTMLElement | null): HTMLElement[] {
+  if (!container) return [];
+  const markdownRoot = container.querySelector(".x-markdown");
+  if (!markdownRoot) return [];
+  return Array.from(markdownRoot.querySelectorAll<HTMLElement>(HEADING_SELECTOR)).filter(
+    (heading) => heading.closest(".x-markdown") === markdownRoot,
+  );
+}
+
+function buildTocFromHeadings(headings: HTMLElement[]): PublicTocItem[] {
+  const counters = Array<number>(7).fill(0);
+  const items: PublicTocItem[] = [];
+  const anchorCounts = new Map<string, number>();
+
+  headings.forEach((heading, domIndex) => {
+    const text = heading.textContent?.trim() || "";
+    if (!text) return;
+
+    const level = Number(heading.tagName.slice(1));
+    counters[level] += 1;
+    counters.fill(0, level + 1);
+    const firstNumberedLevel = counters.findIndex((count, index) => index > 0 && count > 0);
+    const outlineIndex = counters.slice(firstNumberedLevel, level + 1).join("-");
+    const headingSlug = slugifyHeading(text);
+    const baseId = hasExplicitHeadingIndex(text) ? headingSlug : `${outlineIndex}-${headingSlug}`;
+    const duplicateIndex = (anchorCounts.get(baseId) ?? 0) + 1;
+    anchorCounts.set(baseId, duplicateIndex);
+    items.push({
+      id: duplicateIndex === 1 ? baseId : `${baseId}-${duplicateIndex}`,
+      domIndex,
+      level,
+      text,
+    });
+  });
+
+  return items;
+}
+
+function hasExplicitHeadingIndex(text: string): boolean {
+  return /^\d+(?:(?:[.-]\d+)+|[.、)])(?:\s+|(?=[^\d]))/.test(text.trim());
+}
+
+function slugifyHeading(text: string): string {
+  return (
+    text
+      .normalize("NFKC")
+      .trim()
+      .replace(/[^\p{L}\p{M}\p{N}_-]+/gu, "-")
+      .replace(/-{2,}/g, "-")
+      .replace(/^-|-$/g, "") || "section"
   );
 }

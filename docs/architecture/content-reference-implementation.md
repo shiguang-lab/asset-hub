@@ -49,7 +49,7 @@ function rewriteAssetLinks(html: string, resolver: Resolver): string;
 ```
 
 - 应用内 resolver：把 `asset:<id>` 映射为内部路由（`/documents/<id>` 等）。
-- 发布 resolver：把 `asset:<id>` 映射为 bundle 相对路径（`refs/<id>/index.html` 等）。
+- 发布 resolver：文档引用映射为当前分享命名空间的 `/s/<shortSlug>/r/<refKey>`，网关内部转发到同一 release 的 SSR 快照；图片/file 映射为 `/s/<shortSlug>/assets/<path>`。
 - 返回 `null` 表示无法解析（保留原样或降级为纯文本标题）。
 
 ### 2.3 关键坑：`rehype-sanitize` 会剥掉 `asset:` 协议
@@ -141,21 +141,28 @@ collect(assetId, visited):
   refs = parseAssetReferences(content.text)
   for r in refs:
     目标 = getAsset(r.assetId)
-    if 目标是 document/report: 递归 collect → 渲染 refs/<id>/index.html
+    if 目标是 document/report: 递归 collect → 保存 refs/<id>/index.md，由 SSR 引用路由渲染
     if 目标是 file/图片: 下载 blob → refs/<id>/<fileName>
 ```
 
 - 复用现有 `listRelations` 不需要——**依赖来源是正文解析结果**（D2 事实源是正文），relations 只用于关系视图/权限，不用于打包收集。
-- 快照 path 规则：文档 `refs/<assetId>/index.html`；file `refs/<assetId>/<safeFileName>`。
+- 快照 path 规则：文档 `refs/<assetId>/index.md`（SSR 渲染）；file `refs/<assetId>/<safeFileName>`。
 
 ### 6.3 链接重写 + manifest 快照
 
-1. 主资产 `renderMarkdownHtml` 后，用 `rewriteAssetLinks`（发布 resolver）把 `href="asset:<id>"` → `href="refs/<id>/index.html"`、`src="asset:<id>"` → `src="refs/<id>/<fileName>"`。
-2. 嵌套被引用文档也各自 `renderMarkdownHtml` + 同样重写（递归里做）。
+1. 主资产保存 `index.md`，由 SSR 阅读器通过发布引用 resolver 解析文档链接；图片/file 仍解析为 `refs/<id>/<fileName>`。
+2. 嵌套被引用文档也保存 Markdown 快照，由 SSR 引用路由渲染。
 3. `buildReleaseBundle` 的 manifest（`render.ts:182-193`）增加 `references` 快照：
 
 ```ts
-references: Array<{ assetId: string; versionId: string; path: string; kind: "link" | "image" }>
+references: Array<{
+  assetId: string;
+  refKey: string;
+  versionId: string;
+  path: string;
+  kind: "link" | "image";
+  title: string;
+}>
 ```
 
 用于追溯与「引用更新后重新发布」提示。

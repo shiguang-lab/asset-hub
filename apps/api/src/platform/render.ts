@@ -7,7 +7,6 @@ import {
   validatePresentationHtml,
 } from "@shiguang/content";
 import type { PresentationDocument } from "@shiguang/contracts";
-import { marked } from "marked";
 
 const require = createRequire(import.meta.url);
 let cachedEchartsJs: string | null = null;
@@ -23,26 +22,6 @@ export function loadEchartsJs(): string {
   }
   return cachedEchartsJs;
 }
-
-const SHELL_CSS = `
-  :root { color-scheme: light dark; --fg:#172033; --bg:#f7f8fb; --accent:#6d5dfc; --muted:#667085; --border:#e5e7ef; }
-  * { box-sizing: border-box; }
-  body { margin:0; font-family: -apple-system, "PingFang SC", "Noto Sans SC", "Microsoft YaHei", sans-serif; color: var(--fg); background: var(--bg); line-height: 1.7; }
-  .doc { max-width: 860px; margin: 0 auto; padding: 48px 24px 96px; }
-  h1,h2,h3 { line-height: 1.3; }
-  h1 { font-size: 2em; border-bottom: 1px solid var(--border); padding-bottom: .4em; }
-  code { background: rgba(109,93,252,.08); border-radius: 4px; padding: .15em .35em; font-size: .92em; }
-  pre { background: #101625; color: #e6e9f2; padding: 16px; border-radius: 10px; overflow: auto; }
-  pre code { background: transparent; color: inherit; }
-  table { border-collapse: collapse; width: 100%; margin: 1em 0; }
-  th,td { border: 1px solid var(--border); padding: 8px 12px; text-align: left; }
-  blockquote { border-left: 4px solid var(--accent); margin: 1em 0; padding: .4em 1em; color: var(--muted); background: rgba(109,93,252,.05); }
-  a { color: var(--accent); }
-  img { max-width: 100%; }
-  .muted { color: var(--muted); }
-  footer { margin-top: 48px; padding-top: 16px; border-top: 1px solid var(--border); color: var(--muted); font-size: .85em; }
-  @media (max-width: 640px) { .doc { padding: 24px 16px 64px; } }
-`;
 
 /** 把 manifest（dataset/chart/source 等结构化内容）渲染为一个可读的 JSON 查看页。 */
 export function renderManifestHtml(title: string, data: unknown): string {
@@ -63,26 +42,6 @@ export function renderManifestHtml(title: string, data: unknown): string {
 <main>
 <h1>${escapeHtml(title)}</h1>
 <pre>${escapeHtml(JSON.stringify(data ?? {}, null, 2))}</pre>
-</main>
-</body>
-</html>`;
-}
-
-export function renderMarkdownHtml(markdown: string, title: string): string {
-  const body = marked.parse(markdown, { async: false, gfm: true, breaks: true }) as string;
-  const safeTitle = escapeHtml(title);
-  return `<!doctype html>
-<html lang="zh-CN">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${safeTitle}</title>
-<style>${SHELL_CSS}</style>
-</head>
-<body>
-<main class="doc">
-${body}
-<footer>由 Shiguang Lab 发布 · <span class="muted">保持版本化，内容可追溯</span></footer>
 </main>
 </body>
 </html>`;
@@ -117,17 +76,14 @@ export function buildReleaseBundle(input: {
     files.push({ path: "index.html", content: rendered, mediaType: "text/html" });
   } else {
     const markdown = input.markdown ?? "";
-    const renderedHtml = renderMarkdownHtml(markdown, input.title);
-    files.push({
-      path: "index.html",
-      content: resolve ? rewriteAssetLinks(renderedHtml, resolve) : renderedHtml,
-      mediaType: "text/html",
-    });
     files.push({ path: "index.md", content: markdown, mediaType: "text/markdown" });
   }
   const manifest = {
     schemaVersion: 1,
-    entrypoint: "index.html",
+    entrypoint:
+      input.assetType === "document" || input.assetType === "report" || input.assetType === "file"
+        ? "index.md"
+        : "index.html",
     title: input.title,
     assetType: input.assetType,
     files: files.map((f) => ({

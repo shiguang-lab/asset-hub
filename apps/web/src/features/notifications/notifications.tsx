@@ -1,5 +1,6 @@
-import { Button, Card, Empty, formatRelative, useToast } from "@shiguang/ui";
+import { Empty, formatRelative, useToast } from "@shiguang/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Button, Card } from "antd";
 import { Link } from "react-router-dom";
 import { api, type Notification } from "../../entities/api.js";
 
@@ -26,7 +27,7 @@ export function NotificationsPage() {
     <div>
       <div className="sg-row-between sg-mb">
         <h1 className="sg-h1">通知中心</h1>
-        <Button size="sm" onClick={() => markAll.mutate()}>
+        <Button size="small" onClick={() => markAll.mutate()}>
           全部已读
         </Button>
       </div>
@@ -38,6 +39,7 @@ export function NotificationsPage() {
             <Card
               key={n.id}
               className={n.readAt ? "" : ""}
+              hoverable
               onClick={() => !n.readAt && markRead.mutate(n.id)}
             >
               <div className="sg-row">

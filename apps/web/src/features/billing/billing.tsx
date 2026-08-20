@@ -1,5 +1,6 @@
-import { Card, Empty, formatDate, Table } from "@shiguang/ui";
+import { Empty, formatDate, Table } from "@shiguang/ui";
 import { useQuery } from "@tanstack/react-query";
+import { Card } from "antd";
 import { api, type CreditAccount } from "../../entities/api.js";
 
 export function BillingPage() {

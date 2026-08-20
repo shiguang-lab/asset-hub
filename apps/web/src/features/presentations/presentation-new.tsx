@@ -1,5 +1,6 @@
-import { Button, Card, Input, Select, Spinner, Textarea, useToast } from "@shiguang/ui";
+import { useToast } from "@shiguang/ui";
 import { useMutation, useQuery } from "@tanstack/react-query";
+import { Button, Card, Input, Select, Spin } from "antd";
 import { useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { type Asset, api } from "../../entities/api.js";
@@ -254,7 +255,7 @@ export function PresentationNewPage() {
               { label: "从模板创建", sub: "使用精选模板，快速创建演示", icon: "▣" },
               { label: "AI 智能生成", sub: "输入主题，AI 帮你生成完整演示", icon: "✦" },
             ].map((item) => (
-              <Card key={item.label} onClick={() => setStep(2)}>
+              <Card key={item.label} hoverable onClick={() => setStep(2)}>
                 <div style={{ fontSize: 26, marginBottom: 8 }}>{item.icon}</div>
                 <strong>{item.label}</strong>
                 <p className="sg-subtle" style={{ margin: "6px 0" }}>
@@ -264,10 +265,10 @@ export function PresentationNewPage() {
             ))}
           </div>
           <div className="sg-row">
-            <Button variant="ghost" onClick={() => toast("info", "请到知识库或数据集页上传文件")}>
+            <Button type="text" onClick={() => toast("info", "请到知识库或数据集页上传文件")}>
               ⬆ 上传文件
             </Button>
-            <Button variant="ghost" onClick={() => setStep(2)}>
+            <Button type="text" onClick={() => setStep(2)}>
               空白演示
             </Button>
           </div>
@@ -276,6 +277,7 @@ export function PresentationNewPage() {
             {recentAssets.map((a) => (
               <Card
                 key={a.id}
+                hoverable
                 onClick={() => {
                   setAssetId(a.id);
                   setStep(2);
@@ -303,10 +305,10 @@ export function PresentationNewPage() {
                 </p>
               </div>
               <div className="sg-row">
-                <Button size="sm" onClick={() => setStep(1)}>
+                <Button size="small" onClick={() => setStep(1)}>
                   返回
                 </Button>
-                <Button size="sm" variant="primary" disabled={!outline} onClick={() => setStep(3)}>
+                <Button size="small" type="primary" disabled={!outline} onClick={() => setStep(3)}>
                   下一步：确认并生成
                 </Button>
               </div>
@@ -340,11 +342,11 @@ export function PresentationNewPage() {
                 style={{ width: 120 }}
               />
               <Button
-                variant="primary"
+                type="primary"
                 disabled={(!assetId && !title) || outlineMutation.isPending}
                 onClick={() => outlineMutation.mutate()}
               >
-                {outlineMutation.isPending ? <Spinner size={14} /> : "生成大纲"}
+                {outlineMutation.isPending ? <Spin size="small" /> : "生成大纲"}
               </Button>
             </div>
           </Card>
@@ -354,10 +356,10 @@ export function PresentationNewPage() {
               <div className="sg-row-between sg-mb">
                 <strong>AI 生成的章节大纲（共 {outline.sections.length} 章）</strong>
                 <div className="sg-row">
-                  <Button size="sm" onClick={addSection}>
+                  <Button size="small" onClick={addSection}>
                     + 章节
                   </Button>
-                  <Button size="sm" onClick={() => outlineMutation.mutate()}>
+                  <Button size="small" onClick={() => outlineMutation.mutate()}>
                     重新生成
                   </Button>
                 </div>
@@ -374,7 +376,7 @@ export function PresentationNewPage() {
                           options={VISUAL_OPTIONS}
                           style={{ width: 110 }}
                         />
-                        <Button size="sm" variant="danger" onClick={() => removeSection(i)}>
+                        <Button size="small" type="primary" danger onClick={() => removeSection(i)}>
                           删除
                         </Button>
                       </div>
@@ -394,7 +396,7 @@ export function PresentationNewPage() {
                     <div className="sg-grid sg-mb-sm" style={{ gridTemplateColumns: "1fr 1fr" }}>
                       <div>
                         <small className="sg-subtle">要点（每行一条）</small>
-                        <Textarea
+                        <Input.TextArea
                           value={section.points.join("\n")}
                           onChange={(e) => updatePoints(i, e.target.value)}
                           style={{ minHeight: 72, marginTop: 4 }}
@@ -402,7 +404,7 @@ export function PresentationNewPage() {
                       </div>
                       <div>
                         <small className="sg-subtle">数据点（每行：标签|数值|备注）</small>
-                        <Textarea
+                        <Input.TextArea
                           value={dataText(section)}
                           onChange={(e) => updateData(i, e.target.value)}
                           style={{ minHeight: 72, marginTop: 4 }}
@@ -468,11 +470,11 @@ export function PresentationNewPage() {
           <div className="sg-row" style={{ justifyContent: "flex-end" }}>
             <Button onClick={() => setStep(2)}>上一步</Button>
             <Button
-              variant="primary"
+              type="primary"
               onClick={() => confirmMutation.mutate()}
               disabled={confirmMutation.isPending}
             >
-              {confirmMutation.isPending ? <Spinner size={14} /> : "确认生成"}
+              {confirmMutation.isPending ? <Spin size="small" /> : "确认生成"}
             </Button>
           </div>
         </div>
@@ -480,7 +482,7 @@ export function PresentationNewPage() {
 
       {step === 4 && (
         <Card className="sg-center" style={{ padding: 48 }}>
-          <Spinner size={30} />
+          <Spin />
           <p className="sg-subtle sg-mt">演示已生成，正在进入编辑器…</p>
         </Card>
       )}

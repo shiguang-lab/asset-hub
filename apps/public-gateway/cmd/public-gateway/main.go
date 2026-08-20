@@ -50,26 +50,16 @@ type PublishMeta struct {
 		AvatarURL *string `json:"avatarUrl"`
 	} `json:"publisher"`
 	Stats *struct {
-		Views          int            `json:"views"`
-		UniqueVisitors int            `json:"uniqueVisitors"`
-		ActiveViewers  []activeViewer `json:"activeViewers"`
+		UniqueVisitors int `json:"uniqueVisitors"`
 	} `json:"stats"`
 }
 
-type activeViewer struct {
-	VisitorKey  string  `json:"visitorKey"`
-	UserID      *string `json:"userId"`
-	DisplayName *string `json:"displayName"`
-	AvatarURL   *string `json:"avatarUrl"`
-}
-
 type publicMarkdownContent struct {
-	Title         string         `json:"title"`
-	Markdown      string         `json:"markdown"`
-	Visibility    string         `json:"visibility"`
-	VisitorCount  int            `json:"visitorCount"`
-	ActiveViewers []activeViewer `json:"activeViewers"`
-	Publisher     *struct {
+	Title        string `json:"title"`
+	Markdown     string `json:"markdown"`
+	Visibility   string `json:"visibility"`
+	VisitorCount int    `json:"visitorCount"`
+	Publisher    *struct {
 		Name      string  `json:"name"`
 		AvatarURL *string `json:"avatarUrl"`
 	} `json:"publisher"`
@@ -121,7 +111,15 @@ func main() {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"code": "PASSWORD_REQUIRED"})
 			return
 		}
-		data, fileStatus, err := cfg.FetchReleaseFile(meta.Publish.ID, meta.Release.ID, "index.md")
+		contentPath := "index.md"
+		if referenceID := strings.TrimSpace(r.URL.Query().Get("ref")); referenceID != "" {
+			contentPath = "refs/" + referenceID + "/index.md"
+			if !manifestAllows(meta, contentPath) {
+				writeJSON(w, http.StatusNotFound, map[string]string{"code": "CONTENT_NOT_FOUND"})
+				return
+			}
+		}
+		data, fileStatus, err := cfg.FetchReleaseFile(meta.Publish.ID, meta.Release.ID, contentPath)
 		if err != nil || fileStatus != http.StatusOK {
 			writeJSON(w, statusOrNotFound(fileStatus), map[string]string{"code": "CONTENT_NOT_FOUND"})
 			return
@@ -131,17 +129,40 @@ func main() {
 		if meta.Stats != nil {
 			visitorCount = meta.Stats.UniqueVisitors
 		}
+		title := meta.Asset.Title
+		if referenceID := strings.TrimSpace(r.URL.Query().Get("ref")); referenceID != "" {
+			title = releaseReferenceTitle(meta, referenceID)
+		}
 		writeJSON(w, http.StatusOK, publicMarkdownContent{
-			Title:         meta.Asset.Title,
+			Title:         title,
 			Markdown:      string(data),
 			Visibility:    meta.Publish.Visibility,
 			VisitorCount:  visitorCount,
-			ActiveViewers: activeViewers(meta),
 			Publisher:     meta.Publisher,
 			AllowDownload: meta.Publish.AllowDownload,
 			AllowCopy:     meta.Publish.AllowCopy,
 			AssetLinks:    releaseAssetLinks(meta, slug),
 		})
+	})
+
+	mux.HandleFunc("GET /p/{slug}/ref/{assetID}", func(w http.ResponseWriter, r *http.Request) {
+		slug := r.PathValue("slug")
+		assetID := r.PathValue("assetID")
+		meta, status := cache.resolve(slug)
+		if status != http.StatusOK || meta.Release == nil || !isMarkdownPublish(meta) {
+			serveErrorPage(w, statusOrNotFound(status), "内容不存在", "该引用文档不存在或链接已失效。")
+			return
+		}
+		if meta.Publish.Visibility == "password" && !unlocked(r, meta.Publish.ID, cfg) {
+			basePath := "/p/" + url.PathEscape(slug)
+			serveUnlockPage(w, basePath, basePath+"/ref/"+url.PathEscape(assetID))
+			return
+		}
+		if !manifestAllows(meta, "refs/"+assetID+"/index.md") {
+			serveErrorPage(w, http.StatusNotFound, "引用文档不存在", "该引用文档不在当前发布版本中。")
+			return
+		}
+		serveSSRReference(w, r, cfg, slug, assetID)
 	})
 
 	mux.HandleFunc("POST /p/{slug}/presence", func(w http.ResponseWriter, r *http.Request) {
@@ -210,7 +231,8 @@ func main() {
 			return
 		}
 		if pub.Visibility == "password" && !unlocked(r, pub.ID, cfg) {
-			serveUnlockPage(w, slug, "/p/"+slug)
+			basePath := "/p/" + url.PathEscape(slug)
+			serveUnlockPage(w, basePath, basePath)
 			return
 		}
 		if meta.Release == nil {
@@ -252,7 +274,8 @@ func main() {
 			return
 		}
 		if meta.Publish.Visibility == "password" && !unlocked(r, meta.Publish.ID, cfg) {
-			serveUnlockPage(w, slug, "/p/"+slug+"/download")
+			basePath := "/p/" + url.PathEscape(slug)
+			serveUnlockPage(w, basePath, basePath+"/download")
 			return
 		}
 		if !meta.Publish.AllowDownload {
@@ -275,7 +298,8 @@ func main() {
 			return
 		}
 		if meta.Publish.Visibility == "password" && !unlocked(r, meta.Publish.ID, cfg) {
-			serveUnlockPage(w, slug, "/p/"+slug+"/attachments/"+url.PathEscape(r.PathValue("attachmentID")))
+			basePath := "/p/" + url.PathEscape(slug)
+			serveUnlockPage(w, basePath, basePath+"/attachments/"+url.PathEscape(r.PathValue("attachmentID")))
 			return
 		}
 		if !meta.Publish.AllowDownload {
@@ -293,24 +317,125 @@ func main() {
 	mux.HandleFunc("GET /s/{shortSlug}", func(w http.ResponseWriter, r *http.Request) {
 		short := r.PathValue("shortSlug")
 		meta, status := cache.resolve(short)
-		if status != 200 {
+		if status == http.StatusNotFound {
 			serveErrorPage(w, http.StatusNotFound, "短链无效", "该短链不存在或已撤销。")
+			return
+		}
+		if status == http.StatusGone {
+			serveErrorPage(w, http.StatusGone, "链接已过期", "该分享链接已过期或已撤销，请联系内容所有者。")
+			return
+		}
+		if status != http.StatusOK {
+			serveErrorPage(w, http.StatusServiceUnavailable, "访问失败", "分享服务暂时不可用，请稍后重试。")
+			return
+		}
+		if meta.Publish.Status == "revoked" || meta.Publish.Status == "deleted" {
+			serveErrorPage(w, http.StatusGone, "内容已撤销", "该发布内容已由所有者撤销。")
+			return
+		}
+		basePath := "/s/" + url.PathEscape(short)
+		if meta.Publish.Visibility == "password" && !unlocked(r, meta.Publish.ID, cfg) {
+			serveUnlockPage(w, basePath, basePath)
+			return
+		}
+		if meta.Release == nil {
+			serveErrorPage(w, http.StatusServiceUnavailable, "发布物尚未就绪", "该内容还在准备中，请稍后刷新。")
 			return
 		}
 		if isMarkdownPublish(meta) {
-			http.Redirect(w, r, "/p/"+url.PathEscape(meta.Publish.Slug), http.StatusFound)
+			serveSSR(w, r, cfg, meta.Publish.Slug)
 			return
 		}
-		http.Redirect(w, r, "/p/"+meta.Publish.Slug, http.StatusFound)
+		serveReleaseFile(w, r, cfg, meta, "index.html", false, "")
+		go recordAccess(cfg, meta, "index.html", r)
+	})
+
+	mux.HandleFunc("GET /s/{shortSlug}/r/{refKey}", func(w http.ResponseWriter, r *http.Request) {
+		short := r.PathValue("shortSlug")
+		meta, status := cache.resolve(short)
+		if status != http.StatusOK || meta.Release == nil || !isMarkdownPublish(meta) {
+			serveErrorPage(w, statusOrNotFound(status), "内容不存在", "该引用文档不存在或链接已失效。")
+			return
+		}
+		basePath := "/s/" + url.PathEscape(short)
+		returnTo := basePath + "/r/" + url.PathEscape(r.PathValue("refKey"))
+		if meta.Publish.Visibility == "password" && !unlocked(r, meta.Publish.ID, cfg) {
+			serveUnlockPage(w, basePath, returnTo)
+			return
+		}
+		assetID, ok := releaseReferenceAssetID(meta, r.PathValue("refKey"))
+		if !ok || !manifestAllows(meta, "refs/"+assetID+"/index.md") {
+			serveErrorPage(w, http.StatusNotFound, "引用文档不存在", "该引用文档不在当前发布版本中。")
+			return
+		}
+		serveSSRReference(w, r, cfg, meta.Publish.Slug, assetID)
+	})
+
+	mux.HandleFunc("GET /s/{shortSlug}/assets/{path...}", func(w http.ResponseWriter, r *http.Request) {
+		meta, status := cache.resolve(r.PathValue("shortSlug"))
+		assetPath := r.PathValue("path")
+		if status != http.StatusOK || meta.Release == nil {
+			serveErrorPage(w, http.StatusNotFound, "资源不存在", "该静态资源不存在。")
+			return
+		}
+		if meta.Publish.Visibility == "password" && !unlocked(r, meta.Publish.ID, cfg) {
+			serveErrorPage(w, http.StatusUnauthorized, "需要密码", "请先打开分享页面并输入访问密码。")
+			return
+		}
+		if !manifestAllows(meta, assetPath) {
+			serveErrorPage(w, http.StatusForbidden, "禁止访问", "该资源不在发布清单中。")
+			return
+		}
+		serveReleaseFile(w, r, cfg, meta, assetPath, true, "")
 	})
 
 	mux.HandleFunc("GET /s/{shortSlug}/download", func(w http.ResponseWriter, r *http.Request) {
-		meta, status := cache.resolve(r.PathValue("shortSlug"))
-		if status != 200 {
-			serveErrorPage(w, http.StatusNotFound, "短链无效", "该短链不存在或已撤销。")
+		short := r.PathValue("shortSlug")
+		meta, status := cache.resolve(short)
+		if status != http.StatusOK || meta.Release == nil {
+			serveErrorPage(w, statusOrNotFound(status), "下载不可用", "该发布内容不存在或链接已失效。")
 			return
 		}
-		http.Redirect(w, r, "/p/"+meta.Publish.Slug+"/download", http.StatusFound)
+		basePath := "/s/" + url.PathEscape(short)
+		if meta.Publish.Visibility == "password" && !unlocked(r, meta.Publish.ID, cfg) {
+			serveUnlockPage(w, basePath, basePath+"/download")
+			return
+		}
+		if !meta.Publish.AllowDownload {
+			serveErrorPage(w, http.StatusForbidden, "禁止下载", "内容所有者未开放下载权限。")
+			return
+		}
+		path, name, ok := releaseDownload(meta)
+		if !ok || !manifestAllows(meta, path) {
+			serveErrorPage(w, http.StatusNotFound, "下载不可用", "该发布内容没有可下载文件。")
+			return
+		}
+		serveReleaseFile(w, r, cfg, meta, path, false, name)
+	})
+
+	mux.HandleFunc("GET /s/{shortSlug}/attachments/{attachmentID}", func(w http.ResponseWriter, r *http.Request) {
+		short := r.PathValue("shortSlug")
+		meta, status := cache.resolve(short)
+		if status != http.StatusOK || meta.Release == nil {
+			serveErrorPage(w, statusOrNotFound(status), "附件不可用", "该发布内容不存在或链接已失效。")
+			return
+		}
+		basePath := "/s/" + url.PathEscape(short)
+		attachmentID := r.PathValue("attachmentID")
+		if meta.Publish.Visibility == "password" && !unlocked(r, meta.Publish.ID, cfg) {
+			serveUnlockPage(w, basePath, basePath+"/attachments/"+url.PathEscape(attachmentID))
+			return
+		}
+		if !meta.Publish.AllowDownload {
+			serveErrorPage(w, http.StatusForbidden, "禁止下载", "内容所有者未开放附件下载权限。")
+			return
+		}
+		path, name, ok := releaseAttachment(meta, attachmentID)
+		if !ok || !manifestAllows(meta, path) {
+			serveErrorPage(w, http.StatusNotFound, "附件不存在", "该附件不在当前发布版本中。")
+			return
+		}
+		serveReleaseFile(w, r, cfg, meta, path, false, name)
 	})
 
 	mux.HandleFunc("GET /{path...}", func(w http.ResponseWriter, r *http.Request) {
@@ -333,7 +458,8 @@ func main() {
 			return
 		}
 		if meta.Publish.Visibility == "password" && !unlocked(r, meta.Publish.ID, cfg) {
-			serveUnlockPage(w, meta.Publish.Slug, "/p/"+meta.Publish.Slug)
+			basePath := "/p/" + url.PathEscape(meta.Publish.Slug)
+			serveUnlockPage(w, basePath, basePath)
 			return
 		}
 		serveReleaseFile(w, r, cfg, meta, "index.html", false, "")
@@ -342,27 +468,12 @@ func main() {
 
 	mux.HandleFunc("POST /p/{slug}/unlock", func(w http.ResponseWriter, r *http.Request) {
 		slug := r.PathValue("slug")
-		if err := r.ParseForm(); err != nil {
-			serveErrorPage(w, http.StatusBadRequest, "参数错误", "请重新输入密码。")
-			return
-		}
-		password := r.FormValue("password")
-		returnTo := safeReturnTo(slug, r.FormValue("returnTo"))
-		token, err := cfg.Unlock(slug, password)
-		if err != nil {
-			serveErrorPage(w, http.StatusUnauthorized, "密码错误", "密码不正确，请重试。")
-			return
-		}
-		publishID := token.PublishID
-		http.SetCookie(w, &http.Cookie{
-			Name:     "sg_pub_" + publishID,
-			Value:    token.Token,
-			Path:     "/",
-			HttpOnly: true,
-			SameSite: http.SameSiteLaxMode,
-			MaxAge:   12 * 3600,
-		})
-		http.Redirect(w, r, returnTo, http.StatusFound)
+		handleUnlock(w, r, cfg, slug, "/p/"+url.PathEscape(slug))
+	})
+
+	mux.HandleFunc("POST /s/{shortSlug}/unlock", func(w http.ResponseWriter, r *http.Request) {
+		short := r.PathValue("shortSlug")
+		handleUnlock(w, r, cfg, short, "/s/"+url.PathEscape(short))
 	})
 
 	server := &http.Server{
@@ -439,9 +550,42 @@ func unlocked(r *http.Request, publishID string, cfg platform.Config) bool {
 	return cfg.VerifyToken(cookie.Value)
 }
 
+func handleUnlock(w http.ResponseWriter, r *http.Request, cfg platform.Config, lookupSlug, basePath string) {
+	if err := r.ParseForm(); err != nil {
+		serveErrorPage(w, http.StatusBadRequest, "参数错误", "请重新输入密码。")
+		return
+	}
+	password := r.FormValue("password")
+	returnTo := safeReturnToBase(basePath, r.FormValue("returnTo"))
+	token, err := cfg.Unlock(lookupSlug, password)
+	if err != nil {
+		serveErrorPage(w, http.StatusUnauthorized, "密码错误", "密码不正确，请重试。")
+		return
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     "sg_pub_" + token.PublishID,
+		Value:    token.Token,
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		MaxAge:   12 * 3600,
+	})
+	http.Redirect(w, r, returnTo, http.StatusFound)
+}
+
 func serveSSR(w http.ResponseWriter, r *http.Request, cfg platform.Config, slug string) {
 	originalPath, originalRawPath := r.URL.Path, r.URL.RawPath
 	r.URL.Path = "/render/" + url.PathEscape(slug)
+	r.URL.RawPath = ""
+	defer func() {
+		r.URL.Path, r.URL.RawPath = originalPath, originalRawPath
+	}()
+	proxySSR(w, r, cfg)
+}
+
+func serveSSRReference(w http.ResponseWriter, r *http.Request, cfg platform.Config, slug, assetID string) {
+	originalPath, originalRawPath := r.URL.Path, r.URL.RawPath
+	r.URL.Path = "/render/" + url.PathEscape(slug) + "/ref/" + url.PathEscape(assetID)
 	r.URL.RawPath = ""
 	defer func() {
 		r.URL.Path, r.URL.RawPath = originalPath, originalRawPath
@@ -593,9 +737,60 @@ func releaseAssetLinks(meta PublishMeta, slug string) map[string]string {
 		if !idOK || !pathOK || assetID == "" || path == "" {
 			continue
 		}
-		links[assetID] = "/p/" + url.PathEscape(slug) + "/assets/" + path
+		basePath := "/p/" + url.PathEscape(slug)
+		if meta.Publish.ShortSlug != "" {
+			basePath = "/s/" + url.PathEscape(meta.Publish.ShortSlug)
+		}
+		refKey, _ := ref["refKey"].(string)
+		if refKey == "" {
+			refKey = assetID
+		}
+		if strings.HasSuffix(path, "/index.md") {
+			links[assetID] = basePath + "/r/" + url.PathEscape(refKey)
+		} else {
+			links[assetID] = basePath + "/assets/" + path
+		}
 	}
 	return links
+}
+
+func releaseReferenceAssetID(meta PublishMeta, refKey string) (string, bool) {
+	if meta.Release == nil {
+		return "", false
+	}
+	references, ok := meta.Release.Manifest["references"].([]any)
+	if !ok {
+		return "", false
+	}
+	for _, raw := range references {
+		ref, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		assetID, _ := ref["assetId"].(string)
+		storedKey, _ := ref["refKey"].(string)
+		if assetID != "" && (storedKey == refKey || (storedKey == "" && assetID == refKey)) {
+			return assetID, true
+		}
+	}
+	return "", false
+}
+
+func releaseReferenceTitle(meta PublishMeta, assetID string) string {
+	if meta.Release != nil {
+		if references, ok := meta.Release.Manifest["references"].([]any); ok {
+			for _, raw := range references {
+				ref, ok := raw.(map[string]any)
+				if !ok || ref["assetId"] != assetID {
+					continue
+				}
+				if title, ok := ref["title"].(string); ok && strings.TrimSpace(title) != "" {
+					return title
+				}
+			}
+		}
+	}
+	return "引用文档"
 }
 
 func manifestAllows(meta PublishMeta, assetPath string) bool {
@@ -638,18 +833,25 @@ func contentTypeFor(path string) string {
 	}
 }
 
-func serveUnlockPage(w http.ResponseWriter, slug string, returnTo string) {
+func serveUnlockPage(w http.ResponseWriter, basePath string, returnTo string) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusOK)
-	page := strings.ReplaceAll(unlockTemplate, "{{slug}}", slug)
+	page := strings.ReplaceAll(unlockTemplate, "{{unlockPath}}", basePath+"/unlock")
 	page = strings.ReplaceAll(page, "{{returnTo}}", returnTo)
 	_, _ = io.WriteString(w, page)
 }
 
 func safeReturnTo(slug string, returnTo string) string {
-	base := "/p/" + slug
-	if returnTo == base || returnTo == base+"/download" || strings.HasPrefix(returnTo, base+"/attachments/") {
+	return safeReturnToBase("/p/"+url.PathEscape(slug), returnTo)
+}
+
+func safeReturnToBase(base string, returnTo string) string {
+	if returnTo == base ||
+		returnTo == base+"/download" ||
+		strings.HasPrefix(returnTo, base+"/attachments/") ||
+		strings.HasPrefix(returnTo, base+"/ref/") ||
+		strings.HasPrefix(returnTo, base+"/r/") {
 		return returnTo
 	}
 	return base
@@ -664,7 +866,7 @@ func serveErrorPage(w http.ResponseWriter, status int, title, detail string) {
 	_, _ = io.WriteString(w, page)
 }
 
-const unlockTemplate = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>密码访问</title><style>body{font-family:-apple-system,"PingFang SC",sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;background:#f7f8fb;color:#172033}form{background:#fff;padding:40px;border-radius:16px;box-shadow:0 8px 30px rgba(23,32,51,.08);width:340px}input{width:100%;padding:12px;border:1px solid #e5e7ef;border-radius:8px;font-size:16px;box-sizing:border-box}button{margin-top:16px;width:100%;padding:12px;background:#6d5dfc;color:#fff;border:0;border-radius:8px;font-size:16px;cursor:pointer}</style></head><body><form method="post" action="/p/{{slug}}/unlock"><h2>该内容受密码保护</h2><p style="color:#667085">请输入访问密码后查看。</p><input type="hidden" name="returnTo" value="{{returnTo}}"><input type="password" name="password" placeholder="访问密码" autofocus required><button type="submit">解锁</button></form></body></html>`
+const unlockTemplate = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>密码访问</title><style>body{font-family:-apple-system,"PingFang SC",sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;background:#f7f8fb;color:#172033}form{background:#fff;padding:40px;border-radius:16px;box-shadow:0 8px 30px rgba(23,32,51,.08);width:340px}input{width:100%;padding:12px;border:1px solid #e5e7ef;border-radius:8px;font-size:16px;box-sizing:border-box}button{margin-top:16px;width:100%;padding:12px;background:#6d5dfc;color:#fff;border:0;border-radius:8px;font-size:16px;cursor:pointer}</style></head><body><form method="post" action="{{unlockPath}}"><h2>该内容受密码保护</h2><p style="color:#667085">请输入访问密码后查看。</p><input type="hidden" name="returnTo" value="{{returnTo}}"><input type="password" name="password" placeholder="访问密码" autofocus required><button type="submit">解锁</button></form></body></html>`
 
 const errorTemplate = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{{title}}</title><style>body{font-family:-apple-system,"PingFang SC",sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#f7f8fb;color:#172033}.box{text-align:center;padding:32px}h1{font-size:32px;margin:0 0 8px}p{color:#667085}</style></head><body><div class="box"><h1>{{title}}</h1><p>{{detail}}</p></div></body></html>`
 
@@ -691,13 +893,6 @@ func recordAccess(cfg platform.Config, meta PublishMeta, path string, r *http.Re
 	if err == nil {
 		_ = resp.Body.Close()
 	}
-}
-
-func activeViewers(meta PublishMeta) []activeViewer {
-	if meta.Stats == nil || len(meta.Stats.ActiveViewers) == 0 {
-		return []activeViewer{}
-	}
-	return meta.Stats.ActiveViewers
 }
 
 func cleanPresenceValue(value *string, max int) *string {

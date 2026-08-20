@@ -1,7 +1,8 @@
-import { cookies } from "next/headers";
-import { notFound, redirect } from "next/navigation";
-import { PublicReader, type PublicReaderContent } from "../../components/public-reader";
+import { notFound } from "next/navigation";
+
+import { PublicReader } from "../../components/public-reader";
 import { renderServerMarkdown } from "../../server-markdown";
+import { fetchPublicContent } from "../fetch-public-content";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -20,21 +21,7 @@ export default async function RenderPage({ params }: { params: Promise<{ slug: s
     <PublicReader
       slug={slug}
       content={content}
-      serverMarkdownHtml={renderServerMarkdown(content.markdown, content.assetLinks)}
+      snapshotHtml={renderServerMarkdown(content.markdown, content.assetLinks)}
     />
   );
-}
-
-async function fetchPublicContent(slug: string): Promise<PublicReaderContent | null> {
-  const gateway = process.env.PUBLIC_GATEWAY_INTERNAL_URL ?? "http://public-gateway:3004";
-  const cookieHeader = (await cookies()).toString();
-  const response = await fetch(`${gateway}/p/${encodeURIComponent(slug)}/content`, {
-    headers: cookieHeader ? { cookie: cookieHeader } : undefined,
-    cache: "no-store",
-  });
-  if (response.status === 401) {
-    redirect(`/p/${encodeURIComponent(slug)}`);
-  }
-  if (!response.ok) return null;
-  return (await response.json()) as PublicReaderContent;
 }

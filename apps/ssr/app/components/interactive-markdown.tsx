@@ -1,23 +1,17 @@
 "use client";
 
-import { MarkdownDocument } from "@shiguang/markdown-viewer";
-import { useEffect } from "react";
+import { MarkdownSurfaceStyles } from "@shiguang/ui";
+import { XMarkdown } from "@shiguang2/components";
 
-export function InteractiveMarkdown({
-  source,
-  assetLinks,
-  onReady,
-}: {
-  source: string;
-  assetLinks: Record<string, string>;
-  onReady: () => void;
-}) {
-  useEffect(() => onReady(), [onReady]);
+export function InteractiveMarkdown({ source }: { source: string }) {
   return (
-    <MarkdownDocument
-      source={source}
-      className="sg-public-markdown"
-      resolveAssetLink={({ assetId }) => assetLinks[assetId] ?? null}
-    />
+    <>
+      <MarkdownSurfaceStyles />
+      <XMarkdown
+        content={source}
+        imageConfig={{ mode: "document" }}
+        className="sg-markdown-content sg-public-markdown"
+      />
+    </>
   );
 }

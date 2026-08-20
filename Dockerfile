@@ -22,7 +22,6 @@ COPY packages/database/package.json packages/database/package.json
 COPY packages/event-channel/package.json packages/event-channel/package.json
 COPY packages/observability/package.json packages/observability/package.json
 COPY packages/ui/package.json packages/ui/package.json
-COPY packages/markdown-viewer/package.json packages/markdown-viewer/package.json
 RUN pnpm config set registry "${NPM_REGISTRY}" && pnpm install --frozen-lockfile
 
 FROM node-deps AS node-source

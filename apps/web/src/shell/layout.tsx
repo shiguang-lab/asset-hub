@@ -65,12 +65,12 @@ import {
   uploadFile,
   uploadFiles,
 } from "../entities/api.js";
-import { isOwnedBySession, ownerDisplayName } from "../shared/owner.js";
 import {
   type ImportConflict,
   ImportConflictModal,
   type ImportResolutionValue,
 } from "../shared/ImportConflictModal.js";
+import { isOwnedBySession, ownerDisplayName } from "../shared/owner.js";
 import { useSse } from "../shared/sse.js";
 
 const { Header, Sider, Content } = Layout;
@@ -366,7 +366,7 @@ export function Shell() {
     const titles: string[] = [];
     for (const file of files) {
       const rel = (file as File & { webkitRelativePath?: string }).webkitRelativePath;
-      const name = rel ? rel.split("/").pop() ?? file.name : file.name;
+      const name = rel ? (rel.split("/").pop() ?? file.name) : file.name;
       if (!/\.(?:md|markdown|txt)$/i.test(name)) continue;
       const title = name.replace(/\.(?:md|markdown|txt)$/i, "").trim() || "未命名文档";
       titles.push(title);

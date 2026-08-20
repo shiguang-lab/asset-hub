@@ -1,5 +1,6 @@
 import { createBrowserRouter } from "react-router-dom";
 import { AssetDetailPage } from "../features/assets/asset-detail.js";
+import { AssetEditPage } from "../features/assets/asset-edit.js";
 import { AssetsPage } from "../features/assets/assets.js";
 import { AssistantPage } from "../features/assistant/assistant.js";
 import { BillingPage } from "../features/billing/billing.js";
@@ -7,6 +8,7 @@ import { DatasetDetailPage, DatasetsPage } from "../features/datasets/datasets.j
 import { DocumentsPage } from "../features/documents/documents.js";
 import { DocumentEditorPage } from "../features/documents/editor.js";
 import { HtmlEditorPage } from "../features/documents/html-editor.js";
+import { DocumentPreviewPage } from "../features/documents/preview.js";
 import { HomePage } from "../features/home/home.js";
 import {
   KnowledgeDetailPage,
@@ -37,9 +39,10 @@ export const router = createBrowserRouter([
       { index: true, element: <HomePage /> },
       { path: "assets", element: <AssetsPage /> },
       { path: "assets/:id", element: <AssetDetailPage /> },
+      { path: "assets/:id/edit", element: <AssetEditPage /> },
       { path: "documents", element: <DocumentsPage /> },
       { path: "documents/new", element: <DocumentEditorPage /> },
-      { path: "documents/:id/preview", element: <AssetDetailPage /> },
+      { path: "documents/:id/preview", element: <DocumentPreviewPage /> },
       { path: "documents/:id", element: <DocumentEditorPage /> },
       { path: "html/new", element: <HtmlEditorPage /> },
       { path: "html/:id", element: <HtmlEditorPage /> },

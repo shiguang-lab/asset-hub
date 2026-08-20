@@ -1,5 +1,6 @@
-import { Button, Card, Empty, formatDate, StatusBadge, Table, useToast } from "@shiguang/ui";
+import { Empty, formatDate, StatusBadge, Table, useToast } from "@shiguang/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Button, Card, Modal } from "antd";
 import QRCode from "qrcode";
 import { useEffect, useState } from "react";
 import { type Asset, api, type Publish } from "../../entities/api.js";
@@ -16,6 +17,14 @@ export function PublishesPage() {
     queryFn: () => api("/assets", { params: { limit: 100 } }),
   });
   const [qr, setQr] = useState<{ url: string; dataUrl: string } | null>(null);
+  const [rebuildTarget, setRebuildTarget] = useState<Publish | null>(null);
+  const { data: rebuildReferences } = useQuery<{
+    references: Array<{ id: string; title: string; type: string; visibility: string }>;
+  }>({
+    queryKey: ["publish-references", rebuildTarget?.assetId],
+    queryFn: () => api(`/assets/${rebuildTarget?.assetId}/publish-references`),
+    enabled: Boolean(rebuildTarget),
+  });
 
   useEffect(() => {
     if (!qr) return;
@@ -33,9 +42,14 @@ export function PublishesPage() {
   });
 
   const rebuild = useMutation({
-    mutationFn: (id: string) => api(`/publishes/${id}/release`, { method: "POST" }),
+    mutationFn: ({ id, allowPrivateReferences }: { id: string; allowPrivateReferences: boolean }) =>
+      api(`/publishes/${id}/release`, {
+        method: "POST",
+        body: { allowPrivateReferences },
+      }),
     onSuccess: () => {
       toast("success", "已基于最新版本重新发布");
+      setRebuildTarget(null);
       void queryClient.invalidateQueries({ queryKey: ["publishes"] });
     },
   });
@@ -80,15 +94,16 @@ export function PublishesPage() {
                   <td>{formatDate(p.updatedAt)}</td>
                   <td>
                     <div className="sg-row">
-                      <Button size="sm" onClick={() => setQr({ url: p.url ?? "", dataUrl: "" })}>
+                      <Button size="small" onClick={() => setQr({ url: p.url ?? "", dataUrl: "" })}>
                         二维码
                       </Button>
-                      <Button size="sm" onClick={() => rebuild.mutate(p.id)}>
+                      <Button size="small" onClick={() => setRebuildTarget(p)}>
                         重新发布
                       </Button>
                       <Button
-                        size="sm"
-                        variant="danger"
+                        size="small"
+                        type="primary"
+                        danger
                         disabled={p.status !== "active"}
                         onClick={() => revoke.mutate(p.id)}
                       >
@@ -116,13 +131,42 @@ export function PublishesPage() {
               <a href={qr.url} target="_blank" rel="noreferrer" style={{ display: "block" }}>
                 {qr.url}
               </a>
-              <Button size="sm" className="sg-mt" onClick={() => setQr(null)}>
+              <Button size="small" className="sg-mt" onClick={() => setQr(null)}>
                 关闭
               </Button>
             </div>
           </div>
         </Card>
       )}
+      <Modal
+        open={Boolean(rebuildTarget)}
+        title="确认发布关联资源"
+        onCancel={() => {
+          if (rebuildTarget)
+            rebuild.mutate({ id: rebuildTarget.id, allowPrivateReferences: false });
+        }}
+        onOk={() => {
+          if (rebuildTarget) rebuild.mutate({ id: rebuildTarget.id, allowPrivateReferences: true });
+        }}
+        cancelText="仅发布当前文档"
+        okText="一起发布并允许访问"
+        confirmLoading={rebuild.isPending}
+        destroyOnHidden
+      >
+        <p className="sg-subtle">
+          重新发布不会改变当前文档的发布流程。选择是否让关联资源在本次公开快照中可访问。
+        </p>
+        <div className="sg-col" style={{ maxHeight: 240, overflowY: "auto" }}>
+          {(rebuildReferences?.references ?? []).map((reference) => (
+            <div key={reference.id} className="sg-row-between sg-card" style={{ padding: 10 }}>
+              <span>{reference.title}</span>
+              <span className="sg-subtle">
+                {reference.visibility === "private" ? "私有" : "已公开"}
+              </span>
+            </div>
+          ))}
+        </div>
+      </Modal>
     </div>
   );
 }

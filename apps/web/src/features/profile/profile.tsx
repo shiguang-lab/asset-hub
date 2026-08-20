@@ -1,5 +1,6 @@
-import { Avatar, Button, Card, Field, Input, Select, Switch, useToast } from "@shiguang/ui";
+import { Avatar, Field, useToast } from "@shiguang/ui";
 import { useMutation, useQuery } from "@tanstack/react-query";
+import { Button, Card, Input, Select, Switch } from "antd";
 import { useState } from "react";
 import { api } from "../../entities/api.js";
 
@@ -89,7 +90,7 @@ export function ProfilePage() {
               onChange={setNotifyEmail}
             />
           </div>
-          <Button variant="primary" className="sg-mt" onClick={() => save.mutate()}>
+          <Button type="primary" className="sg-mt" onClick={() => save.mutate()}>
             保存
           </Button>
         </Card>
