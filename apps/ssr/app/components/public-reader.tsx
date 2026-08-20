@@ -1,7 +1,8 @@
 "use client";
 
+import {Scrollbar} from "@shiguang2/components";
 import {useRequest} from "ahooks";
-import {Avatar, Button, Menu as AntMenu, type MenuProps, Tooltip} from "antd";
+import {Menu as AntMenu, Avatar, Button, type MenuProps, Skeleton, Tooltip} from "antd";
 import {createStyles} from "antd-style";
 import {
   AlignJustify,
@@ -140,15 +141,27 @@ export function PublicReader({slug, content, snapshotHtml}: PublicReaderProps) {
 
   const [toc, setToc] = useState<PublicTocItem[]>([]);
   const [activeTocId, setActiveTocId] = useState<string | null>(null);
-  const [tocOpen, setTocOpen] = useState(()=>{
-    return isClient()?window.localStorage.getItem(tocOpenStorageKey) !== 'false': true
+  const [tocOpen, setTocOpen] = useState(() => {
+    if (!isClient()) return true;
+    try {
+      return window.localStorage.getItem(tocOpenStorageKey) !== "false";
+    } catch {
+      return true;
+    }
   });
   const [widthMode, setWidthMode] = useState<ContentWidth>(() => {
-    return (isClient() ? window.localStorage.getItem(widthModeStorageKey)??"default" : "default") as ContentWidth
+    if (!isClient()) return "default";
+    try {
+      const stored = window.localStorage.getItem(widthModeStorageKey);
+      return stored === "wide" || stored === "full" ? stored : "default";
+    } catch {
+      return "default";
+    }
   });
   const [widthMenuOpen, setWidthMenuOpen] = useState(false);
   const [widthSubmenuOpen, setWidthSubmenuOpen] = useState(false);
   const [clientReady, setClientReady] = useState(false);
+  const [transitionsEnabled, setTransitionsEnabled] = useState(false);
 
   const {data: presence} = useRequest(
     async (): Promise<PresenceResult> => {
@@ -171,9 +184,9 @@ export function PublicReader({slug, content, snapshotHtml}: PublicReaderProps) {
   const visitorCount = presence?.visitorCount ?? content.visitorCount;
   const activeViewers = presence?.viewers ?? [];
 
-  const layoutRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLElement>(null);
-  const tocNavRef = useRef<HTMLElement>(null);
+  const [contentViewport, setContentViewport] = useState<HTMLElement | null>(null);
+  const [tocViewport, setTocViewport] = useState<HTMLElement | null>(null);
   const tocLinkRefs = useRef(new Map<string, HTMLAnchorElement>());
 
   const activeTocIdRef = useRef<string | null>(null);
@@ -211,8 +224,7 @@ export function PublicReader({slug, content, snapshotHtml}: PublicReaderProps) {
   }, [clearWidthMenuCloseTimer]);
 
   useLayoutEffect(() => {
-    // The initial client render must match the server render. The environment
-    // check mounts the interactive sibling before the browser paints.
+    // Mount the interactive reader before the browser paints.
     if (isClient()) setClientReady(true);
   }, []);
 
@@ -221,6 +233,11 @@ export function PublicReader({slug, content, snapshotHtml}: PublicReaderProps) {
       clearWidthMenuCloseTimer();
     };
   }, [clearWidthMenuCloseTimer]);
+
+  useEffect(() => {
+    const frameId = window.requestAnimationFrame(() => setTransitionsEnabled(true));
+    return () => window.cancelAnimationFrame(frameId);
+  }, []);
 
   // ---------------- Build TOC from rendered DOM ----------------
   // XMarkdown doesn't add `id` attributes to headings, so build the TOC from its DOM.
@@ -241,28 +258,28 @@ export function PublicReader({slug, content, snapshotHtml}: PublicReaderProps) {
 
   // ---------------- Heading offset tracking & active heading ----------------
   const measureHeadingOffsets = useCallback(() => {
-    const layout = layoutRef.current;
     const container = contentRef.current;
-    if (!layout || !container) return;
+    if (!contentViewport || !container) return;
     const headings = getMarkdownHeadings(container);
     if (!headings.length) {
       headingOffsetsRef.current = [];
       return;
     }
-    const containerRect = container.getBoundingClientRect();
-    const contentTop = layout.scrollTop - containerRect.top;
+    const viewportRect = contentViewport.getBoundingClientRect();
     headingOffsetsRef.current = headings.map((element, index) => ({
       id: element.id || String(index),
-      top: element.getBoundingClientRect().top + contentTop,
+      top:
+        element.getBoundingClientRect().top -
+        viewportRect.top +
+        contentViewport.scrollTop,
     }));
-  }, []);
+  }, [contentViewport]);
 
   const findActiveTocId = useCallback((): string | null => {
-    const layout = layoutRef.current;
-    if (!layout) return null;
+    if (!contentViewport) return null;
     const offsets = headingOffsetsRef.current;
     if (!offsets.length) return null;
-    const targetTop = layout.scrollTop + ACTIVE_TOC_OFFSET_PX;
+    const targetTop = contentViewport.scrollTop + ACTIVE_TOC_OFFSET_PX;
     let low = 0;
     let high = offsets.length - 1;
     let activeIndex = 0;
@@ -276,7 +293,7 @@ export function PublicReader({slug, content, snapshotHtml}: PublicReaderProps) {
       }
     }
     return offsets[activeIndex]?.id ?? null;
-  }, []);
+  }, [contentViewport]);
 
   const scheduleActiveHeadingUpdate = useCallback(() => {
     if (scrollFrameIdRef.current !== null) return;
@@ -290,9 +307,8 @@ export function PublicReader({slug, content, snapshotHtml}: PublicReaderProps) {
 
   useLayoutEffect(() => {
     if (!clientReady) return;
-    const layout = layoutRef.current;
     const container = contentRef.current;
-    if (!layout || !container) return;
+    if (!contentViewport || !container) return;
     let measureTimerId: number | null = null;
     const scheduleMeasure = () => {
       if (measureTimerId !== null) window.clearTimeout(measureTimerId);
@@ -317,11 +333,11 @@ export function PublicReader({slug, content, snapshotHtml}: PublicReaderProps) {
     const onKeyDown = (event: KeyboardEvent) => {
       if (SCROLL_KEYS.has(event.key)) userScrollIntentRef.current = true;
     };
-    layout.addEventListener("scroll", onContentScroll, {passive: true});
-    layout.addEventListener("wheel", onUserScrollIntent, {passive: true});
-    layout.addEventListener("touchmove", onUserScrollIntent, {passive: true});
-    layout.addEventListener("pointermove", onUserScrollIntent, {passive: true});
-    layout.addEventListener("keydown", onKeyDown);
+    contentViewport.addEventListener("scroll", onContentScroll, {passive: true});
+    contentViewport.addEventListener("wheel", onUserScrollIntent, {passive: true});
+    contentViewport.addEventListener("touchmove", onUserScrollIntent, {passive: true});
+    contentViewport.addEventListener("pointermove", onUserScrollIntent, {passive: true});
+    contentViewport.addEventListener("keydown", onKeyDown);
     const resizeObserver =
       typeof ResizeObserver === "undefined" ? null : new ResizeObserver(scheduleMeasure);
     resizeObserver?.observe(container);
@@ -338,16 +354,17 @@ export function PublicReader({slug, content, snapshotHtml}: PublicReaderProps) {
         scrollFrameIdRef.current = null;
       }
       if (measureTimerId !== null) window.clearTimeout(measureTimerId);
-      layout.removeEventListener("scroll", onContentScroll);
-      layout.removeEventListener("wheel", onUserScrollIntent);
-      layout.removeEventListener("touchmove", onUserScrollIntent);
-      layout.removeEventListener("pointermove", onUserScrollIntent);
-      layout.removeEventListener("keydown", onKeyDown);
+      contentViewport.removeEventListener("scroll", onContentScroll);
+      contentViewport.removeEventListener("wheel", onUserScrollIntent);
+      contentViewport.removeEventListener("touchmove", onUserScrollIntent);
+      contentViewport.removeEventListener("pointermove", onUserScrollIntent);
+      contentViewport.removeEventListener("keydown", onKeyDown);
       resizeObserver?.disconnect();
     };
   }, [
     clientReady,
     commitActiveToc,
+    contentViewport,
     findActiveTocId,
     measureHeadingOffsets,
     scheduleActiveHeadingUpdate,
@@ -356,15 +373,16 @@ export function PublicReader({slug, content, snapshotHtml}: PublicReaderProps) {
   // Auto-scroll the active toc item into view inside the toc nav.
   useEffect(() => {
     if (!activeTocId) return;
-    const nav = tocNavRef.current;
     const link = tocLinkRefs.current.get(activeTocId);
-    if (!nav || !link) return;
-    const linkTop = link.offsetTop;
-    const linkBottom = linkTop + link.offsetHeight;
-    if (linkTop < nav.scrollTop) nav.scrollTop = linkTop;
-    else if (linkBottom > nav.scrollTop + nav.clientHeight)
-      nav.scrollTop = linkBottom - nav.clientHeight;
-  }, [activeTocId]);
+    if (!tocViewport || !link) return;
+    const viewportRect = tocViewport.getBoundingClientRect();
+    const linkRect = link.getBoundingClientRect();
+    if (linkRect.top < viewportRect.top) {
+      tocViewport.scrollTop -= viewportRect.top - linkRect.top;
+    } else if (linkRect.bottom > viewportRect.bottom) {
+      tocViewport.scrollTop += linkRect.bottom - viewportRect.bottom;
+    }
+  }, [activeTocId, tocViewport]);
 
   // ---------------- Hash navigation on mount ----------------
   useLayoutEffect(() => {
@@ -409,7 +427,7 @@ export function PublicReader({slug, content, snapshotHtml}: PublicReaderProps) {
       try {
         window.localStorage.setItem(tocOpenStorageKey, String(next));
       } catch {
-        // ignore
+        // Keep the toggle usable when localStorage is unavailable.
       }
       return next;
     });
@@ -449,6 +467,19 @@ export function PublicReader({slug, content, snapshotHtml}: PublicReaderProps) {
     if (key === "width") setWidthSubmenuOpen(true);
   };
 
+  const handleWidthModeChange = (mode: ContentWidth) => {
+    if (mode !== widthMode) {
+      setWidthMode(mode);
+      try {
+        window.localStorage.setItem(widthModeStorageKey, mode);
+      } catch {
+        // Keep the control usable when localStorage is unavailable.
+      }
+    }
+    setWidthMenuOpen(false);
+    setWidthSubmenuOpen(false);
+  };
+
   const publisherName = content.publisher?.name?.trim() || "发布人";
   const publisherInitial = Array.from(publisherName)[0] ?? "发";
   const visibleViewers = activeViewers.slice(0, 5);
@@ -457,20 +488,24 @@ export function PublicReader({slug, content, snapshotHtml}: PublicReaderProps) {
   const pageClassName = [
     "sg-public-page",
     `width-${widthMode}`,
+    clientReady && tocOpen ? "toc-open" : "",
+    transitionsEnabled ? "transitions-enabled" : "",
   ]
     .filter(Boolean)
     .join(" ");
 
   return (
-    <div className={pageClassName}>
+    <div className={pageClassName} suppressHydrationWarning>
       <header className="sg-public-header">
         <div className="sg-public-header-leading">
           <Tooltip title={tocOpen ? "隐藏目录" : "显示目录"}>
             <Button
+              key={transitionsEnabled ? "toc-toggle-ready" : "toc-toggle-initial"}
               type="text"
               className={`${styles.headerButton} sg-public-toc-toggle`}
               onClick={handleTocToggle}
               aria-label={tocOpen ? "隐藏目录" : "显示目录"}
+              suppressHydrationWarning
               icon={
                 <span className="sg-public-toc-toggle-icons" aria-hidden="true">
                   <Menu className="sg-public-toc-toggle-menu-icon" size={18}/>
@@ -581,14 +616,7 @@ export function PublicReader({slug, content, snapshotHtml}: PublicReaderProps) {
                           }`}
                           onClick={(event) => {
                             event.stopPropagation();
-                            setWidthMode(mode);
-                            try {
-                              window.localStorage.setItem(widthModeStorageKey, mode);
-                            } catch {
-                              // Keep the control usable when localStorage is unavailable.
-                            }
-                            setWidthMenuOpen(false);
-                            setWidthSubmenuOpen(false);
+                            handleWidthModeChange(mode);
                           }}
                         >
                           {icon}
@@ -613,50 +641,60 @@ export function PublicReader({slug, content, snapshotHtml}: PublicReaderProps) {
           </Tooltip>
         </div>
       </header>
-      <div ref={layoutRef} className="sg-public-layout">
+      <div className="sg-public-layout">
         <SeoSnapshot title={content.title} html={snapshotHtml}/>
         {clientReady && isClient() ? (
           <>
-            <div className='sg-public-toc-container'>
+            <div className="sg-public-toc-container">
               <aside
-                className={`sg-public-toc sg-scrollbar${tocOpen ? " is-open" : ""}`}
+                className="sg-public-toc-panel"
                 aria-label="文档目录"
                 aria-hidden={!tocOpen}
               >
-                {toc.length > 0 ? (
-                  <nav ref={tocNavRef}>
-                    {toc.map((item) => (
-                      <a
-                        key={item.id}
-                        ref={(link) => {
-                          if (link) tocLinkRefs.current.set(item.id, link);
-                          else tocLinkRefs.current.delete(item.id);
-                        }}
-                        className={`level-${item.level}${activeTocId === item.id ? " is-active" : ""}`}
-                        href={`#${encodeURIComponent(item.id)}`}
-                        aria-current={activeTocId === item.id ? "location" : undefined}
-                        onClick={(event) => handleTocClick(event, item)}
-                      >
-                        {item.text}
-                      </a>
-                    ))}
-                  </nav>
-                ) : (
-                  <p className="sg-public-toc-empty">本文档暂无目录</p>
-                )}
+                <Scrollbar ref={setTocViewport} className="sg-public-toc" scrollX={false}>
+                  {toc.length > 0 ? (
+                    <nav>
+                      {toc.map((item) => (
+                        <a
+                          key={item.id}
+                          ref={(link) => {
+                            if (link) tocLinkRefs.current.set(item.id, link);
+                            else tocLinkRefs.current.delete(item.id);
+                          }}
+                          className={`level-${item.level}${activeTocId === item.id ? " is-active" : ""}`}
+                          href={`#${encodeURIComponent(item.id)}`}
+                          aria-current={activeTocId === item.id ? "location" : undefined}
+                          onClick={(event) => handleTocClick(event, item)}
+                        >
+                          {item.text}
+                        </a>
+                      ))}
+                    </nav>
+                  ) : (
+                    <p className="sg-public-toc-empty">本文档暂无目录</p>
+                  )}
+                </Scrollbar>
               </aside>
             </div>
-            <main
-              ref={contentRef}
-              className="sg-public-container"
-              onCopy={content.allowCopy ? undefined : (event) => event.preventDefault()}
-              onContextMenu={content.allowCopy ? undefined : (event) => event.preventDefault()}
-            >
-              <article className="sg-public-content">
-                <InteractiveMarkdown source={rewritten}/>
-                <footer className="sg-public-footer">由 知序 发布 · 内容可追溯</footer>
-              </article>
-            </main>
+            <div className="sg-public-content-container">
+              <Scrollbar
+                ref={setContentViewport}
+                className="sg-public-content-scrollbar"
+                scrollX={false}
+              >
+                <main
+                  ref={contentRef}
+                  className="sg-public-container"
+                  onCopy={content.allowCopy ? undefined : (event) => event.preventDefault()}
+                  onContextMenu={content.allowCopy ? undefined : (event) => event.preventDefault()}
+                >
+                  <article className="sg-public-content">
+                    <InteractiveMarkdown source={rewritten}/>
+                    <footer className="sg-public-footer">由 知序 发布 · 内容可追溯</footer>
+                  </article>
+                </main>
+              </Scrollbar>
+            </div>
           </>
         ) : (
           <PublicReaderSkeleton/>
@@ -671,17 +709,7 @@ export function PublicReader({slug, content, snapshotHtml}: PublicReaderProps) {
 function PublicReaderSkeleton() {
   return (
     <main className="sg-public-content sg-public-content-skeleton" aria-hidden="true">
-      <div className="sg-public-skeleton-line is-title"/>
-      <div className="sg-public-skeleton-line is-medium"/>
-      <div className="sg-public-skeleton-line"/>
-      <div className="sg-public-skeleton-line is-wide"/>
-      <div className="sg-public-skeleton-line is-wide"/>
-      <div className="sg-public-skeleton-line is-short"/>
-      <div className="sg-public-skeleton-block"/>
-      <div className="sg-public-skeleton-line is-medium"/>
-      <div className="sg-public-skeleton-line is-wide"/>
-      <div className="sg-public-skeleton-line"/>
-      <div className="sg-public-skeleton-line is-short"/>
+      <Skeleton active title={{width: "42%"}} paragraph={{rows: 12}}/>
     </main>
   );
 }

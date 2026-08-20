@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 
-import { PublicReader } from "../../components/public-reader";
+import {PublicReader} from "../../components/public-reader";
 import { renderServerMarkdown } from "../../server-markdown";
 import { fetchPublicContent } from "../fetch-public-content";
 
