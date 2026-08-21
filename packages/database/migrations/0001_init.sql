@@ -538,3 +538,19 @@ CREATE TABLE IF NOT EXISTS publish_visitors (
 );
 CREATE INDEX IF NOT EXISTS idx_publish_visitors_active
   ON publish_visitors(publish_id, last_seen_at);
+
+-- Published-page comments are anchored to a publish release (version) so a
+-- review always refers to the exact content that was being read. The author is
+-- resolved server-side (X-SG-Identity from the edge forward-auth) and is never
+-- supplied by the client.
+CREATE TABLE IF NOT EXISTS publish_comments (
+  id TEXT PRIMARY KEY,
+  publish_id TEXT NOT NULL REFERENCES publishes(id),
+  release_id TEXT NOT NULL,
+  author_subject TEXT NOT NULL,
+  author_name TEXT NOT NULL,
+  content TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_publish_comments
+  ON publish_comments(publish_id, release_id, created_at);

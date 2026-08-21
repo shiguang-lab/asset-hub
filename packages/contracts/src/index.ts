@@ -972,6 +972,7 @@ export const actorContextSchema = z.object({
   requestId: z.string(),
   isService: z.boolean().default(false),
   tokenScopes: z.array(z.enum(["read", "write"])).default([]),
+  displayName: z.string().optional(),
 });
 export type ActorContext = z.infer<typeof actorContextSchema>;
 

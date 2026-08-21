@@ -820,6 +820,18 @@ export function registerInternalRoutes(app: FastifyInstance): void {
       .parse(req.body);
     return await ctx.store.recordPresence(body);
   });
+
+  // Published-page comments are read through the anonymous public data plane:
+  // the gateway resolves slug -> publish/release and forwards this request.
+  app.get("/internal/v1/comments", async (req) => {
+    const query = z
+      .object({
+        publishId: z.string().min(1).max(100),
+        releaseId: z.string().min(1).max(100).optional().nullable(),
+      })
+      .parse(req.query);
+    return { comments: await ctx.store.listComments(query.publishId, query.releaseId ?? null) };
+  });
 }
 
 export function normalizeReleasePath(path: string): string | null {

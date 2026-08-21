@@ -1902,6 +1902,14 @@ export class Store {
     return row ? await this.mapPublish(row) : null;
   }
 
+  /** Look up a publish by id regardless of workspace (published pages are a public data plane). */
+  async getPublishById(publishId: string): Promise<Publish | null> {
+    const row = (await this.db
+      .prepare("SELECT * FROM publishes WHERE id = ?")
+      .get(publishId)) as Row | undefined;
+    return row ? await this.mapPublish(row) : null;
+  }
+
   async getPublishBySlug(slug: string): Promise<Publish | null> {
     const row = (await this.db.prepare("SELECT * FROM publishes WHERE slug = ?").get(slug)) as
       | Row
@@ -2169,6 +2177,87 @@ export class Store {
         avatarUrl: row.avatar_url === null ? null : str(row.avatar_url),
       })),
     };
+  }
+
+  async createComment(input: {
+    publishId: string;
+    releaseId: string;
+    authorSubject: string;
+    authorName: string;
+    content: string;
+  }): Promise<{
+    id: string;
+    publishId: string;
+    releaseId: string;
+    authorSubject: string;
+    authorName: string;
+    content: string;
+    createdAt: string;
+  }> {
+    const id = nextId("cmt");
+    const createdAt = nowIso();
+    await this.db
+      .prepare(
+        `INSERT INTO publish_comments
+           (id, publish_id, release_id, author_subject, author_name, content, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        id,
+        input.publishId,
+        input.releaseId,
+        input.authorSubject,
+        input.authorName,
+        input.content,
+        createdAt,
+      );
+    return {
+      id,
+      publishId: input.publishId,
+      releaseId: input.releaseId,
+      authorSubject: input.authorSubject,
+      authorName: input.authorName,
+      content: input.content,
+      createdAt,
+    };
+  }
+
+  async listComments(
+    publishId: string,
+    releaseId: string | null,
+  ): Promise<
+    Array<{
+      id: string;
+      publishId: string;
+      releaseId: string;
+      authorSubject: string;
+      authorName: string;
+      content: string;
+      createdAt: string;
+    }>
+  > {
+    const rows = (await this.db
+      .prepare(
+        releaseId
+          ? `SELECT id, publish_id, release_id, author_subject, author_name, content, created_at
+             FROM publish_comments
+             WHERE publish_id = ? AND release_id = ?
+             ORDER BY created_at ASC LIMIT 200`
+          : `SELECT id, publish_id, release_id, author_subject, author_name, content, created_at
+             FROM publish_comments
+             WHERE publish_id = ?
+             ORDER BY created_at ASC LIMIT 200`,
+      )
+      .all(...(releaseId ? [publishId, releaseId] : [publishId]))) as Row[];
+    return rows.map((row) => ({
+      id: str(row.id),
+      publishId: str(row.publish_id),
+      releaseId: str(row.release_id),
+      authorSubject: str(row.author_subject),
+      authorName: str(row.author_name),
+      content: str(row.content),
+      createdAt: str(row.created_at),
+    }));
   }
 
   async recordAccessEvent(input: {

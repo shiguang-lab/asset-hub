@@ -653,13 +653,12 @@ select {
   height: 100%;
   flex: 1 1 auto;
   display: grid;
-  grid-template-columns: 200px minmax(0, 1fr) 260px;
+  grid-template-columns: 200px minmax(0, 1fr);
   gap: 16px;
   align-items: stretch;
   overflow: hidden;
 }
-.sg-document-editor-outline,
-.sg-document-editor-comments {
+.sg-document-editor-outline {
   width: auto;
   height: 100%;
   min-height: 0;
@@ -739,9 +738,6 @@ select {
 @media (max-width: 1100px) {
   .sg-document-editor-layout {
     grid-template-columns: 180px minmax(0, 1fr);
-  }
-  .sg-document-editor-comments {
-    display: none;
   }
 }
 @media (max-width: 760px) {

@@ -34,6 +34,7 @@ a {
   --sg-content-max: 860px;
   --sg-toc-width: 248px;
   --sg-toc-gap: 18px;
+  --sg-comments-width: 320px;
   --sg-toc-motion-duration: 240ms;
   --sg-toc-motion-easing: cubic-bezier(0.4, 0, 0.2, 1);
   height: 100dvh;
@@ -609,6 +610,52 @@ body .sg-public-width-popover .sg-public-actions-menu.ant-menu .ant-menu-item-ex
   color: var(--sg-muted);
   font-size: 12px;
 }
+/* ---------- Comments panel: independent right rail, slides in from the right ---------- */
+.sg-public-comments-container {
+  flex: 0 0 auto;
+  display: flex;
+  width: 0;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  contain: layout paint;
+  transform: translateZ(0);
+  backface-visibility: hidden;
+  transition: none;
+}
+.sg-public-page.transitions-enabled .sg-public-comments-container {
+  will-change: width;
+  transition: width var(--sg-toc-motion-duration) var(--sg-toc-motion-easing);
+}
+.sg-public-page.comments-open .sg-public-comments-container {
+  width: var(--sg-comments-width);
+}
+.sg-public-comments-panel {
+  z-index: 9;
+  flex: 0 0 var(--sg-comments-width);
+  width: var(--sg-comments-width);
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  /* No outer border — a single vertical line divides it from the content area. */
+  border-left: 1px solid var(--sg-border);
+  background: color-mix(in srgb, var(--sg-bg) 96%, transparent);
+  opacity: 0;
+  pointer-events: none;
+  transform: translate3d(18px, 0, 0);
+  backface-visibility: hidden;
+  transition: none;
+}
+.sg-public-page.transitions-enabled .sg-public-comments-panel {
+  transition:
+    opacity 160ms ease,
+    transform var(--sg-toc-motion-duration) var(--sg-toc-motion-easing);
+}
+.sg-public-page.comments-open .sg-public-comments-panel {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translate3d(0, 0, 0);
+}
 .sg-public-content {
   min-width: 0;
 }
@@ -697,6 +744,124 @@ body .sg-public-width-popover .sg-public-actions-menu.ant-menu .ant-menu-item-ex
   border-top: 1px solid var(--sg-border);
   color: var(--sg-muted);
   font-size: 12px;
+}
+/* Comments live inside an independent right-side panel (mirrors the left TOC).
+   No outer border — a single vertical line divides it from the content area. */
+.sg-public-comments-header {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  min-height: 48px;
+  padding: 0 16px;
+}
+.sg-public-comments-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--sg-fg);
+}
+.sg-public-comments-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+  padding: 0 16px;
+}
+.sg-public-comments-loading,
+.sg-public-comments-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 180px;
+  padding: 18px;
+}
+.sg-public-comment-editor {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  border-top: 1px solid var(--sg-border);
+}
+.sg-public-comment-input {
+  width: 100%;
+  resize: vertical;
+  min-height: 64px;
+  border-radius: 8px;
+  border: 1px solid var(--sg-border);
+  background: var(--sg-bg-2, #16141a);
+  color: var(--sg-fg);
+  padding: 10px 12px;
+  font-size: 13px;
+  line-height: 1.6;
+  outline: none;
+}
+.sg-public-comment-input:focus {
+  border-color: var(--sg-accent, #7aa2ff);
+}
+.sg-public-comment-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+}
+.sg-public-comment-error {
+  color: var(--sg-danger, #e24b4a);
+  font-size: 12px;
+  margin-right: auto;
+}
+.sg-public-comment-submit {
+  border: 0;
+  border-radius: 6px;
+  padding: 6px 14px;
+  font-size: 12.5px;
+  cursor: pointer;
+  color: #fff;
+  background: var(--sg-accent, #534ab7);
+}
+.sg-public-comment-submit:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.sg-public-comment-login-hint {
+  margin: 0;
+  color: var(--sg-muted);
+  font-size: 12.5px;
+}
+.sg-public-comment-list {
+  list-style: none;
+  margin: 0;
+  padding: 4px 0 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.sg-public-comment-item {
+  border: 1px solid var(--sg-border);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+.sg-public-comment-meta {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.sg-public-comment-meta strong {
+  font-size: 12.5px;
+  color: var(--sg-fg);
+}
+.sg-public-comment-meta time {
+  font-size: 11px;
+  color: var(--sg-muted);
+}
+.sg-public-comment-body {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--sg-fg-2, #b6b3c0);
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 @media (max-width: 840px) {
   .sg-public-header {

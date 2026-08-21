@@ -2,6 +2,18 @@ import { z } from "zod";
 
 const hostSchema = z.string().min(1).default("0.0.0.0");
 
+/**
+ * Parse a boolean from an environment string WITHOUT the footgun that
+ * `z.coerce.boolean()` has: `Boolean("false") === true`, so `"false"` would be
+ * coerced into `true`. Only an explicit truthy token enables the flag; anything
+ * else is `false`.
+ */
+function parseBooleanEnv(value: string | undefined): boolean {
+  if (value === undefined) return false;
+  const normalized = value.trim().toLowerCase();
+  return ["true", "1", "yes", "y", "on"].includes(normalized);
+}
+
 export interface ServiceConfig {
   host: string;
   port: number;
@@ -16,6 +28,13 @@ export interface ServiceConfig {
 }
 
 function loadCommon(name: string, defaultPort: number): Omit<ServiceConfig, "dataDir"> {
+  // Dev auth defaults ON for local development and OFF in production. An explicit
+  // `DEV_AUTH` value always wins (and only an explicit truthy token enables it —
+  // the previous `z.coerce.boolean` erroneously treated `DEV_AUTH=false` as true).
+  const devAuth =
+    process.env.DEV_AUTH === undefined || process.env.DEV_AUTH === ""
+      ? process.env.NODE_ENV !== "production"
+      : parseBooleanEnv(process.env.DEV_AUTH);
   const common = z
     .object({
       host: hostSchema,
@@ -24,7 +43,7 @@ function loadCommon(name: string, defaultPort: number): Omit<ServiceConfig, "dat
       publicApiBase: z.string().default(`http://localhost:${defaultPort}`),
       publicGatewayBase: z.string().default("http://localhost:3004"),
       webBase: z.string().default("http://localhost:3000"),
-      devAuth: z.coerce.boolean().default(true),
+      devAuth: z.boolean(),
       logLevel: z.string().default("info"),
     })
     .parse({
@@ -34,7 +53,7 @@ function loadCommon(name: string, defaultPort: number): Omit<ServiceConfig, "dat
       publicApiBase: process.env.PUBLIC_API_BASE ?? `http://localhost:${defaultPort}`,
       publicGatewayBase: process.env.PUBLIC_GATEWAY_BASE,
       webBase: process.env.WEB_BASE,
-      devAuth: process.env.DEV_AUTH,
+      devAuth,
       logLevel: process.env.LOG_LEVEL,
     });
   return { ...common, name };

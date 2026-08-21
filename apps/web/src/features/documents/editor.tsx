@@ -41,7 +41,6 @@ import { PublishDialog } from "../publishing/publish-dialog.js";
 
 type Mode = "edit" | "split" | "preview";
 type SaveState = "saved" | "saving" | "failed";
-const ME_NAME = "张伟";
 
 interface DocumentVersion {
   id: string;
@@ -69,12 +68,6 @@ interface VersionDiffResponse {
     unchanged: number;
     blocks: DiffBlock[];
   };
-}
-
-interface LocalComment {
-  id: string;
-  text: string;
-  createdAt: string;
 }
 
 interface LocalAttachment {
@@ -129,8 +122,6 @@ export function DocumentEditorPage() {
   const [chartModal, setChartModal] = useState(false);
   const [chartName, setChartName] = useState("");
   const [chartType, setChartType] = useState("bar");
-  const [commentText, setCommentText] = useState("");
-  const [comments, setComments] = useState<LocalComment[]>([]);
   const [attachments, setAttachments] = useState<LocalAttachment[]>([]);
   const [attachmentUploading, setAttachmentUploading] = useState(false);
   const [charts, setCharts] = useState<LocalChart[]>([]);
@@ -233,14 +224,12 @@ export function DocumentEditorPage() {
     let cancelled = false;
     localReadyRef.current = null;
     void Promise.all([
-      loadDocumentLocal<LocalComment[]>(`${id}:comments`, []),
       loadDocumentLocal<LocalAttachment[]>(`${id}:attachments`, []),
       loadDocumentLocal<LocalChart[]>(`${id}:charts`, []),
     ])
-      .then(([savedComments, savedAttachments, savedCharts]) => {
+      .then(([savedAttachments, savedCharts]) => {
         if (cancelled) return;
         localReadyRef.current = id;
-        setComments(savedComments);
         setAttachments((current) => {
           const merged = new Map(
             [...savedAttachments, ...current].map((attachment) => [attachment.id, attachment]),
@@ -257,10 +246,6 @@ export function DocumentEditorPage() {
     };
   }, [id]);
 
-  useEffect(() => {
-    if (!id || localReadyRef.current !== id) return;
-    void saveDocumentLocal(`${id}:comments`, comments).catch(() => undefined);
-  }, [comments, id]);
   useEffect(() => {
     if (!id || localReadyRef.current !== id) return;
     void saveDocumentLocal(`${id}:attachments`, attachments).catch(() => undefined);
@@ -443,17 +428,6 @@ export function DocumentEditorPage() {
     setChartName("");
     setChartModal(false);
     toast("success", "图表已插入文档");
-  };
-
-  const addComment = () => {
-    const text = commentText.trim();
-    if (!text) return;
-    setComments((current) => [
-      { id: crypto.randomUUID(), text, createdAt: new Date().toISOString() },
-      ...current,
-    ]);
-    setCommentText("");
-    toast("success", "评论已添加");
   };
 
   const handleAttachment = async (file: File | undefined) => {
@@ -689,6 +663,9 @@ export function DocumentEditorPage() {
                 </button>
                 <button type="button" onClick={exportMarkdown}>
                   导出 Markdown
+                </button>
+                <button type="button" onClick={() => navigate(`/presentations/new?asset=${id}`)}>
+                  生成演示
                 </button>
                 <button type="button" onClick={() => navigate(`/assets/${id}`)}>
                   查看资产详情
@@ -1044,59 +1021,6 @@ export function DocumentEditorPage() {
               <span>Markdown · 行 1 列 1</span>
             </div>
           </section>
-
-          <Scrollbar className="sg-document-editor-comments sg-editor-right">
-            <h4>评论（{comments.length}）</h4>
-            <div className="sg-subtle" style={{ fontSize: 12.5 }}>
-              评论保存在当前浏览器，可用于记录编辑意见。
-            </div>
-            <div className="sg-row sg-mt-sm">
-              <input
-                placeholder="写下你的评论…"
-                className="sg-input"
-                style={{ flex: 1, minWidth: 0 }}
-                value={commentText}
-                onChange={(event) => setCommentText(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") addComment();
-                }}
-              />
-              <Button size="small" disabled={!commentText.trim()} onClick={addComment}>
-                发送
-              </Button>
-            </div>
-            <div className="sg-col" style={{ gap: 8, marginTop: 14 }}>
-              {comments.length === 0 ? (
-                <span className="sg-subtle">暂无评论</span>
-              ) : (
-                comments.map((comment) => (
-                  <div key={comment.id} className="sg-card" style={{ padding: 8 }}>
-                    <div style={{ fontSize: 12.5 }}>{comment.text}</div>
-                    <div
-                      className="sg-row-between sg-subtle"
-                      style={{ marginTop: 5, fontSize: 11 }}
-                    >
-                      <span>{ME_NAME}</span>
-                      <span>
-                        {new Date(comment.createdAt).toLocaleString("zh-CN", { hour12: false })}
-                      </span>
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-            <h4 style={{ marginTop: 16 }}>快捷操作</h4>
-            <Button
-              size="small"
-              type="text"
-              onClick={() => navigate(`/presentations/new?asset=${id}`)}
-            >
-              生成演示
-            </Button>
-            <Button size="small" type="text" onClick={exportMarkdown}>
-              <Download size={14} /> 导出 Markdown
-            </Button>
-          </Scrollbar>
         </div>
       )}
 

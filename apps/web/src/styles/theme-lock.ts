@@ -353,7 +353,7 @@ body,
 }
 .sg-content {
   max-width: none;
-  padding: 24px 24px 48px;
+  padding: 24px;
 }
 
 .sg-docs .sg-assets-head {

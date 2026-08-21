@@ -55,11 +55,13 @@ type PublishMeta struct {
 }
 
 type publicMarkdownContent struct {
-	Title        string `json:"title"`
-	Markdown     string `json:"markdown"`
-	Visibility   string `json:"visibility"`
-	VisitorCount int    `json:"visitorCount"`
-	Publisher    *struct {
+	Title         string `json:"title"`
+	Markdown      string `json:"markdown"`
+	Visibility    string `json:"visibility"`
+	VisitorCount  int    `json:"visitorCount"`
+	PublishID     string `json:"publishId"`
+	ReleaseID     string `json:"releaseId"`
+	Publisher     *struct {
 		Name      string  `json:"name"`
 		AvatarURL *string `json:"avatarUrl"`
 	} `json:"publisher"`
@@ -88,6 +90,22 @@ func main() {
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	})
+
+	// The published reader probes the signed-in identity through this path so it
+	// can attribute presence to a real user without forcing a login. Production
+	// routes /api/auth/session to auth-service at the edge; this keeps the same
+	// endpoint working when the gateway is reached directly in local dev.
+	mux.HandleFunc("GET /api/auth/session", func(w http.ResponseWriter, r *http.Request) {
+		proxyAuthSession(w, r, cfg)
+	})
+
+	// Local dev only: the published page posts comments to /api/v1/comments.
+	// The shared edge normally routes that path through forward-auth to the API
+	// (resolving the author server-side); when the gateway is reached directly
+	// (no Caddy), forward the request to the API so dev behaves like prod.
+	mux.HandleFunc("POST /api/v1/comments", func(w http.ResponseWriter, r *http.Request) {
+		proxyAPI(w, r, cfg)
 	})
 
 	// Next.js emits root-relative build asset URLs (/_next/static/*). These
@@ -138,6 +156,8 @@ func main() {
 			Markdown:      string(data),
 			Visibility:    meta.Publish.Visibility,
 			VisitorCount:  visitorCount,
+			PublishID:     meta.Publish.ID,
+			ReleaseID:     meta.Release.ID,
 			Publisher:     meta.Publisher,
 			AllowDownload: meta.Publish.AllowDownload,
 			AllowCopy:     meta.Publish.AllowCopy,
@@ -212,6 +232,27 @@ func main() {
 			return
 		}
 		writeJSON(w, http.StatusOK, result)
+	})
+
+	// Public comment feed for the published reader. Read is anonymous (the
+	// public data plane); writes go through the edge's forward-auth path instead.
+	mux.HandleFunc("GET /p/{slug}/comments", func(w http.ResponseWriter, r *http.Request) {
+		slug := r.PathValue("slug")
+		meta, status := cache.resolve(slug)
+		if status != http.StatusOK || meta.Release == nil || !isMarkdownPublish(meta) {
+			writeJSON(w, statusOrNotFound(status), map[string]string{"code": "CONTENT_NOT_FOUND"})
+			return
+		}
+		if meta.Publish.Visibility == "password" && !unlocked(r, meta.Publish.ID, cfg) {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"code": "PASSWORD_REQUIRED"})
+			return
+		}
+		comments, err := cfg.FetchComments(meta.Publish.ID, meta.Release.ID)
+		if err != nil {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"code": "COMMENTS_UNAVAILABLE"})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"comments": comments})
 	})
 
 	mux.HandleFunc("GET /p/{slug}", func(w http.ResponseWriter, r *http.Request) {
@@ -606,6 +647,40 @@ func proxySSR(w http.ResponseWriter, r *http.Request, cfg platform.Config) {
 	proxy.ErrorHandler = func(response http.ResponseWriter, _ *http.Request, proxyErr error) {
 		slog.Error("ssr proxy failed", "path", r.URL.Path, "error", proxyErr)
 		serveErrorPage(response, http.StatusServiceUnavailable, "发布页面暂时不可用", "公开阅读服务暂时不可用，请稍后重试。")
+	}
+	proxy.ServeHTTP(w, r)
+}
+
+func proxyAuthSession(w http.ResponseWriter, r *http.Request, cfg platform.Config) {
+	target, err := url.Parse(cfg.AuthBaseURL)
+	if err != nil || target.Scheme == "" || target.Host == "" {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"code": "AUTH_UNAVAILABLE"})
+		return
+	}
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	originalHost := r.Host
+	defer func() { r.Host = originalHost }()
+	r.Host = target.Host
+	proxy.ErrorHandler = func(response http.ResponseWriter, _ *http.Request, proxyErr error) {
+		slog.Error("auth session proxy failed", "error", proxyErr)
+		writeJSON(response, http.StatusServiceUnavailable, map[string]string{"code": "AUTH_UNAVAILABLE"})
+	}
+	proxy.ServeHTTP(w, r)
+}
+
+func proxyAPI(w http.ResponseWriter, r *http.Request, cfg platform.Config) {
+	target, err := url.Parse(cfg.APIBase)
+	if err != nil || target.Scheme == "" || target.Host == "" {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"code": "API_UNAVAILABLE"})
+		return
+	}
+	proxy := httputil.NewSingleHostReverseProxy(target)
+	originalHost := r.Host
+	defer func() { r.Host = originalHost }()
+	r.Host = target.Host
+	proxy.ErrorHandler = func(response http.ResponseWriter, _ *http.Request, proxyErr error) {
+		slog.Error("api proxy failed", "error", proxyErr)
+		writeJSON(response, http.StatusServiceUnavailable, map[string]string{"code": "API_UNAVAILABLE"})
 	}
 	proxy.ServeHTTP(w, r)
 }

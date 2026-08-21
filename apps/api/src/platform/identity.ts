@@ -54,6 +54,7 @@ export class IdentityService {
         requestId,
         isService: false,
         tokenScopes: ["read", "write"],
+        displayName: "演示用户",
       };
     }
     throw unauthorized();
@@ -151,7 +152,14 @@ export class IdentityService {
       ...(identity.displayName ? { displayName: identity.displayName } : {}),
     });
     if (!identity.organizationId) {
-      return this.actor(identity.sub, personal.id, "personal", "owner", requestId);
+      return this.actor(
+        identity.sub,
+        personal.id,
+        "personal",
+        "owner",
+        requestId,
+        identity.displayName,
+      );
     }
     const role = roleFromOrganizationRoles(identity.roles);
     if (!role) throw forbidden("当前用户没有有效的 Group 成员角色");
@@ -160,7 +168,14 @@ export class IdentityService {
       subject: identity.sub,
       role,
     });
-    return this.actor(identity.sub, workspace.id, "team", role, requestId);
+    return this.actor(
+      identity.sub,
+      workspace.id,
+      "team",
+      role,
+      requestId,
+      identity.displayName,
+    );
   }
 
   private actor(
@@ -169,6 +184,7 @@ export class IdentityService {
     workspaceType: "personal" | "team",
     workspaceRole: "owner" | "admin" | "editor" | "viewer",
     requestId: string,
+    displayName?: string,
   ): ActorContext {
     return {
       subject,
@@ -178,6 +194,7 @@ export class IdentityService {
       requestId,
       isService: false,
       tokenScopes: workspaceRole === "viewer" ? ["read"] : ["read", "write"],
+      ...(displayName ? { displayName } : {}),
     };
   }
 }

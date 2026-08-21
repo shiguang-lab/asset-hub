@@ -19,6 +19,7 @@ type Config struct {
 	Port         string
 	APIBase      string
 	SSRBaseURL   string
+	AuthBaseURL  string
 	GatewayToken string
 	ObjectRoot   string
 	HMACSecret   string
@@ -43,6 +44,13 @@ func LoadConfig() Config {
 	if ssrBaseURL == "" {
 		ssrBaseURL = "http://localhost:3005"
 	}
+	// Unified auth origin. The published page proxies /api/auth/session here in
+	// local development; in production the access-gateway routes that path to
+	// auth-service directly, so this is effectively dev-only.
+	authBaseURL := os.Getenv("AUTH_BASE_URL")
+	if authBaseURL == "" {
+		authBaseURL = "https://shiguanglab.com"
+	}
 	token := os.Getenv("PUBLIC_GATEWAY_TOKEN")
 	if token == "" {
 		token = "dev-gateway-token"
@@ -59,6 +67,7 @@ func LoadConfig() Config {
 		Port:         port,
 		APIBase:      apiBase,
 		SSRBaseURL:   ssrBaseURL,
+		AuthBaseURL:  authBaseURL,
 		GatewayToken: token,
 		ObjectRoot:   root,
 		HMACSecret:   secret,
@@ -162,6 +171,34 @@ func (c Config) RecordPresence(payload any) (PresenceResult, error) {
 		return PresenceResult{}, err
 	}
 	return result, nil
+}
+
+func (c Config) FetchComments(publishID, releaseID string) ([]map[string]any, error) {
+	query := url.Values{}
+	query.Set("publishId", publishID)
+	if releaseID != "" {
+		query.Set("releaseId", releaseID)
+	}
+	req, err := http.NewRequest(http.MethodGet, c.APIBase+"/internal/v1/comments?"+query.Encode(), nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("X-Internal-Token", c.GatewayToken)
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("comments status %d", resp.StatusCode)
+	}
+	var result struct {
+		Comments []map[string]any `json:"comments"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&result); err != nil {
+		return nil, err
+	}
+	return result.Comments, nil
 }
 
 func (c Config) Unlock(slug, password string) (UnlockResult, error) {

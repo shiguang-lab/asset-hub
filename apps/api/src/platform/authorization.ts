@@ -29,6 +29,10 @@ export function requiresWorkspaceWrite(request: { method: string; url: string })
     /^\/api\/v1\/knowledge-bases\/[^/]+\/(search|ask)$/,
     /^\/api\/v1\/datasets\/[^/]+\/query$/,
     /^\/api\/v1\/datasets\/analyze$/,
+    // Published-page comments are lightweight public actions (any authenticated
+    // product user, including group viewers, may comment), not workspace
+    // mutations requiring an editor-level token scope.
+    /^\/api\/v1\/comments$/,
   ].some((pattern) => pattern.test(path));
 }
 

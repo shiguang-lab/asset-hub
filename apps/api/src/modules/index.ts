@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { registerAssets } from "./assets.js";
 import { registerBilling } from "./billing.js";
+import { registerComments } from "./comments.js";
 import { registerDatasets } from "./datasets.js";
 import { registerHome } from "./home.js";
 import { registerIntegrations } from "./integrations.js";
@@ -20,6 +21,7 @@ export function registerModules(app: FastifyInstance): void {
   registerDatasets(app);
   registerPresentations(app);
   registerPublishing(app);
+  registerComments(app);
   registerNotifications(app);
   registerBilling(app);
   registerIntegrations(app);

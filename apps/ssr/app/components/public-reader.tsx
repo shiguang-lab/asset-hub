@@ -1,6 +1,7 @@
 "use client";
 
 import {Scrollbar} from "@shiguang2/components";
+import {Empty} from "@shiguang/ui";
 import {useRequest} from "ahooks";
 import {Menu as AntMenu, Avatar, Button, type MenuProps, Skeleton, Tooltip} from "antd";
 import {createStyles} from "antd-style";
@@ -15,6 +16,7 @@ import {
   LockKeyhole,
   Maximize2,
   Menu,
+  MessageSquare,
   MoreHorizontal,
   StretchHorizontal,
 } from "lucide-react";
@@ -30,6 +32,8 @@ export interface PublicReaderContent {
   markdown: string;
   visibility: string;
   visitorCount: number;
+  publishId: string;
+  releaseId: string;
   publisher: {
     name: string;
     avatarUrl: string | null;
@@ -44,6 +48,16 @@ export interface PublicViewer {
   userId: string | null;
   displayName: string | null;
   avatarUrl: string | null;
+}
+
+interface PublicComment {
+  id: string;
+  publishId: string;
+  releaseId: string;
+  authorSubject: string;
+  authorName: string;
+  content: string;
+  createdAt: string;
 }
 
 type ContentWidth = "default" | "wide" | "full";
@@ -85,6 +99,77 @@ function getOrCreateVisitorId(): string {
     // The in-memory value still supports presence for this page lifetime.
   }
   return generated;
+}
+
+interface PresenceIdentity {
+  userId: string;
+  displayName: string | null;
+  avatarUrl: string | null;
+}
+
+let presenceIdentityPromise: Promise<PresenceIdentity | null> | null = null;
+
+/**
+ * Resolves the signed-in identity for the presence feed without ever forcing a
+ * login: `/api/auth/session` returns plain JSON state (401 when anonymous), so a
+ * logged-out visitor simply resolves to `null` and is reported as a guest. The
+ * result is cached for the page lifetime so the 30s presence poll does not
+ * re-hit the auth endpoint on every tick.
+ */
+async function fetchPresenceIdentity(): Promise<PresenceIdentity | null> {
+  let response: Response;
+  try {
+    response = await fetch("/api/auth/session", {
+      credentials: "include",
+      headers: {Accept: "application/json"},
+    });
+  } catch {
+    return null;
+  }
+  if (!response.ok) return null;
+  let body: {
+    authenticated?: boolean;
+    subject?: string;
+    displayName?: string;
+    preferredUsername?: string;
+    avatarUrl?: string | null;
+    user?: {id?: string; username?: string; avatarUrl?: string | null};
+  };
+  try {
+    body = (await response.json()) as typeof body;
+  } catch {
+    return null;
+  }
+  const userId = body.user?.id || (body.authenticated === true ? body.subject : undefined);
+  if (!userId) return null;
+  const displayName =
+    body.user?.username?.trim() ||
+    body.displayName?.trim() ||
+    body.preferredUsername?.trim() ||
+    userId;
+  const avatarUrl = body.user?.avatarUrl ?? body.avatarUrl ?? null;
+  return {
+    userId,
+    displayName: displayName.slice(0, 120) || null,
+    avatarUrl: isHttpUrl(avatarUrl) ? avatarUrl.slice(0, 2_000) : null,
+  };
+}
+
+function getPresenceIdentity(): Promise<PresenceIdentity | null> {
+  if (!presenceIdentityPromise) {
+    presenceIdentityPromise = fetchPresenceIdentity().catch(() => null);
+  }
+  return presenceIdentityPromise;
+}
+
+function isHttpUrl(value: string | null | undefined): value is string {
+  if (!value) return false;
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
 }
 
 const usePublicReaderStyles = createStyles(({token}) => ({
@@ -160,16 +245,25 @@ export function PublicReader({slug, content, snapshotHtml}: PublicReaderProps) {
   });
   const [widthMenuOpen, setWidthMenuOpen] = useState(false);
   const [widthSubmenuOpen, setWidthSubmenuOpen] = useState(false);
+  // Comments panel visibility. Default hidden, intentionally NOT persisted — it is
+  // a per-view preference, not a stored setting.
+  const [commentsOpen, setCommentsOpen] = useState(false);
   const [clientReady, setClientReady] = useState(false);
   const [transitionsEnabled, setTransitionsEnabled] = useState(false);
 
   const {data: presence} = useRequest(
     async (): Promise<PresenceResult> => {
+      const identity = await getPresenceIdentity();
       const response = await fetch(`/p/${encodeURIComponent(slug)}/presence`, {
         method: "POST",
         credentials: "include",
         headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({visitorId: getOrCreateVisitorId()}),
+        body: JSON.stringify({
+          visitorId: getOrCreateVisitorId(),
+          userId: identity?.userId ?? null,
+          displayName: identity?.displayName ?? null,
+          avatarUrl: identity?.avatarUrl ?? null,
+        }),
       });
       if (!response.ok) throw new Error("PRESENCE_UNAVAILABLE");
       return (await response.json()) as PresenceResult;
@@ -183,6 +277,77 @@ export function PublicReader({slug, content, snapshotHtml}: PublicReaderProps) {
   );
   const visitorCount = presence?.visitorCount ?? content.visitorCount;
   const activeViewers = presence?.viewers ?? [];
+
+  // ---------------- Comments ----------------
+  // Identity is resolved server-side on write (the edge forward-auth turns the
+  // session cookie into X-SG-Identity). The client only probes login state for
+  // UI (show an input vs "log in to comment"); it never sends userId/displayName.
+  const [comments, setComments] = useState<PublicComment[]>([]);
+  const [commentsLoading, setCommentsLoading] = useState(false);
+  const [commentText, setCommentText] = useState("");
+  const [commentSubmitting, setCommentSubmitting] = useState(false);
+  const [commentLoginRequired, setCommentLoginRequired] = useState(false);
+  const [commentError, setCommentError] = useState<string | null>(null);
+  const [commentAuthor, setCommentAuthor] = useState<PresenceIdentity | null>(null);
+
+  useEffect(() => {
+    if (!clientReady) return;
+    let cancelled = false;
+    setCommentsLoading(true);
+    void (async () => {
+      try {
+        const response = await fetch(`/p/${encodeURIComponent(slug)}/comments`, {
+          credentials: "include",
+          headers: {Accept: "application/json"},
+        });
+        if (!response.ok) throw new Error("COMMENTS_UNAVAILABLE");
+        const body = (await response.json()) as {comments?: PublicComment[]};
+        if (!cancelled) setComments(body.comments ?? []);
+      } catch {
+        // Leave the section empty rather than crashing the reader.
+      } finally {
+        if (!cancelled) setCommentsLoading(false);
+      }
+    })();
+    void getPresenceIdentity().then((identity) => {
+      if (!cancelled) setCommentAuthor(identity);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [clientReady, slug]);
+
+  const submitComment = async () => {
+    const text = commentText.trim();
+    if (!text || !content.publishId || !content.releaseId) return;
+    setCommentSubmitting(true);
+    setCommentLoginRequired(false);
+    setCommentError(null);
+    try {
+      const response = await fetch("/api/v1/comments", {
+        method: "POST",
+        credentials: "include",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({
+          publishId: content.publishId,
+          releaseId: content.releaseId,
+          content: text.slice(0, 2_000),
+        }),
+      });
+      if (response.status === 401) {
+        setCommentLoginRequired(true);
+        return;
+      }
+      if (!response.ok) throw new Error("COMMENT_FAILED");
+      const body = (await response.json()) as {comment: PublicComment};
+      setComments((current) => [...current, body.comment]);
+      setCommentText("");
+    } catch {
+      setCommentError("评论发送失败，请稍后重试");
+    } finally {
+      setCommentSubmitting(false);
+    }
+  };
 
   const contentRef = useRef<HTMLElement>(null);
   const [contentViewport, setContentViewport] = useState<HTMLElement | null>(null);
@@ -438,26 +603,38 @@ export function PublicReader({slug, content, snapshotHtml}: PublicReaderProps) {
   };
 
   const moreMenuItems = useMemo<MenuProps["items"]>(
-    () => [
-      {
-        key: "copy",
-        icon: <Copy size={15}/>,
-        label: "复制链接",
-        onMouseEnter: () => setWidthSubmenuOpen(false),
-      },
-      {
-        key: "width",
-        className: widthSubmenuOpen ? "is-active" : undefined,
-        icon: <AlignJustify size={15}/>,
-        label: "页宽设置",
-        extra: <ChevronRight size={15}/>,
-        onMouseEnter: () => setWidthSubmenuOpen(true),
-      },
-    ],
-    [widthSubmenuOpen],
-  );
+  () => [
+    {
+      key: "copy",
+      icon: <Copy size={15}/>,
+      label: "复制链接",
+      onMouseEnter: () => setWidthSubmenuOpen(false),
+    },
+    {
+      key: "toggle-comments",
+      icon: <MessageSquare size={15}/>,
+      label: commentsOpen ? "隐藏评论" : "显示评论",
+      onMouseEnter: () => setWidthSubmenuOpen(false),
+    },
+    {
+      key: "width",
+      className: widthSubmenuOpen ? "is-active" : undefined,
+      icon: <AlignJustify size={15}/>,
+      label: "页宽设置",
+      extra: <ChevronRight size={15}/>,
+      onMouseEnter: () => setWidthSubmenuOpen(true),
+    },
+  ],
+  [widthSubmenuOpen, commentsOpen],
+);
 
   const handleMoreMenuClick: MenuProps["onClick"] = ({key}) => {
+    if (key === "toggle-comments") {
+      setCommentsOpen((open) => !open);
+      setWidthMenuOpen(false);
+      setWidthSubmenuOpen(false);
+      return;
+    }
     if (key === "copy") {
       void copyLink();
       setWidthMenuOpen(false);
@@ -489,6 +666,7 @@ export function PublicReader({slug, content, snapshotHtml}: PublicReaderProps) {
     "sg-public-page",
     `width-${widthMode}`,
     clientReady && tocOpen ? "toc-open" : "",
+    commentsOpen ? "comments-open" : "",
     transitionsEnabled ? "transitions-enabled" : "",
   ]
     .filter(Boolean)
@@ -695,6 +873,20 @@ export function PublicReader({slug, content, snapshotHtml}: PublicReaderProps) {
                 </main>
               </Scrollbar>
             </div>
+            <div className="sg-public-comments-container">
+              <PublicComments
+                open={commentsOpen}
+                comments={comments}
+                loading={commentsLoading}
+                text={commentText}
+                onTextChange={setCommentText}
+                submitting={commentSubmitting}
+                loginRequired={commentLoginRequired}
+                error={commentError}
+                canComment={commentAuthor !== null}
+                onSubmit={submitComment}
+              />
+            </div>
           </>
         ) : (
           <PublicReaderSkeleton/>
@@ -705,6 +897,93 @@ export function PublicReader({slug, content, snapshotHtml}: PublicReaderProps) {
 }
 
 // ---------------- Helpers ----------------
+
+function PublicComments({
+  open,
+  comments,
+  loading,
+  text,
+  onTextChange,
+  submitting,
+  loginRequired,
+  error,
+  canComment,
+  onSubmit,
+}: {
+  open: boolean;
+  comments: PublicComment[];
+  loading: boolean;
+  text: string;
+  onTextChange: (value: string) => void;
+  submitting: boolean;
+  loginRequired: boolean;
+  error: string | null;
+  canComment: boolean;
+  onSubmit: () => void;
+}) {
+  return (
+    <aside className="sg-public-comments-panel" aria-label="评论" aria-hidden={!open}>
+      <div className="sg-public-comments-header">
+        <h2 className="sg-public-comments-title">评论（{comments.length}）</h2>
+      </div>
+      <Scrollbar className="sg-public-comments-scroll" scrollX={false}>
+        {loading ? (
+          <div className="sg-public-comments-loading">
+            <Skeleton active paragraph={{rows: 4}} title={false}/>
+          </div>
+        ) : comments.length === 0 ? (
+          <div className="sg-public-comments-empty">
+            <Empty title="还没有评论" hint="成为第一个发表看法的人"/>
+          </div>
+        ) : (
+          <ul className="sg-public-comment-list">
+            {comments.map((comment) => (
+              <li key={comment.id} className="sg-public-comment-item">
+                <div className="sg-public-comment-meta">
+                  <strong>{comment.authorName}</strong>
+                  <time dateTime={comment.createdAt}>
+                    {new Date(comment.createdAt).toLocaleString("zh-CN", {hour12: false})}
+                  </time>
+                </div>
+                <p className="sg-public-comment-body">{comment.content}</p>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Scrollbar>
+      <div className="sg-public-comment-editor">
+        {canComment ? (
+          <>
+            <textarea
+              className="sg-public-comment-input"
+              rows={3}
+              placeholder="写下你的评论…（以真实身份发布）"
+              value={text}
+              onChange={(event) => onTextChange(event.target.value)}
+            />
+            <div className="sg-public-comment-actions">
+              {error || loginRequired ? (
+                <span className="sg-public-comment-error">
+                  {loginRequired ? "请先登录后再评论" : error}
+                </span>
+              ) : null}
+              <button
+                type="button"
+                className="sg-public-comment-submit"
+                disabled={submitting || !text.trim()}
+                onClick={onSubmit}
+              >
+                {submitting ? "发送中…" : "发表评论"}
+              </button>
+            </div>
+          </>
+        ) : (
+          <p className="sg-public-comment-login-hint">登录后可发表评论</p>
+        )}
+      </div>
+    </aside>
+  );
+}
 
 function PublicReaderSkeleton() {
   return (
