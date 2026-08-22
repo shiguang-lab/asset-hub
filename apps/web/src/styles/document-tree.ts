@@ -11,7 +11,7 @@ export const DocumentTreeGlobalStyles = createGlobalStyle(css`
 }
 .sg-docs-tree-panel {
   position: sticky;
-  top: 24px;
+  top: 14px;
   min-width: 0;
   max-height: calc(100vh - 190px);
   overflow-y: auto;
