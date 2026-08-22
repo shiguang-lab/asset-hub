@@ -1,4 +1,4 @@
-import { Empty, Field, formatDate, Scrollbar, StatusBadge, Table, useToast } from "@shiguang/ui";
+import { Empty, Field, formatDate, Scrollbar, StatusBadge, useToast } from "@shiguang/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button, Card, Input, Modal, Select, Switch, Tabs, Tag } from "antd";
 import { Download, FilePenLine, Pencil } from "lucide-react";
@@ -12,6 +12,7 @@ import {
   type KnowledgeBase,
   type Publish,
 } from "../../entities/api.js";
+import { AppTable } from "../../shared/AppTable.js";
 import { DocumentMarkdown } from "../../shared/document-markdown.js";
 import { SandboxHtmlPreview } from "../../shared/sandbox-preview.js";
 import { useDeleteConfirm } from "../../shared/useDeleteConfirm";
@@ -295,99 +296,79 @@ export function AssetDetailPage() {
 
         {tab === "info" && (
           <Card>
-            <Table>
-              <tbody>
-                <tr>
-                  <td>ID</td>
-                  <td>
-                    <code>{asset.id}</code>
-                  </td>
-                </tr>
-                <tr>
-                  <td>类型</td>
-                  <td>{asset.type}</td>
-                </tr>
-                <tr>
-                  <td>可见性</td>
-                  <td>{asset.visibility}</td>
-                </tr>
-                <tr>
-                  <td>来源</td>
-                  <td>{asset.sourceType}</td>
-                </tr>
-                <tr>
-                  <td>创建时间</td>
-                  <td>{formatDate(asset.createdAt)}</td>
-                </tr>
-                <tr>
-                  <td>更新时间</td>
-                  <td>{formatDate(asset.updatedAt)}</td>
-                </tr>
-                <tr>
-                  <td>版本号</td>
-                  <td>v{asset.lockVersion}</td>
-                </tr>
-                <tr>
-                  <td>当前版本</td>
-                  <td>
-                    <code>{asset.currentVersionId}</code>
-                  </td>
-                </tr>
-                {canManageAsset && (
-                  <tr>
-                    <td>共享权限</td>
-                    <td>
-                      {(acl?.acl.length ?? 0) === 0 ? (
-                        <span className="sg-subtle">仅所有者可见</span>
-                      ) : (
-                        <div className="sg-col" style={{ gap: 4 }}>
-                          {acl?.acl.map((entry) => (
-                            <div key={entry.principal_id} className="sg-row">
-                              <span className="sg-badge">{entry.principal_id}</span>
-                              <span className="sg-badge sg-badge-accent">{entry.role}</span>
-                              <Button
-                                size="small"
-                                type="primary"
-                                danger
-                                onClick={() => revokeShare.mutate(entry.principal_id)}
-                              >
-                                取消
-                              </Button>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </Table>
+            <AppTable<{ key: string; value: React.ReactNode }>
+                rowKey="key"
+                dataSource={(() => {
+                  const rows: { key: string; value: React.ReactNode }[] = [
+                    { key: "ID", value: <code>{asset.id}</code> },
+                    { key: "类型", value: asset.type },
+                    { key: "可见性", value: asset.visibility },
+                    { key: "来源", value: asset.sourceType },
+                    { key: "创建时间", value: formatDate(asset.createdAt) },
+                    { key: "更新时间", value: formatDate(asset.updatedAt) },
+                    { key: "版本号", value: `v${asset.lockVersion}` },
+                    { key: "当前版本", value: <code>{asset.currentVersionId}</code> },
+                  ];
+                  if (canManageAsset) {
+                    rows.push({
+                      key: "共享权限",
+                      value:
+                        (acl?.acl.length ?? 0) === 0 ? (
+                          <span className="sg-subtle">仅所有者可见</span>
+                        ) : (
+                          <div className="sg-col" style={{ gap: 4 }}>
+                            {acl?.acl.map((entry) => (
+                              <div key={entry.principal_id} className="sg-row">
+                                <span className="sg-badge">{entry.principal_id}</span>
+                                <span className="sg-badge sg-badge-accent">{entry.role}</span>
+                                <Button
+                                  size="small"
+                                  type="primary"
+                                  danger
+                                  onClick={() => revokeShare.mutate(entry.principal_id)}
+                                >
+                                  取消
+                                </Button>
+                              </div>
+                            ))}
+                          </div>
+                        ),
+                    });
+                  }
+                  return rows;
+                })()}
+                pagination={false}
+                size="middle"
+                showHeader={false}
+                columns={[
+                  { title: "", dataIndex: "key", width: 120 },
+                  { title: "", dataIndex: "value" },
+                ]}
+              />
           </Card>
         )}
 
         {tab === "versions" && (
           <Card>
-            <Table>
-              <thead>
-                <tr>
-                  <th>版本</th>
-                  <th>变更类型</th>
-                  <th>时间</th>
-                  <th>内容哈希</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                {(versions ?? []).map((v) => (
-                  <tr key={v.id}>
-                    <td>v{v.sequence}</td>
-                    <td>{v.changeKind}</td>
-                    <td>{formatDate(v.createdAt)}</td>
-                    <td>
-                      <code style={{ fontSize: 11 }}>{v.contentHash.slice(0, 18)}…</code>
-                    </td>
-                    <td>
-                      {canManageAsset && (
+            <AppTable<{ id: string; sequence: number; changeKind: string; createdAt: string; contentHash: string }>
+                rowKey="id"
+                dataSource={versions ?? []}
+                pagination={false}
+                size="middle"
+                columns={[
+                  { title: "版本", dataIndex: "sequence", render: (v) => `v${v}` },
+                  { title: "变更类型", dataIndex: "changeKind" },
+                  { title: "时间", dataIndex: "createdAt", render: (v) => formatDate(v) },
+                  {
+                    title: "内容哈希",
+                    dataIndex: "contentHash",
+                    render: (v) => <code style={{ fontSize: 11 }}>{v.slice(0, 18)}…</code>,
+                  },
+                  {
+                    title: "操作",
+                    key: "actions",
+                    render: (_v, v) =>
+                      canManageAsset ? (
                         <Button
                           size="small"
                           onClick={() =>
@@ -398,12 +379,10 @@ export function AssetDetailPage() {
                         >
                           恢复
                         </Button>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </Table>
+                      ) : null,
+                  },
+                ]}
+              />
           </Card>
         )}
 

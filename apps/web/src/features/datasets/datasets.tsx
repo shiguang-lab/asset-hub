@@ -1,9 +1,10 @@
-import { Empty, Scrollbar, StatusBadge, useToast } from "@shiguang/ui";
+import { Empty, StatusBadge, useToast } from "@shiguang/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button, Card, Input, Select, Tabs } from "antd";
 import * as echarts from "echarts";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
+import { AppTable } from "../../shared/AppTable.js";
 import {
   api,
   type ChartSpec,
@@ -294,26 +295,20 @@ export function DatasetDetailPage() {
               style={{ width: 110 }}
             />
           </div>
-          <Scrollbar style={{ maxHeight: 560 }}>
-            <table className="sg-table">
-              <thead>
-                <tr>
-                  {queryResult.data?.columns.map((c) => (
-                    <th key={c.id}>{c.name}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {queryResult.data?.rows.map((row, i) => (
-                  <tr key={i}>
-                    {queryResult.data?.columns.map((c) => (
-                      <td key={c.id}>{String(row[c.name] ?? "")}</td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </Scrollbar>
+          <AppTable<Record<string, unknown>>
+            rowKey={(_, i) => String(i)}
+            dataSource={queryResult.data?.rows ?? []}
+            pagination={false}
+            size="middle"
+            scroll={{ x: "max-content", y: 560 }}
+            columns={(queryResult.data?.columns ?? []).map((c) => ({
+              title: c.name,
+              dataIndex: c.name,
+              key: c.id,
+              render: (v: unknown) => String(v ?? ""),
+              ellipsis: true,
+            }))}
+          />
           <div className="sg-pagination">
             <span className="sg-subtle">
               共 {queryResult.data?.total.toLocaleString() ?? "-"} 行
@@ -489,50 +484,76 @@ export function DatasetDetailPage() {
           <h3 className="sg-h3" style={{ marginTop: 16 }}>
             列画像
           </h3>
-          <Scrollbar>
-            <table className="sg-table">
-              <thead>
-                <tr>
-                  <th>列</th>
-                  <th>类型</th>
-                  <th>非空</th>
-                  <th>去重</th>
-                  <th>最小值</th>
-                  <th>最大值</th>
-                  <th>均值</th>
-                </tr>
-              </thead>
-              <tbody>
-                {version.schema.map((c) => {
+          <AppTable<{ columnId: string; name: string; type: string; distinctCount?: number }>
+            rowKey="columnId"
+            dataSource={version.schema}
+            pagination={false}
+            size="middle"
+            columns={[
+              { title: "列", dataIndex: "name" },
+              { title: "类型", dataIndex: "type" },
+              {
+                title: "非空",
+                key: "nonNull",
+                render: (_v, c) => {
                   const p = (
                     version.profile?.columns as
-                      | Record<
-                          string,
-                          {
-                            nonNull: number;
-                            distinct: number;
-                            min: number | null;
-                            max: number | null;
-                            avg: number | null;
-                          }
-                        >
+                      | Record<string, { nonNull: number; distinct: number; min: number | null; max: number | null; avg: number | null }>
                       | undefined
                   )?.[c.name];
-                  return (
-                    <tr key={c.columnId}>
-                      <td>{c.name}</td>
-                      <td>{c.type}</td>
-                      <td>{p?.nonNull ?? "-"}</td>
-                      <td>{p?.distinct ?? c.distinctCount}</td>
-                      <td>{p?.min ?? "-"}</td>
-                      <td>{p?.max ?? "-"}</td>
-                      <td>{p?.avg != null ? Number(p.avg).toFixed(2) : "-"}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </Scrollbar>
+                  return p?.nonNull ?? "-";
+                },
+              },
+              {
+                title: "去重",
+                key: "distinct",
+                render: (_v, c) => {
+                  const p = (
+                    version.profile?.columns as
+                      | Record<string, { nonNull: number; distinct: number; min: number | null; max: number | null; avg: number | null }>
+                      | undefined
+                  )?.[c.name];
+                  return p?.distinct ?? c.distinctCount ?? "-";
+                },
+              },
+              {
+                title: "最小值",
+                key: "min",
+                render: (_v, c) => {
+                  const p = (
+                    version.profile?.columns as
+                      | Record<string, { nonNull: number; distinct: number; min: number | null; max: number | null; avg: number | null }>
+                      | undefined
+                  )?.[c.name];
+                  return p?.min ?? "-";
+                },
+              },
+              {
+                title: "最大值",
+                key: "max",
+                render: (_v, c) => {
+                  const p = (
+                    version.profile?.columns as
+                      | Record<string, { nonNull: number; distinct: number; min: number | null; max: number | null; avg: number | null }>
+                      | undefined
+                  )?.[c.name];
+                  return p?.max ?? "-";
+                },
+              },
+              {
+                title: "均值",
+                key: "avg",
+                render: (_v, c) => {
+                  const p = (
+                    version.profile?.columns as
+                      | Record<string, { nonNull: number; distinct: number; min: number | null; max: number | null; avg: number | null }>
+                      | undefined
+                  )?.[c.name];
+                  return p?.avg != null ? Number(p.avg).toFixed(2) : "-";
+                },
+              },
+            ]}
+          />
         </Card>
       )}
     </div>

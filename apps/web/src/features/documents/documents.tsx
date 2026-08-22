@@ -1,6 +1,6 @@
 import { Empty, Field, Loading, useToast } from "@shiguang/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Button, Dropdown, Input, Modal, Select, Tooltip } from "antd";
+import { Button, Dropdown, Input, Modal, Select } from "antd";
 import {
   BarChart3,
   Check,
@@ -41,6 +41,8 @@ import {
 import { useNavigate } from "react-router-dom";
 import { getAuthSession } from "../../auth/session.js";
 import { type Asset, api, publishedShortUrl } from "../../entities/api.js";
+import { AppTable } from "../../shared/AppTable.js";
+import { OwnerAvatar } from "../../shared/OwnerAvatar.js";
 import { isOwnedBySession, ownerDisplayName } from "../../shared/owner.js";
 import { useDeleteConfirm } from "../../shared/useDeleteConfirm";
 import {
@@ -56,18 +58,6 @@ const FOLDERS_STORAGE_KEY = "shiguang.document-folders";
 const FOLDER_ASSIGNMENTS_STORAGE_KEY = "shiguang.document-folder-assignments";
 
 type DocumentFolder = { id: string; name: string; parentId: string | null };
-
-function OwnerAvatar({ name }: { name: string }) {
-  return (
-    <span className="sg-owner-stack">
-      <Tooltip title={name}>
-        <span className="sg-owner-avatar" role="img" aria-label={`所有者：${name}`}>
-          {name.slice(0, 1)}
-        </span>
-      </Tooltip>
-    </span>
-  );
-}
 
 const DEFAULT_DOCUMENT_FOLDERS: DocumentFolder[] = [
   { id: "product", name: "产品", parentId: null },
@@ -1341,191 +1331,211 @@ export function DocumentsPage() {
               </div>
             ) : (
               <div className="sg-docs-table-wrap">
-                <table className="sg-docs-table">
-                  <thead>
-                    <tr>
-                      <th>名称</th>
-                      <th className="c-owner">所有者</th>
-                      <th className="c-time">更新时间</th>
-                      <th className="c-vis">可见范围</th>
-                      <th className="c-rel">关联</th>
-                      <th className="c-menu">操作</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {paged.map((d) => {
+              <AppTable<Asset>
+                rowKey="id"
+                dataSource={paged}
+                pagination={false}
+                size="middle"
+                onRow={(d) => ({
+                  draggable: true,
+                  style: { cursor: "pointer" },
+                  onDragStart: (event) => {
+                    event.dataTransfer.setData("application/x-shiguang-document", d.id);
+                    event.dataTransfer.effectAllowed = "move";
+                  },
+                  onClick: (e) => {
+                    if ((e.target as HTMLElement).closest("button, .ant-dropdown")) return;
+                    navigate(`/documents/${d.id}`);
+                  },
+                })}
+                columns={[
+                  {
+                    title: "名称",
+                    dataIndex: "title",
+                    render: (_v, d) => (
+                      <div className="sg-asset-name">
+                        <span className={`sg-asset-icn ${documentTone(d.title)}`}>
+                          {(() => {
+                            const Icon = documentIcon(d.title);
+                            return <Icon size={16} strokeWidth={1.9} />;
+                          })()}
+                        </span>
+                        <span className="sg-asset-name-copy">
+                          <span className="sg-asset-title">{d.title}</span>
+                          {d.description ? (
+                            <span className="sg-docs-desc">{d.description}</span>
+                          ) : (
+                            <span className="sg-asset-tags">
+                              {d.tags.slice(0, 3).map((t) => (
+                                <span key={t} className="sg-tag sg-asset-tag">
+                                  {t}
+                                </span>
+                              ))}
+                            </span>
+                          )}
+                        </span>
+                      </div>
+                    ),
+                  },
+                  {
+                    title: "所有者",
+                    dataIndex: "ownerDisplayName",
+                    width: 120,
+                    render: (_v, d) => (
+                      <OwnerAvatar name={ownerDisplayName(d, authSession)} />
+                    ),
+                  },
+                  {
+                    title: "更新时间",
+                    dataIndex: "updatedAt",
+                    width: 160,
+                    render: (v) => <span className="sg-subtle">{displayDate(v)}</span>,
+                  },
+                  {
+                    title: "可见范围",
+                    dataIndex: "visibility",
+                    width: 140,
+                    render: (_v, d) => {
                       const vis = visMeta(d);
                       const VisIcon = vis.icon;
+                      return (
+                        <span className={`sg-vis ${vis.cls}`}>
+                          <VisIcon size={13} />
+                          {vis.label}
+                        </span>
+                      );
+                    },
+                  },
+                  {
+                    title: "关联",
+                    dataIndex: "relations",
+                    width: 160,
+                    render: (_v, d) => {
                       const badges = demoMode
                         ? (DEMO_RELATIONS[d.id] ?? [])
                         : relationBadges(relMap?.[d.id]);
-                      return (
-                        <tr
-                          key={d.id}
-                          draggable
-                          onDragStart={(event) => {
-                            event.dataTransfer.setData("application/x-shiguang-document", d.id);
-                            event.dataTransfer.effectAllowed = "move";
-                          }}
+                      return badges.length === 0 ? (
+                        <span className="sg-subtle">—</span>
+                      ) : (
+                        badges.map((b) => (
+                          <span
+                            key={b}
+                            className="sg-badge sg-badge-success"
+                            style={{ marginRight: 6 }}
+                          >
+                            {b}
+                          </span>
+                        ))
+                      );
+                    },
+                  },
+                  {
+                    title: "操作",
+                    key: "menu",
+                    width: 180,
+                    render: (_v, d) => (
+                      <div className="sg-docs-actions">
+                        <Button
+                          size="small"
+                          type="text"
+                          className="sg-docs-action-btn ai"
+                          title="AI 助手"
                           onClick={(e) => {
-                            if ((e.target as HTMLElement).closest("button, .ant-dropdown")) return;
+                            e.stopPropagation();
                             navigate(`/documents/${d.id}`);
                           }}
                         >
-                          <td>
-                            <div className="sg-asset-name">
-                              <span className={`sg-asset-icn ${documentTone(d.title)}`}>
-                                {(() => {
-                                  const Icon = documentIcon(d.title);
-                                  return <Icon size={16} strokeWidth={1.9} />;
-                                })()}
-                              </span>
-                              <span className="sg-asset-name-copy">
-                                <span className="sg-asset-title">{d.title}</span>
-                                {d.description ? (
-                                  <span className="sg-docs-desc">{d.description}</span>
-                                ) : (
-                                  <span className="sg-asset-tags">
-                                    {d.tags.slice(0, 3).map((t) => (
-                                      <span key={t} className="sg-tag sg-asset-tag">
-                                        {t}
-                                      </span>
-                                    ))}
-                                  </span>
-                                )}
-                              </span>
-                            </div>
-                          </td>
-                          <td className="c-owner">
-                            <OwnerAvatar name={ownerDisplayName(d, authSession)} />
-                          </td>
-                          <td className="c-time sg-subtle">{displayDate(d.updatedAt)}</td>
-                          <td className="c-vis">
-                            <span className={`sg-vis ${vis.cls}`}>
-                              <VisIcon size={13} />
-                              {vis.label}
-                            </span>
-                          </td>
-                          <td className="c-rel">
-                            {badges.length === 0 ? (
-                              <span className="sg-subtle">—</span>
-                            ) : (
-                              badges.map((b) => (
-                                <span
-                                  key={b}
-                                  className="sg-badge sg-badge-success"
-                                  style={{ marginRight: 6 }}
-                                >
-                                  {b}
-                                </span>
-                              ))
-                            )}
-                          </td>
-                          <td className="c-menu">
-                            <div className="sg-docs-actions">
-                              <Button
-                                size="small"
-                                type="text"
-                                className="sg-docs-action-btn ai"
-                                title="AI 助手"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  navigate(`/documents/${d.id}`);
-                                }}
+                          <Sparkles size={16} />
+                        </Button>
+                        <Button
+                          size="small"
+                          type="text"
+                          className="sg-docs-action-btn"
+                          title="分享"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            shareDocument(d);
+                          }}
+                        >
+                          <Share2 size={15} />
+                        </Button>
+                        <Button
+                          size="small"
+                          type="text"
+                          className="sg-docs-action-btn"
+                          title={d.publishedUrl ? "复制发布链接" : "发布"}
+                          aria-label={d.publishedUrl ? "复制发布链接" : "发布"}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            shareDocument(d);
+                          }}
+                        >
+                          <Send size={15} />
+                        </Button>
+                        <Dropdown
+                          trigger={["click"]}
+                          placement="bottomRight"
+                          open={openDocumentMenuId === d.id}
+                          onOpenChange={(open) => setOpenDocumentMenuId(open ? d.id : null)}
+                          popupRender={() => (
+                            <div className="sg-asset-menu">
+                              <button
+                                type="button"
+                                onClick={() => navigate(`/documents/${d.id}`)}
                               >
-                                <Sparkles size={16} />
-                              </Button>
-                              <Button
-                                size="small"
-                                type="text"
-                                className="sg-docs-action-btn"
-                                title="分享"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  shareDocument(d);
-                                }}
+                                打开
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => navigate(`/documents/${d.id}/preview`)}
                               >
-                                <Share2 size={15} />
-                              </Button>
-                              <Button
-                                size="small"
-                                type="text"
-                                className="sg-docs-action-btn"
-                                title={d.publishedUrl ? "复制发布链接" : "发布"}
-                                aria-label={d.publishedUrl ? "复制发布链接" : "发布"}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  shareDocument(d);
-                                }}
-                              >
-                                <Send size={15} />
-                              </Button>
-                              <Dropdown
-                                trigger={["click"]}
-                                placement="bottomRight"
-                                open={openDocumentMenuId === d.id}
-                                onOpenChange={(open) => setOpenDocumentMenuId(open ? d.id : null)}
-                                popupRender={() => (
-                                  <div className="sg-asset-menu">
-                                    <button
-                                      type="button"
-                                      onClick={() => navigate(`/documents/${d.id}`)}
-                                    >
-                                      打开
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={() => navigate(`/documents/${d.id}/preview`)}
-                                    >
-                                      文档预览
-                                    </button>
-                                    <button type="button" onClick={() => copyLink(d)}>
-                                      复制链接
-                                    </button>
-                                    <button type="button" onClick={() => toggleFavorite(d.id)}>
-                                      {favoriteIds.includes(d.id) ? "取消收藏" : "收藏"}
-                                    </button>
-                                    <button type="button" onClick={() => openMoveDialog(d)}>
-                                      移动到目录
-                                    </button>
-                                    {filter !== "trash" ? (
-                                      <button
-                                        type="button"
-                                        className="danger"
-                                        onClick={() => confirmDeleteDocument(d)}
-                                      >
-                                        删除
-                                      </button>
-                                    ) : (
-                                      <button
-                                        type="button"
-                                        onClick={() =>
-                                          batchMutation.mutate({ action: "restore", ids: [d.id] })
-                                        }
-                                      >
-                                        恢复
-                                      </button>
-                                    )}
-                                  </div>
-                                )}
-                              >
+                                文档预览
+                              </button>
+                              <button type="button" onClick={() => copyLink(d)}>
+                                复制链接
+                              </button>
+                              <button type="button" onClick={() => toggleFavorite(d.id)}>
+                                {favoriteIds.includes(d.id) ? "取消收藏" : "收藏"}
+                              </button>
+                              <button type="button" onClick={() => openMoveDialog(d)}>
+                                移动到目录
+                              </button>
+                              {filter !== "trash" ? (
                                 <button
                                   type="button"
-                                  className="sg-asset-more"
-                                  onClick={(e) => e.stopPropagation()}
-                                  aria-label="更多操作"
+                                  className="danger"
+                                  onClick={() => confirmDeleteDocument(d)}
                                 >
-                                  <MoreHorizontal size={16} />
+                                  删除
                                 </button>
-                              </Dropdown>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    batchMutation.mutate({ action: "restore", ids: [d.id] })
+                                  }
+                                >
+                                  恢复
+                                </button>
+                              )}
                             </div>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
+                          )}
+                        >
+                          <button
+                            type="button"
+                            className="sg-asset-more"
+                            onClick={(e) => e.stopPropagation()}
+                            aria-label="更多操作"
+                          >
+                            <MoreHorizontal size={16} />
+                          </button>
+                        </Dropdown>
+                      </div>
+                    ),
+                  },
+                ]}
+              />
+            </div>
             )}
 
             {paged.length > 0 && (

@@ -177,22 +177,8 @@ export const DocumentTreeGlobalStyles = createGlobalStyle(css`
   color: var(--sg-muted);
   font-size: 11px;
 }
-.sg-docs-table th.c-menu {
-  width: 184px;
-}
 .sg-docs-main .sg-docs-table-wrap {
   overflow-x: auto;
-}
-.sg-docs-main .sg-docs-table {
-  min-width: 820px;
-}
-.sg-doc-card[draggable="true"],
-.sg-docs-table tr[draggable="true"] {
-  cursor: grab;
-}
-.sg-doc-card[draggable="true"]:active,
-.sg-docs-table tr[draggable="true"]:active {
-  cursor: grabbing;
 }
 
 @media (max-width: 1400px) {
@@ -217,23 +203,6 @@ export const DocumentTreeGlobalStyles = createGlobalStyle(css`
   }
   .sg-docs-main .sg-docs-recent-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-  .sg-docs-main .sg-docs-table {
-    min-width: 100%;
-    table-layout: fixed;
-  }
-  .sg-docs-main .sg-docs-table .c-owner,
-  .sg-docs-main .sg-docs-table .c-rel {
-    display: none;
-  }
-  .sg-docs-main .sg-docs-table th.c-time {
-    width: 112px;
-  }
-  .sg-docs-main .sg-docs-table th.c-vis {
-    width: 112px;
-  }
-  .sg-docs-main .sg-docs-table th.c-menu {
-    width: 172px;
   }
 }
 

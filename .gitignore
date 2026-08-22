@@ -16,3 +16,9 @@ coverage/
 .idea/
 .vscode/
 .next
+
+# 生成物与工具产物（不应提交）
+*.tsbuildinfo
+.playwright-cli/
+.dsh-vision-router/
+design/ChatGPT*

@@ -270,10 +270,12 @@ export function Shell() {
   );
 
   const activeKey = useMemo(() => {
+    if (location.pathname === "/") return "/";
     const match = NAV.filter((item) => item.to !== "/").find((item) =>
       location.pathname.startsWith(item.to),
     );
-    return match?.to ?? "/";
+    // 不匹配任何主导航项时（如 /settings、/billing 等独立路由）返回空，不高亮任何菜单
+    return match?.to ?? "";
   }, [location.pathname]);
 
   const menuItems: MenuProps["items"] = NAV.map((item) => {

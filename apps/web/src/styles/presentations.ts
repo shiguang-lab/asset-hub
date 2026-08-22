@@ -49,7 +49,7 @@ export const PresentationsGlobalStyles = createGlobalStyle(css`
 .sg-presentation-title p {
   margin: 5px 0 0;
   color: var(--sg-muted);
-  font-size: 11px;
+  font-size: 14px;
 }
 .sg-presentation-heading-actions {
   flex: none;
@@ -115,7 +115,7 @@ export const PresentationsGlobalStyles = createGlobalStyle(css`
 }
 .sg-presentation-stats small {
   color: var(--sg-muted);
-  font-size: 9px;
+  font-size: 13px;
 }
 .sg-presentation-stats strong {
   margin-top: 3px;
@@ -130,7 +130,7 @@ export const PresentationsGlobalStyles = createGlobalStyle(css`
   gap: 3px;
   margin: 5px 0 0;
   color: var(--sg-success);
-  font-size: 8px;
+  font-size: 12px;
 }
 .sg-presentation-toolbar {
   display: flex;
@@ -159,7 +159,7 @@ export const PresentationsGlobalStyles = createGlobalStyle(css`
   outline: 0;
   color: var(--sg-fg);
   background: transparent;
-  font-size: 9px;
+  font-size: 13px;
 }
 .sg-presentation-search input::placeholder {
   color: var(--sg-muted);
@@ -174,7 +174,7 @@ export const PresentationsGlobalStyles = createGlobalStyle(css`
   align-items: center;
   gap: 5px;
   color: var(--sg-fg-2);
-  font-size: 8.5px;
+  font-size: 13px;
   white-space: nowrap;
 }
 .sg-presentation-own input {
@@ -222,54 +222,6 @@ export const PresentationsGlobalStyles = createGlobalStyle(css`
 }
 .sg-presentation-table-wrap {
   overflow-x: auto;
-  border: 1px solid var(--sg-border);
-  border-radius: 7px;
-  background: var(--sg-bg-2);
-}
-.sg-presentation-table {
-  width: 100%;
-  min-width: 680px;
-  border-collapse: collapse;
-  table-layout: fixed;
-}
-.sg-presentation-table th,
-.sg-presentation-table td {
-  height: 58px;
-  padding: 8px 9px;
-  border-bottom: 1px solid var(--sg-border);
-  color: var(--sg-fg-2);
-  font-size: 8.5px;
-  text-align: left;
-}
-.sg-presentation-table th {
-  height: 34px;
-  color: var(--sg-muted);
-  background: #15131a;
-  font-weight: 500;
-}
-.sg-presentation-table tbody tr:last-of-type td {
-  border-bottom: 0;
-}
-.sg-presentation-table tbody tr:hover td {
-  background: rgba(255, 255, 255, 0.018);
-}
-.sg-presentation-table th:nth-of-type(1) {
-  width: 47%;
-}
-.sg-presentation-table th:nth-of-type(2) {
-  width: 11%;
-}
-.sg-presentation-table th:nth-of-type(3) {
-  width: 14%;
-}
-.sg-presentation-table th:nth-of-type(4) {
-  width: 16%;
-}
-.sg-presentation-table th:nth-of-type(5) {
-  width: 8%;
-}
-.sg-presentation-table th:nth-of-type(6) {
-  width: 110px;
 }
 .sg-presentation-name {
   min-width: 0;
@@ -288,7 +240,7 @@ export const PresentationsGlobalStyles = createGlobalStyle(css`
   border: 0;
   color: var(--sg-fg);
   background: transparent;
-  font-size: 9.5px;
+  font-size: 13px;
   font-weight: 650;
   text-align: left;
   text-overflow: ellipsis;
@@ -311,20 +263,20 @@ export const PresentationsGlobalStyles = createGlobalStyle(css`
   border-radius: 3px;
   color: var(--sg-muted);
   background: #1d1a23;
-  font-size: 7px;
+  font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .sg-presentation-thumb {
   position: relative;
   display: inline-flex;
-  width: 82px;
+  width: 110px;
   aspect-ratio: 16 / 9;
   flex: none;
   flex-direction: column;
   justify-content: flex-end;
   overflow: hidden;
-  padding: 7px;
+  padding: 8px;
   border: 1px solid rgba(255, 255, 255, 0.09);
   border-radius: 4px;
   color: #fff;
@@ -338,26 +290,26 @@ export const PresentationsGlobalStyles = createGlobalStyle(css`
   content: "";
 }
 .sg-presentation-thumb::before {
-  top: 8px;
-  right: 8px;
-  width: 23px;
-  height: 14px;
+  top: 11px;
+  right: 11px;
+  width: 31px;
+  height: 19px;
 }
 .sg-presentation-thumb::after {
-  top: 13px;
-  right: 13px;
-  width: 13px;
-  height: 13px;
+  top: 17px;
+  right: 17px;
+  width: 17px;
+  height: 17px;
   border-radius: 50%;
 }
 .sg-presentation-thumb > i {
-  top: 9px;
-  left: 8px;
-  width: 18px;
-  height: 3px;
+  top: 12px;
+  left: 11px;
+  width: 24px;
+  height: 4px;
   border: 0;
   background: rgba(255, 255, 255, 0.75);
-  box-shadow: 0 6px rgba(255, 255, 255, 0.28);
+  box-shadow: 0 8px rgba(255, 255, 255, 0.28);
 }
 .sg-presentation-thumb > b,
 .sg-presentation-thumb > small {
@@ -368,12 +320,12 @@ export const PresentationsGlobalStyles = createGlobalStyle(css`
   white-space: nowrap;
 }
 .sg-presentation-thumb > b {
-  font-size: 6.5px;
+  font-size: 12px;
 }
 .sg-presentation-thumb > small {
   margin-top: 2px;
   opacity: 0.62;
-  font-size: 4px;
+  font-size: 11px;
 }
 .sg-presentation-thumb.tone-1 {
   color: #38324b;
@@ -446,7 +398,7 @@ export const PresentationsGlobalStyles = createGlobalStyle(css`
   padding: 16px;
 }
 .sg-presentation-grid .sg-presentation-thumb > b {
-  font-size: 10px;
+  font-size: 12px;
 }
 .sg-presentation-grid article > div {
   padding: 10px;
@@ -457,7 +409,7 @@ export const PresentationsGlobalStyles = createGlobalStyle(css`
   overflow: hidden;
   margin: 6px 0;
   color: var(--sg-muted);
-  font-size: 8px;
+  font-size: 12px;
   line-height: 1.5;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
@@ -467,7 +419,7 @@ export const PresentationsGlobalStyles = createGlobalStyle(css`
   align-items: center;
   gap: 4px;
   color: var(--sg-muted);
-  font-size: 8px;
+  font-size: 12px;
 }
 .sg-presentation-empty {
   min-height: 270px;
@@ -480,7 +432,7 @@ export const PresentationsGlobalStyles = createGlobalStyle(css`
   gap: 10px;
   min-height: 54px;
   color: var(--sg-muted);
-  font-size: 8.5px;
+  font-size: 13px;
 }
 .sg-presentation-pagination > span {
   margin-right: auto;
@@ -518,7 +470,7 @@ export const PresentationsGlobalStyles = createGlobalStyle(css`
 }
 .sg-presentation-quickstart strong {
   color: var(--sg-fg);
-  font-size: 10px;
+  font-size: 13px;
 }
 .sg-presentation-quickstart ol {
   display: grid;
@@ -544,7 +496,7 @@ export const PresentationsGlobalStyles = createGlobalStyle(css`
   border-radius: 50%;
   color: #c5b1ff;
   background: rgba(124, 60, 255, 0.15);
-  font-size: 8px;
+  font-size: 12px;
 }
 .sg-presentation-quickstart li > div {
   min-width: 0;
@@ -558,12 +510,12 @@ export const PresentationsGlobalStyles = createGlobalStyle(css`
   white-space: nowrap;
 }
 .sg-presentation-quickstart li b {
-  font-size: 8.5px;
+  font-size: 13px;
 }
 .sg-presentation-quickstart li small {
   margin-top: 3px;
   color: var(--sg-muted);
-  font-size: 7px;
+  font-size: 12px;
 }
 .sg-presentation-quickstart li > svg {
   flex: none;
@@ -589,14 +541,14 @@ export const PresentationsGlobalStyles = createGlobalStyle(css`
 }
 .sg-presentation-side-title h2 {
   margin: 0;
-  font-size: 11px;
+  font-size: 14px;
 }
 .sg-presentation-side-title > button {
   padding: 0;
   border: 0;
   color: #a47fff;
   background: transparent;
-  font-size: 8px;
+  font-size: 12px;
   cursor: pointer;
 }
 .sg-presentation-range.ant-select {
@@ -611,7 +563,7 @@ export const PresentationsGlobalStyles = createGlobalStyle(css`
   position: absolute;
   left: 0;
   color: var(--sg-muted);
-  font-size: 6.5px;
+  font-size: 12px;
 }
 .sg-presentation-chart > span:nth-of-type(1) {
   top: 3px;
@@ -643,7 +595,7 @@ export const PresentationsGlobalStyles = createGlobalStyle(css`
   justify-content: space-between;
   margin-top: 6px;
   color: var(--sg-muted);
-  font-size: 6px;
+  font-size: 12px;
 }
 .sg-presentation-analytics dl {
   display: grid;
@@ -667,21 +619,21 @@ export const PresentationsGlobalStyles = createGlobalStyle(css`
 .sg-presentation-analytics dt {
   overflow: hidden;
   color: var(--sg-muted);
-  font-size: 7px;
+  font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .sg-presentation-analytics dd {
   margin: 4px 0 2px;
   overflow: hidden;
-  font-size: 11px;
+  font-size: 14px;
   font-weight: 650;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .sg-presentation-analytics dl small {
   color: var(--sg-success);
-  font-size: 7px;
+  font-size: 12px;
 }
 .sg-presentation-top-list {
   display: grid;
@@ -698,7 +650,7 @@ export const PresentationsGlobalStyles = createGlobalStyle(css`
 }
 .sg-presentation-top-list li > b {
   color: #b99cff;
-  font-size: 9px;
+  font-size: 13px;
 }
 .sg-presentation-top-list li > button {
   overflow: hidden;
@@ -706,7 +658,7 @@ export const PresentationsGlobalStyles = createGlobalStyle(css`
   border: 0;
   color: var(--sg-fg-2);
   background: transparent;
-  font-size: 8px;
+  font-size: 12px;
   text-align: left;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -717,7 +669,7 @@ export const PresentationsGlobalStyles = createGlobalStyle(css`
   align-items: center;
   gap: 3px;
   color: var(--sg-muted);
-  font-size: 7px;
+  font-size: 12px;
 }
 .sg-presentation-recent {
   display: grid;
@@ -755,12 +707,12 @@ export const PresentationsGlobalStyles = createGlobalStyle(css`
 }
 .sg-presentation-recent b {
   color: var(--sg-fg-2);
-  font-size: 8px;
+  font-size: 12px;
 }
 .sg-presentation-recent small {
   margin-top: 4px;
   color: var(--sg-muted);
-  font-size: 7px;
+  font-size: 12px;
 }
 
 @media (min-width: 1440px) {
@@ -828,42 +780,6 @@ export const PresentationsGlobalStyles = createGlobalStyle(css`
   }
   .sg-presentation-grid {
     grid-template-columns: 1fr;
-  }
-  .sg-presentation-table {
-    min-width: 0;
-  }
-  .sg-presentation-table th:nth-of-type(2),
-  .sg-presentation-table th:nth-of-type(3),
-  .sg-presentation-table th:nth-of-type(4),
-  .sg-presentation-table th:nth-of-type(5),
-  .sg-presentation-table td:nth-of-type(2),
-  .sg-presentation-table td:nth-of-type(3),
-  .sg-presentation-table td:nth-of-type(4),
-  .sg-presentation-table td:nth-of-type(5) {
-    display: none;
-  }
-  .sg-presentation-table th:nth-of-type(1) {
-    width: auto;
-  }
-  .sg-presentation-table th:nth-of-type(6) {
-    width: 86px;
-  }
-  .sg-presentation-table th:nth-of-type(6),
-  .sg-presentation-table td:nth-of-type(6) {
-    padding-inline: 4px;
-  }
-  .sg-presentation-table .sg-presentation-thumb {
-    width: 62px;
-  }
-  .sg-presentation-table .sg-presentation-favorite {
-    display: none;
-  }
-  .sg-presentation-table .sg-presentation-row-actions {
-    gap: 3px;
-  }
-  .sg-presentation-table .sg-presentation-row-actions button {
-    width: 25px;
-    height: 25px;
   }
   .sg-presentation-pagination {
     flex-wrap: wrap;

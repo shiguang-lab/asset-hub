@@ -1,6 +1,6 @@
 import { Empty, formatRelative, Loading, useToast } from "@shiguang/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Button, Dropdown, Input, Progress, Select, Tooltip } from "antd";
+import { Button, Dropdown, Input, Progress, Select } from "antd";
 import {
   BookOpen,
   ChartNoAxesCombined,
@@ -29,6 +29,8 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { canWriteWorkspace, getAuthSession } from "../../auth/session.js";
 import { type Asset, api } from "../../entities/api.js";
+import { AppTable } from "../../shared/AppTable.js";
+import { OwnerAvatar } from "../../shared/OwnerAvatar.js";
 import { AppTabs } from "../../shared/AppTabs.js";
 import { isOwnedBySession, ownerDisplayName } from "../../shared/owner.js";
 import { useDeleteConfirm } from "../../shared/useDeleteConfirm";
@@ -321,14 +323,6 @@ export function AssetsPage() {
     };
   }, [storage]);
 
-  const toggle = (id: string) =>
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-
   const pageButtons = useMemo(() => {
     const out: Array<number | "…"> = [];
     if (pageCount <= 7) {
@@ -507,145 +501,156 @@ export function AssetsPage() {
             />
           ) : (
             <div className="sg-assets-table-wrap">
-              <table className="sg-assets-table">
-                <thead>
-                  <tr>
-                    <th className="c-check" />
-                    <th>名称</th>
-                    <th className="c-type">类型</th>
-                    <th className="c-owner">所有者</th>
-                    <th className="c-time">更新时间</th>
-                    <th className="c-status">状态</th>
-                    <th className="c-vis">可见性</th>
-                    <th className="c-menu" />
-                  </tr>
-                </thead>
-                <tbody>
-                  {paged.map((asset) => {
-                    const meta = TYPE_META[typeOf(asset)];
-                    const Icon = meta.icon;
-                    const st = statusOf(asset);
-                    const vis = visibleType(asset);
-                    const VisIcon = vis.icon;
-                    return (
-                      <tr
-                        key={asset.id}
-                        className="sg-assets-row"
-                        onClick={(e) => {
-                          if ((e.target as HTMLElement).closest("label, .ant-dropdown, button"))
-                            return;
-                          navigate(assetHref(asset));
-                        }}
-                      >
-                        <td className="c-check">
-                          <label className="sg-asset-check">
-                            <input
-                              type="checkbox"
-                              checked={selected.has(asset.id)}
-                              onChange={() => toggle(asset.id)}
-                              onClick={(e) => e.stopPropagation()}
-                            />
-                          </label>
-                        </td>
-                        <td>
-                          <div className="sg-asset-name">
-                            <span className={`sg-asset-icn ${meta.tone}`}>
-                              <Icon size={16} strokeWidth={1.9} />
+              <AppTable<Asset>
+                rowKey="id"
+                dataSource={paged}
+                pagination={false}
+                size="middle"
+                rowSelection={{
+                  selectedRowKeys: [...selected],
+                  onChange: (keys) => setSelected(new Set(keys as string[])),
+                }}
+                onRow={(asset) => ({
+                  style: { cursor: "pointer" },
+                  onClick: (e) => {
+                    if ((e.target as HTMLElement).closest("label, .ant-dropdown, button")) return;
+                    navigate(assetHref(asset));
+                  },
+                })}
+                columns={[
+                  {
+                    title: "名称",
+                    dataIndex: "title",
+                    render: (_v, asset) => {
+                      const meta = TYPE_META[typeOf(asset)];
+                      const Icon = meta.icon;
+                      return (
+                        <div className="sg-asset-name">
+                          <span className={`sg-asset-icn ${meta.tone}`}>
+                            <Icon size={16} strokeWidth={1.9} />
+                          </span>
+                          <span className="sg-asset-name-copy">
+                            <span className="sg-asset-title">{asset.title}</span>
+                            <span className="sg-asset-tags">
+                              {asset.tags.slice(0, 3).map((t) => (
+                                <span key={t} className="sg-tag sg-asset-tag">
+                                  {t}
+                                </span>
+                              ))}
                             </span>
-                            <span className="sg-asset-name-copy">
-                              <span className="sg-asset-title">{asset.title}</span>
-                              <span className="sg-asset-tags">
-                                {asset.tags.slice(0, 3).map((t) => (
-                                  <span key={t} className="sg-tag sg-asset-tag">
-                                    {t}
-                                  </span>
-                                ))}
-                              </span>
-                            </span>
-                          </div>
-                        </td>
-                        <td className="c-type sg-subtle">{meta.label}</td>
-                        <td className="c-owner">
-                          <span className="sg-owner-stack">
-                            <Tooltip title={ownerDisplayName(asset, authSession)}>
-                              <span
-                                className="sg-owner-avatar"
-                                role="img"
-                                aria-label={`所有者：${ownerDisplayName(asset, authSession)}`}
-                              >
-                                {ownerDisplayName(asset, authSession).slice(0, 1)}
-                              </span>
-                            </Tooltip>
                           </span>
-                        </td>
-                        <td className="c-time sg-subtle">{formatRelative(asset.updatedAt)}</td>
-                        <td className="c-status">
-                          <span className="sg-status">
-                            <span className={`sg-status-dot ${st.tone}`} />
-                            {st.label}
-                          </span>
-                        </td>
-                        <td className="c-vis">
-                          <span className={`sg-vis ${vis.cls}`}>
-                            <VisIcon size={13} />
-                            {vis.label}
-                          </span>
-                        </td>
-                        <td className="c-menu">
-                          <Dropdown
-                            trigger={["click"]}
-                            placement="bottomRight"
-                            popupRender={() => (
-                              <div className="sg-asset-menu" onClick={(e) => e.stopPropagation()}>
-                                <button type="button" onClick={() => navigate(assetHref(asset))}>
-                                  打开资产
-                                </button>
-                                {workspaceWritable && !includeDeleted ? (
-                                  <button
-                                    type="button"
-                                    onClick={() => navigate(`/assets/${asset.id}/edit`)}
-                                  >
-                                    编辑资产
-                                  </button>
-                                ) : null}
-                                {!includeDeleted ? (
-                                  <button
-                                    type="button"
-                                    className="danger"
-                                    onClick={() =>
-                                      confirmDeleteAssets([{ id: asset.id, title: asset.title }])
-                                    }
-                                  >
-                                    删除
-                                  </button>
-                                ) : (
-                                  <button
-                                    type="button"
-                                    onClick={() =>
-                                      batchMutation.mutate({ action: "restore", ids: [asset.id] })
-                                    }
-                                  >
-                                    恢复
-                                  </button>
-                                )}
-                              </div>
-                            )}
-                          >
-                            <button
-                              type="button"
-                              className="sg-asset-more"
-                              onClick={(e) => e.stopPropagation()}
-                              aria-label="更多操作"
-                            >
-                              <MoreHorizontal size={16} />
+                        </div>
+                      );
+                    },
+                  },
+                  {
+                    title: "类型",
+                    dataIndex: "type",
+                    width: 96,
+                    render: (_v, asset) => (
+                      <span className="sg-subtle">{TYPE_META[typeOf(asset)].label}</span>
+                    ),
+                  },
+                  {
+                    title: "所有者",
+                    dataIndex: "ownerDisplayName",
+                    width: 72,
+                    render: (_v, asset) => (
+                      <OwnerAvatar name={ownerDisplayName(asset, authSession)} />
+                    ),
+                  },
+                  {
+                    title: "更新时间",
+                    dataIndex: "updatedAt",
+                    width: 104,
+                    render: (v) => <span className="sg-subtle">{formatRelative(v)}</span>,
+                  },
+                  {
+                    title: "状态",
+                    dataIndex: "status",
+                    width: 104,
+                    render: (_v, asset) => {
+                      const st = statusOf(asset);
+                      return (
+                        <span className="sg-status">
+                          <span className={`sg-status-dot ${st.tone}`} />
+                          {st.label}
+                        </span>
+                      );
+                    },
+                  },
+                  {
+                    title: "可见性",
+                    dataIndex: "visibility",
+                    width: 128,
+                    render: (_v, asset) => {
+                      const vis = visibleType(asset);
+                      const VisIcon = vis.icon;
+                      return (
+                        <span className={`sg-vis ${vis.cls}`}>
+                          <VisIcon size={13} />
+                          {vis.label}
+                        </span>
+                      );
+                    },
+                  },
+                  {
+                    title: "",
+                    key: "menu",
+                    width: 60,
+                    render: (_v, asset) => (
+                      <Dropdown
+                        trigger={["click"]}
+                        placement="bottomRight"
+                        popupRender={() => (
+                          <div className="sg-asset-menu" onClick={(e) => e.stopPropagation()}>
+                            <button type="button" onClick={() => navigate(assetHref(asset))}>
+                              打开资产
                             </button>
-                          </Dropdown>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+                            {workspaceWritable && !includeDeleted ? (
+                              <button
+                                type="button"
+                                onClick={() => navigate(`/assets/${asset.id}/edit`)}
+                              >
+                                编辑资产
+                              </button>
+                            ) : null}
+                            {!includeDeleted ? (
+                              <button
+                                type="button"
+                                className="danger"
+                                onClick={() =>
+                                  confirmDeleteAssets([{ id: asset.id, title: asset.title }])
+                                }
+                              >
+                                删除
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  batchMutation.mutate({ action: "restore", ids: [asset.id] })
+                                }
+                              >
+                                恢复
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      >
+                        <button
+                          type="button"
+                          className="sg-asset-more"
+                          onClick={(e) => e.stopPropagation()}
+                          aria-label="更多操作"
+                        >
+                          <MoreHorizontal size={16} />
+                        </button>
+                      </Dropdown>
+                    ),
+                  },
+                ]}
+              />
             </div>
           )}
 

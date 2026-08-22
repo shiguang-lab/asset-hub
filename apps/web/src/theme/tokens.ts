@@ -68,6 +68,27 @@ const buildComponents = (mode: ThemeMode): ThemeConfig["components"] => {
       siderBg: surface.colorBgContainer,
       bodyBg: surface.colorBgLayout,
     },
+    Table: {
+      // 扁平通栏表格：对齐资产页 sg-assets-table 观感
+      headerBg: "#17151b",
+      headerColor: "#777489",
+      rowHoverBg: "#17151c",
+      rowSelectedBg: "rgba(124, 60, 255, 0.14)",
+      rowSelectedHoverBg: "rgba(124, 60, 255, 0.2)",
+      borderColor: "#232129",
+      headerSplitColor: "transparent",
+      cellFontSize: 13,
+      cellFontSizeMD: 13,
+      cellFontSizeSM: 13,
+      cellPaddingBlock: 18,
+      cellPaddingInline: 12,
+      cellPaddingBlockMD: 16,
+      cellPaddingInlineMD: 12,
+      cellPaddingBlockSM: 8,
+      cellPaddingInlineSM: 8,
+      headerBorderRadius: 0,
+      selectionColumnWidth: 40,
+    },
   };
 };
 

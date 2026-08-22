@@ -1,8 +1,9 @@
-import { Empty, formatDate, StatusBadge, Table, useToast } from "@shiguang/ui";
+import { Empty, formatDate, StatusBadge, useToast } from "@shiguang/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button, Card, Modal } from "antd";
 import QRCode from "qrcode";
 import { useEffect, useState } from "react";
+import { AppTable } from "../../shared/AppTable.js";
 import { type Asset, api, type Publish } from "../../entities/api.js";
 
 export function PublishesPage() {
@@ -64,35 +65,39 @@ export function PublishesPage() {
         <Empty title="还没有发布内容" hint="在文档 / 演示详情页点击「发布」生成稳定 URL。" />
       ) : (
         <Card>
-          <Table>
-            <thead>
-              <tr>
-                <th>内容</th>
-                <th>可见性</th>
-                <th>访问量</th>
-                <th>链接</th>
-                <th>更新时间</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {publishes?.map((p) => (
-                <tr key={p.id}>
-                  <td>{titleOf(p.assetId)}</td>
-                  <td>
-                    <StatusBadge status={p.visibility} />
-                  </td>
-                  <td>{p.viewCount}</td>
-                  <td>
-                    <a href={p.url} target="_blank" rel="noreferrer">
-                      {p.slug}
-                    </a>
-                    <div className="sg-subtle" style={{ fontSize: 11 }}>
-                      {p.shortUrl}
-                    </div>
-                  </td>
-                  <td>{formatDate(p.updatedAt)}</td>
-                  <td>
+          <AppTable<Publish>
+              rowKey="id"
+              dataSource={publishes ?? []}
+              pagination={false}
+              size="middle"
+              columns={[
+                { title: "内容", dataIndex: "assetId", render: (v) => titleOf(v) },
+                {
+                  title: "可见性",
+                  dataIndex: "visibility",
+                  render: (v) => <StatusBadge status={v} />,
+                },
+                { title: "访问量", dataIndex: "viewCount" },
+                {
+                  title: "链接",
+                  dataIndex: "slug",
+                  key: "link",
+                  render: (_v, p) => (
+                    <>
+                      <a href={p.url} target="_blank" rel="noreferrer">
+                        {p.slug}
+                      </a>
+                      <div className="sg-subtle" style={{ fontSize: 11 }}>
+                        {p.shortUrl}
+                      </div>
+                    </>
+                  ),
+                },
+                { title: "更新时间", dataIndex: "updatedAt", render: (v) => formatDate(v) },
+                {
+                  title: "操作",
+                  key: "actions",
+                  render: (_v, p) => (
                     <div className="sg-row">
                       <Button size="small" onClick={() => setQr({ url: p.url ?? "", dataUrl: "" })}>
                         二维码
@@ -110,11 +115,10 @@ export function PublishesPage() {
                         撤销
                       </Button>
                     </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </Table>
+                  ),
+                },
+              ]}
+            />
         </Card>
       )}
 

@@ -1,6 +1,7 @@
-import { Empty, formatDate, Table } from "@shiguang/ui";
+import { Empty, formatDate } from "@shiguang/ui";
 import { useQuery } from "@tanstack/react-query";
 import { Card } from "antd";
+import { AppTable } from "../../shared/AppTable.js";
 import { api, type CreditAccount } from "../../entities/api.js";
 
 export function BillingPage() {
@@ -73,29 +74,27 @@ export function BillingPage() {
         {(data?.ledger?.length ?? 0) === 0 ? (
           <Empty title="暂无明细" />
         ) : (
-          <Table>
-            <thead>
-              <tr>
-                <th>时间</th>
-                <th>类型</th>
-                <th>说明</th>
-                <th>金额</th>
-              </tr>
-            </thead>
-            <tbody>
-              {data?.ledger.map((l) => (
-                <tr key={l.createdAt + l.entryType + String(l.amount)}>
-                  <td>{formatDate(l.createdAt)}</td>
-                  <td>{l.entryType}</td>
-                  <td>{l.description}</td>
-                  <td style={{ fontWeight: 700 }}>
-                    {l.amount > 0 ? "+" : ""}
-                    {l.amount}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </Table>
+          <AppTable<{ entryType: string; amount: number; description: string; createdAt: string; taskId: string | null }>
+            rowKey={(l) => l.createdAt + l.entryType + String(l.amount)}
+            dataSource={data?.ledger ?? []}
+            pagination={false}
+            size="middle"
+            columns={[
+              { title: "时间", dataIndex: "createdAt", render: (v) => formatDate(v) },
+              { title: "类型", dataIndex: "entryType" },
+              { title: "说明", dataIndex: "description" },
+              {
+                title: "金额",
+                dataIndex: "amount",
+                render: (v) => (
+                  <span style={{ fontWeight: 700 }}>
+                    {v > 0 ? "+" : ""}
+                    {v}
+                  </span>
+                ),
+              },
+            ]}
+          />
         )}
       </Card>
     </div>

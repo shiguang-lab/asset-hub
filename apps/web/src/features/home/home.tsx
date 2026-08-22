@@ -14,6 +14,7 @@ import {
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { type Asset, api, type HomeData } from "../../entities/api.js";
+import { AppTable } from "../../shared/AppTable.js";
 
 const TEMPLATE_PREVIEWS = [
   "/reference/template-research.webp",
@@ -258,29 +259,40 @@ export function HomePage() {
                 <ArrowRight size={17} />
               </button>
             ) : (
-              <table className="sg-recent-table">
-                <thead>
-                  <tr>
-                    <th>名称</th>
-                    <th>类型</th>
-                    <th>更新时间</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {data?.recentAssets.slice(0, 6).map((asset) => (
-                    <tr key={asset.id} onClick={() => navigate(assetHref(asset))}>
-                      <td>
+              <AppTable<Asset>
+                rowKey="id"
+                dataSource={data?.recentAssets.slice(0, 6) ?? []}
+                pagination={false}
+                size="middle"
+                onRow={(asset) => ({
+                  style: { cursor: "pointer" },
+                  onClick: () => navigate(assetHref(asset)),
+                })}
+                columns={[
+                  {
+                    title: "名称",
+                    dataIndex: "title",
+                    render: (_v, asset) => (
+                      <>
                         <span className={`sg-file-icon ${asset.type}`}>
                           <AssetIcon type={asset.type} />
                         </span>
                         <strong>{asset.title}</strong>
-                      </td>
-                      <td>{ASSET_TYPE_LABELS[asset.type] ?? asset.type}</td>
-                      <td>{formatRelative(asset.updatedAt)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                      </>
+                    ),
+                  },
+                  {
+                    title: "类型",
+                    dataIndex: "type",
+                    render: (v) => ASSET_TYPE_LABELS[v] ?? v,
+                  },
+                  {
+                    title: "更新时间",
+                    dataIndex: "updatedAt",
+                    render: (v) => formatRelative(v),
+                  },
+                ]}
+              />
             )}
           </div>
           <button type="button" className="sg-view-all" onClick={() => navigate("/assets")}>

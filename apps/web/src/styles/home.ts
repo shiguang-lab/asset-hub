@@ -363,48 +363,6 @@ export const HomeGlobalStyles = createGlobalStyle(css`
 }
 .sg-recent-table {
   width: 100%;
-  border-collapse: collapse;
-  table-layout: fixed;
-}
-.sg-recent-table th {
-  height: 38px;
-  padding: 0 8px;
-  border-bottom: 1px solid #292631;
-  color: #777489;
-  font-size: 11px;
-  font-weight: 500;
-  text-align: left;
-}
-.sg-recent-table th:first-of-type {
-  width: 58%;
-}
-.sg-recent-table th:nth-of-type(2) {
-  width: 20%;
-}
-.sg-recent-table th:last-of-type,
-.sg-recent-table td:last-of-type {
-  text-align: right;
-}
-.sg-recent-table td {
-  height: 53px;
-  overflow: hidden;
-  padding: 0 8px;
-  border-bottom: 1px solid #24222a;
-  color: #858195;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.sg-recent-table td:first-of-type {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  color: var(--sg-fg);
-}
-.sg-recent-table tr {
-  cursor: pointer;
-}
-.sg-recent-table tbody tr:hover td {
-  background: #17151c;
 }
 .sg-file-icon {
   width: 29px;

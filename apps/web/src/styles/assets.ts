@@ -86,70 +86,9 @@ export const AssetsGlobalStyles = createGlobalStyle(css`
 /* Table list */
 .sg-assets-table-wrap {
   overflow-x: auto;
-  border: 1px solid #272430;
-  border-radius: 8px;
-  background: #121116;
-}
-.sg-assets-table {
-  width: 100%;
-  min-width: 880px;
-  border-collapse: collapse;
-  table-layout: fixed;
-}
-.sg-assets-table th {
-  height: 40px;
-  padding: 0 12px;
-  border-bottom: 1px solid var(--sg-border);
-  color: var(--sg-muted);
-  background: #17151b;
-  font-size: 12px;
-  font-weight: 500;
-  text-align: left;
-}
-.sg-assets-table th.c-check,
-.sg-assets-table td.c-check {
-  width: 40px;
-  padding-right: 0;
-}
-.sg-assets-table th.c-type {
-  width: 96px;
-}
-.sg-assets-table th.c-owner {
-  width: 72px;
-}
-.sg-assets-table th.c-time {
-  width: 104px;
-}
-.sg-assets-table th.c-status {
-  width: 104px;
-}
-.sg-assets-table th.c-vis {
-  width: 128px;
-}
-.sg-assets-table th.c-menu,
-.sg-assets-table td.c-menu {
-  width: 60px;
-  padding-right: 16px;
-  padding-left: 8px;
-}
-.sg-assets-table td {
-  height: 60px;
-  overflow: hidden;
-  padding: 8px 12px;
-  border-bottom: 1px solid #232129;
-  color: var(--sg-fg-2);
-  font-size: 13px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.sg-assets-table tbody tr:last-of-type td {
-  border-bottom: 0;
 }
 .sg-assets-row {
   cursor: pointer;
-}
-.sg-assets-row:hover td {
-  background: #17151c;
 }
 .sg-asset-check {
   display: inline-flex;

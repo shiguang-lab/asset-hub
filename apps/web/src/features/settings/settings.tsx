@@ -1,7 +1,8 @@
-import { Field, formatDate, Scrollbar, Table, useToast } from "@shiguang/ui";
+import { Field, formatDate, Scrollbar, useToast } from "@shiguang/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button, Card, Input, Select, Switch, Tabs } from "antd";
 import { useState } from "react";
+import { AppTable } from "../../shared/AppTable.js";
 import {
   addOrganizationMember,
   fetchOrganizationMembers,
@@ -160,42 +161,42 @@ function GitSettings() {
       </Card>
 
       {(data?.length ?? 0) > 0 && (
-        <Table>
-          <thead>
-            <tr>
-              <th>名称</th>
-              <th>仓库</th>
-              <th>分支</th>
-              <th>状态</th>
-              <th>最近同步</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {data?.map((c) => (
-              <tr key={c.id}>
-                <td>{c.name}</td>
-                <td style={{ fontSize: 12 }}>{c.repo_url}</td>
-                <td>{c.branch}</td>
-                <td>{c.status}</td>
-                <td className="sg-subtle">
+        <AppTable<GitConnection>
+          rowKey="id"
+          dataSource={data ?? []}
+          pagination={false}
+          size="middle"
+          columns={[
+            { title: "名称", dataIndex: "name" },
+            { title: "仓库", dataIndex: "repo_url", render: (v) => <span style={{ fontSize: 12 }}>{v}</span> },
+            { title: "分支", dataIndex: "branch" },
+            { title: "状态", dataIndex: "status" },
+            {
+              title: "最近同步",
+              key: "lastSync",
+              render: (_v, c) => (
+                <>
                   {c.last_sync_at ? formatDate(c.last_sync_at) : "-"}
                   {c.last_sync_status && <div style={{ fontSize: 11 }}>{c.last_sync_status}</div>}
-                </td>
-                <td>
-                  <div className="sg-row">
-                    <Button size="small" onClick={() => sync.mutate(c.id)}>
-                      同步
-                    </Button>
-                    <Button size="small" type="primary" danger onClick={() => remove.mutate(c.id)}>
-                      删除
-                    </Button>
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </Table>
+                </>
+              ),
+            },
+            {
+              title: "操作",
+              key: "actions",
+              render: (_v, c) => (
+                <div className="sg-row">
+                  <Button size="small" onClick={() => sync.mutate(c.id)}>
+                    同步
+                  </Button>
+                  <Button size="small" type="primary" danger onClick={() => remove.mutate(c.id)}>
+                    删除
+                  </Button>
+                </div>
+              ),
+            },
+          ]}
+        />
       )}
     </div>
   );
@@ -419,58 +420,65 @@ function TeamSettings() {
       )}
       {error && <p className="sg-hint">{error.message}</p>}
       {isLoading && <p className="sg-hint">正在加载成员…</p>}
-      <Table>
-        <thead>
-          <tr>
-            <th>成员</th>
-            <th>角色</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
-          {(data ?? []).map((member) => {
-            const memberRole = organizationRole(member.roles);
-            return (
-              <tr key={member.userId}>
-                <td>
+      <AppTable<OrganizationMember>
+        rowKey="userId"
+        dataSource={data ?? []}
+        pagination={false}
+        size="middle"
+        columns={[
+          {
+            title: "成员",
+            key: "member",
+            render: (_v, member) => {
+              const memberRole = organizationRole(member.roles);
+              return (
+                <>
                   <strong>{member.displayName || member.loginName}</strong>
                   <div className="sg-hint">{member.loginName}</div>
-                </td>
-                <td>
-                  {canManage ? (
-                    <Select
-                      value={memberRole}
-                      onChange={(nextRole) =>
-                        updateRole.mutate({
-                          userId: member.userId,
-                          nextRole: nextRole as OrganizationRole,
-                        })
-                      }
-                      options={ORGANIZATION_ROLE_OPTIONS}
-                      style={{ width: 120 }}
-                    />
-                  ) : (
-                    ORGANIZATION_ROLE_OPTIONS.find((option) => option.value === memberRole)?.label
-                  )}
-                </td>
-                <td>
-                  {(canManage || member.userId === session.id) && (
-                    <Button
-                      size="small"
-                      type="primary"
-                      danger
-                      disabled={remove.isPending}
-                      onClick={() => remove.mutate(member.userId)}
-                    >
-                      {member.userId === session.id ? "退出" : "移除"}
-                    </Button>
-                  )}
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </Table>
+                </>
+              );
+            },
+          },
+          {
+            title: "角色",
+            key: "role",
+            render: (_v, member) => {
+              const memberRole = organizationRole(member.roles);
+              return canManage ? (
+                <Select
+                  value={memberRole}
+                  onChange={(nextRole) =>
+                    updateRole.mutate({
+                      userId: member.userId,
+                      nextRole: nextRole as OrganizationRole,
+                    })
+                  }
+                  options={ORGANIZATION_ROLE_OPTIONS}
+                  style={{ width: 120 }}
+                />
+              ) : (
+                ORGANIZATION_ROLE_OPTIONS.find((option) => option.value === memberRole)?.label
+              );
+            },
+          },
+          {
+            title: "操作",
+            key: "actions",
+            render: (_v, member) =>
+              canManage || member.userId === session.id ? (
+                <Button
+                  size="small"
+                  type="primary"
+                  danger
+                  disabled={remove.isPending}
+                  onClick={() => remove.mutate(member.userId)}
+                >
+                  {member.userId === session.id ? "退出" : "移除"}
+                </Button>
+              ) : null,
+          },
+        ]}
+      />
       <p className="sg-hint">成员身份由统一账号服务管理；资产分享权限仍可在资产详情中单独收敛。</p>
     </Card>
   );
@@ -733,34 +741,28 @@ function TokenSettings() {
         </div>
       )}
 
-      <Table>
-        <thead>
-          <tr>
-            <th>名称</th>
-            <th>权限</th>
-            <th>创建时间</th>
-            <th>状态</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
-          {(data ?? []).map((t) => (
-            <tr key={t.id}>
-              <td>{t.name}</td>
-              <td>{t.scopes.join(", ")}</td>
-              <td>{new Date(t.createdAt).toLocaleDateString("zh-CN")}</td>
-              <td>{t.revokedAt ? "已撤销" : "有效"}</td>
-              <td>
-                {!t.revokedAt && (
-                  <Button size="small" type="primary" danger onClick={() => revoke.mutate(t.id)}>
-                    撤销
-                  </Button>
-                )}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </Table>
+      <AppTable<ApiToken>
+        rowKey="id"
+        dataSource={data ?? []}
+        pagination={false}
+        size="middle"
+        columns={[
+          { title: "名称", dataIndex: "name" },
+          { title: "权限", dataIndex: "scopes", render: (v) => v.join(", ") },
+          { title: "创建时间", dataIndex: "createdAt", render: (v) => new Date(v).toLocaleDateString("zh-CN") },
+          { title: "状态", dataIndex: "revokedAt", render: (v) => v ? "已撤销" : "有效" },
+          {
+            title: "操作",
+            key: "actions",
+            render: (_v, t) =>
+              !t.revokedAt ? (
+                <Button size="small" type="primary" danger onClick={() => revoke.mutate(t.id)}>
+                  撤销
+                </Button>
+              ) : null,
+          },
+        ]}
+      />
     </Card>
   );
 }
@@ -776,30 +778,27 @@ function PublishSettings() {
       {(data?.length ?? 0) === 0 ? (
         <p className="sg-subtle">还没有发布内容。在文档 / 演示详情页点击“发布”即可生成稳定 URL。</p>
       ) : (
-        <Table>
-          <thead>
-            <tr>
-              <th>内容</th>
-              <th>可见性</th>
-              <th>访问量</th>
-              <th>链接</th>
-            </tr>
-          </thead>
-          <tbody>
-            {data?.map((p) => (
-              <tr key={String(p.id)}>
-                <td>{String(p.assetId)}</td>
-                <td>{String(p.visibility)}</td>
-                <td>{String(p.viewCount ?? 0)}</td>
-                <td>
-                  <a href={String(p.url)} target="_blank" rel="noreferrer">
-                    {String(p.slug)}
-                  </a>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </Table>
+        <AppTable<Record<string, unknown>>
+          rowKey={(_, i) => String(i)}
+          dataSource={data ?? []}
+          pagination={false}
+          size="middle"
+          columns={[
+            { title: "内容", dataIndex: "assetId", render: (v) => String(v) },
+            { title: "可见性", dataIndex: "visibility", render: (v) => String(v) },
+            { title: "访问量", dataIndex: "viewCount", render: (v) => String(v ?? 0) },
+            {
+              title: "链接",
+              dataIndex: "slug",
+              key: "link",
+              render: (_v, p) => (
+                <a href={String(p.url)} target="_blank" rel="noreferrer">
+                  {String(p.slug)}
+                </a>
+              ),
+            },
+          ]}
+        />
       )}
     </Card>
   );
@@ -818,26 +817,18 @@ function AuditLog() {
       {(data?.length ?? 0) === 0 ? (
         <p className="sg-subtle">暂无审计记录。</p>
       ) : (
-        <Table>
-          <thead>
-            <tr>
-              <th>时间</th>
-              <th>操作</th>
-              <th>资源</th>
-              <th>结果</th>
-            </tr>
-          </thead>
-          <tbody>
-            {data?.map((a, i) => (
-              <tr key={i}>
-                <td>{new Date(a.createdAt).toLocaleString("zh-CN")}</td>
-                <td>{a.action}</td>
-                <td>{a.resource}</td>
-                <td>{a.outcome}</td>
-              </tr>
-            ))}
-          </tbody>
-        </Table>
+        <AppTable<{ action: string; resource: string; outcome: string; createdAt: string; actor: string }>
+          rowKey={(_, i) => String(i)}
+          dataSource={data ?? []}
+          pagination={false}
+          size="middle"
+          columns={[
+            { title: "时间", dataIndex: "createdAt", render: (v) => new Date(v).toLocaleString("zh-CN") },
+            { title: "操作", dataIndex: "action" },
+            { title: "资源", dataIndex: "resource" },
+            { title: "结果", dataIndex: "outcome" },
+          ]}
+        />
       )}
     </Card>
   );

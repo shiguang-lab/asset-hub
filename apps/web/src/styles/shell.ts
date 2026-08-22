@@ -445,19 +445,6 @@ select {
   background: #17151c;
   transform: none;
 }
-.sg-table {
-  font-size: 12.5px;
-}
-.sg-table th {
-  padding: 8px 10px;
-  background: #17151c;
-}
-.sg-table td {
-  padding: 9px 10px;
-}
-.sg-table tr:hover td {
-  background: #18161d;
-}
 .sg-badge {
   border-radius: 4px;
   padding: 1px 7px;

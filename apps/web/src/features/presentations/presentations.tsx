@@ -13,7 +13,7 @@ import {
   updateLinkHref,
   updateTextContent,
 } from "@shiguang/content";
-import { Avatar, Empty, Scrollbar, useToast } from "@shiguang/ui";
+import { Empty, Scrollbar, useToast } from "@shiguang/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button, Input, Modal, Select } from "antd";
 import {
@@ -38,7 +38,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { getAuthSession } from "../../auth/session.js";
 import { type Asset, api, type Publish, type PublishStatsSummary } from "../../entities/api.js";
+import { AppTable } from "../../shared/AppTable.js";
 import { AppTabs } from "../../shared/AppTabs.js";
+import { OwnerAvatar } from "../../shared/OwnerAvatar.js";
 import { isOwnedBySession, ownerDisplayName } from "../../shared/owner.js";
 import { useShellBreadcrumb } from "../../shell/layout.js";
 import { PublishDialog } from "../publishing/publish-dialog.js";
@@ -468,92 +470,109 @@ export function PresentationsPage() {
             </div>
           ) : view === "list" ? (
             <div className="sg-presentation-table-wrap">
-              <table className="sg-presentation-table">
-                <thead>
-                  <tr>
-                    <th>演示标题</th>
-                    <th>来源类型</th>
-                    <th>创建者</th>
-                    <th>更新时间</th>
-                    <th>浏览量</th>
-                    <th>操作</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {pageItems.map((item, index) => (
-                    <tr key={item.id}>
-                      <td>
-                        <div className="sg-presentation-name">
-                          <PresentationThumbnail title={item.title} tone={index} />
-                          <div>
-                            <button
-                              type="button"
-                              onClick={() => navigate(`/presentations/${item.id}`)}
-                            >
-                              {item.title}
-                            </button>
-                            <span>
-                              {(item.tags ?? []).slice(0, 2).map((itemTag) => (
-                                <small key={itemTag}>{itemTag}</small>
-                              ))}
-                            </span>
-                          </div>
+              <AppTable<Asset>
+                rowKey="id"
+                dataSource={pageItems}
+                pagination={false}
+                size="middle"
+                columns={[
+                  {
+                    title: "演示标题",
+                    dataIndex: "title",
+                    width: "47%",
+                    render: (_v, item, index) => (
+                      <div className="sg-presentation-name">
+                        <PresentationThumbnail title={item.title} tone={index} />
+                        <div>
                           <button
                             type="button"
-                            className={`sg-presentation-favorite${favoriteIds.includes(item.id) ? " active" : ""}`}
-                            aria-label={favoriteIds.includes(item.id) ? "取消收藏" : "收藏"}
-                            onClick={() => toggleFavorite(item.id)}
+                            onClick={() => navigate(`/presentations/${item.id}`)}
                           >
-                            <Star size={13} />
+                            {item.title}
                           </button>
+                          <span>
+                            {(item.tags ?? []).slice(0, 2).map((itemTag) => (
+                              <small key={itemTag}>{itemTag}</small>
+                            ))}
+                          </span>
                         </div>
-                      </td>
-                      <td>
-                        <span className="sg-presentation-source">
-                          <FileText size={13} />
-                          {item.sourceType === "manual" ? "文档" : "报告"}
-                        </span>
-                      </td>
-                      <td>
-                        <span className="sg-presentation-creator">
-                          <Avatar name={ownerDisplayName(item, authSession)} size={24} />
-                          {ownerDisplayName(item, authSession)}
-                        </span>
-                      </td>
-                      <td>{new Date(item.updatedAt).toLocaleString("zh-CN", { hour12: false })}</td>
-                      <td>{viewCount(item).toLocaleString("zh-CN")}</td>
-                      <td>
-                        <div className="sg-presentation-row-actions">
-                          <button
-                            type="button"
-                            aria-label={`播放 ${item.title}`}
-                            title="播放"
-                            onClick={() => navigate(`/presentations/${item.id}/play`)}
-                          >
-                            <Play size={13} />
-                          </button>
-                          <button
-                            type="button"
-                            aria-label={`分享 ${item.title}`}
-                            title="分享"
-                            onClick={() => void sharePresentation(item)}
-                          >
-                            <Share2 size={13} />
-                          </button>
-                          <button
-                            type="button"
-                            aria-label={`${item.title} 更多操作`}
-                            title="更多操作"
-                            onClick={() => toast("info", "可在演示编辑器中管理更多设置")}
-                          >
-                            <MoreHorizontal size={14} />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                        <button
+                          type="button"
+                          className={`sg-presentation-favorite${favoriteIds.includes(item.id) ? " active" : ""}`}
+                          aria-label={favoriteIds.includes(item.id) ? "取消收藏" : "收藏"}
+                          onClick={() => toggleFavorite(item.id)}
+                        >
+                          <Star size={13} />
+                        </button>
+                      </div>
+                    ),
+                  },
+                  {
+                    title: "来源类型",
+                    dataIndex: "sourceType",
+                    width: 120,
+                    render: (_v, item) => (
+                      <span className="sg-presentation-source">
+                        <FileText size={13} />
+                        {item.sourceType === "manual" ? "文档" : "报告"}
+                      </span>
+                    ),
+                  },
+                  {
+                    title: "创建者",
+                    dataIndex: "ownerDisplayName",
+                    width: 120,
+                    render: (_v, item) => (
+                      <OwnerAvatar name={ownerDisplayName(item, authSession)} />
+                    ),
+                  },
+                  {
+                    title: "更新时间",
+                    dataIndex: "updatedAt",
+                    width: 160,
+                    render: (v) => new Date(v).toLocaleString("zh-CN", { hour12: false }),
+                  },
+                  {
+                    title: "浏览量",
+                    dataIndex: "viewCount",
+                    width: 90,
+                    render: (_v, item) => viewCount(item).toLocaleString("zh-CN"),
+                  },
+                  {
+                    title: "操作",
+                    key: "actions",
+                    width: 120,
+                    render: (_v, item) => (
+                      <div className="sg-presentation-row-actions">
+                        <button
+                          type="button"
+                          aria-label={`播放 ${item.title}`}
+                          title="播放"
+                          onClick={() => navigate(`/presentations/${item.id}/play`)}
+                        >
+                          <Play size={13} />
+                        </button>
+                        <button
+                          type="button"
+                          aria-label={`分享 ${item.title}`}
+                          title="分享"
+                          onClick={() => void sharePresentation(item)}
+                        >
+                          <Share2 size={13} />
+                        </button>
+                        <button
+                          type="button"
+                          aria-label={`${item.title} 更多操作`}
+                          title="更多操作"
+                          onClick={() => toast("info", "可在演示编辑器中管理更多设置")}
+                        >
+                          <MoreHorizontal size={14} />
+                        </button>
+                      </div>
+                    ),
+                  },
+                ]}
+              />
             </div>
           ) : (
             <div className="sg-presentation-grid">
