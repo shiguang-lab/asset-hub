@@ -46,55 +46,6 @@ export const AssetsGlobalStyles = createGlobalStyle(css`
   background: rgba(124, 60, 255, 0.08) !important;
 }
 
-/* Underline type tabs */
-.sg-type-bar {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  padding: 0;
-  margin-bottom: 14px;
-  border-bottom: 1px solid var(--sg-border);
-  overflow-x: auto;
-}
-.sg-type-chip {
-  position: relative;
-  display: inline-flex;
-  align-items: baseline;
-  gap: 6px;
-  padding: 9px 12px 12px;
-  border: 0;
-  background: transparent;
-  color: var(--sg-muted);
-  font-size: 13px;
-  white-space: nowrap;
-  cursor: pointer;
-}
-.sg-type-chip em {
-  font-style: normal;
-  font-size: 11px;
-  color: var(--sg-muted);
-}
-.sg-type-chip:hover {
-  color: var(--sg-fg-2);
-}
-.sg-type-chip.active {
-  color: #c6b1ff;
-  font-weight: 600;
-}
-.sg-type-chip.active::after {
-  content: "";
-  position: absolute;
-  left: 10px;
-  right: 10px;
-  bottom: -1px;
-  height: 2px;
-  border-radius: 2px 2px 0 0;
-  background: var(--sg-accent);
-}
-.sg-type-chip.active em {
-  color: #9b7fff;
-}
-
 .sg-assets-body {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 264px;

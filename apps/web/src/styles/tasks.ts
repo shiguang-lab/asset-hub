@@ -35,47 +35,6 @@ export const TasksGlobalStyles = createGlobalStyle(css`
 .sg-task-new-main {
   min-width: 0;
 }
-.sg-task-tabs {
-  display: flex;
-  height: 43px;
-  gap: 26px;
-  border-bottom: 1px solid var(--sg-border);
-}
-.sg-task-tabs button,
-.sg-task-detail-tabs button {
-  position: relative;
-  border: 0;
-  color: var(--sg-fg-2);
-  background: transparent;
-  font-size: 12px;
-  cursor: pointer;
-}
-.sg-task-tabs button span {
-  display: inline-flex;
-  min-width: 20px;
-  height: 20px;
-  align-items: center;
-  justify-content: center;
-  margin-left: 5px;
-  padding: 0 6px;
-  border-radius: 10px;
-  background: #1b1921;
-  font-size: 9px;
-}
-.sg-task-tabs button.active,
-.sg-task-detail-tabs button.active {
-  color: #b38fff;
-}
-.sg-task-tabs button.active::after,
-.sg-task-detail-tabs button.active::after {
-  position: absolute;
-  right: 0;
-  bottom: 0;
-  left: 0;
-  height: 2px;
-  background: var(--sg-accent);
-  content: "";
-}
 .sg-task-toolbar {
   display: flex;
   align-items: center;
@@ -1318,17 +1277,6 @@ export const TasksGlobalStyles = createGlobalStyle(css`
   border: 1px solid var(--sg-border);
   border-radius: 8px;
   background: var(--sg-bg-2);
-}
-.sg-task-detail-tabs {
-  display: flex;
-  height: 44px;
-  gap: 22px;
-  padding: 0 14px;
-  overflow-x: auto;
-  border-bottom: 1px solid var(--sg-border);
-}
-.sg-task-detail-tabs button {
-  flex: none;
 }
 .sg-task-process-grid {
   display: grid;

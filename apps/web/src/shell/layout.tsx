@@ -65,6 +65,7 @@ import {
   uploadFile,
   uploadFiles,
 } from "../entities/api.js";
+import { AppTabs } from "../shared/AppTabs.js";
 import {
   type ImportConflict,
   ImportConflictModal,
@@ -1254,25 +1255,16 @@ function SearchWorkspace({
                   <MoreHorizontal size={16} />
                 </button>
               </header>
-              <div className="sg-global-search-preview-tabs" role="tablist">
-                {[
+              <AppTabs
+                items={[
                   ["preview", "预览"],
                   ["outline", "大纲"],
                   ["sources", "来源"],
                   ["related", "相关内容"],
-                ].map(([id, label]) => (
-                  <button
-                    type="button"
-                    role="tab"
-                    aria-selected={previewTab === id}
-                    className={previewTab === id ? "active" : ""}
-                    key={id}
-                    onClick={() => setPreviewTab(id as typeof previewTab)}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
+                ].map(([id, label]) => ({ key: id, label }))}
+                activeKey={previewTab}
+                onChange={(key) => setPreviewTab(key as typeof previewTab)}
+              />
               <div className="sg-global-search-preview-body">
                 {previewTab === "preview" && (
                   <>

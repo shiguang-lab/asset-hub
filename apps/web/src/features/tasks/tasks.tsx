@@ -53,6 +53,7 @@ import {
 import { type CSSProperties, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { type Asset, api, downloadFile, type Task } from "../../entities/api.js";
+import { AppTabs } from "../../shared/AppTabs.js";
 import { useShellBreadcrumb } from "../../shell/layout.js";
 
 const ACTIVE_STATUSES = ["created", "planning", "queued", "running", "waiting_user", "paused"];
@@ -258,21 +259,15 @@ export function TasksPage() {
       </div>
       <div className="sg-task-center-layout">
         <main className="sg-task-center-main">
-          <div className="sg-task-tabs" role="tablist" aria-label="任务状态">
-            {tabs.map((tab) => (
-              <button
-                key={tab.id}
-                type="button"
-                role="tab"
-                aria-selected={filter === tab.id}
-                className={filter === tab.id ? "active" : ""}
-                onClick={() => setFilter(tab.id)}
-              >
-                {tab.label}
-                {tab.id !== "all" && <span>{counts[tab.id]}</span>}
-              </button>
-            ))}
-          </div>
+          <AppTabs
+            items={tabs.map((tab) => ({
+              key: tab.id,
+              label: tab.label,
+              count: tab.id !== "all" ? counts[tab.id] : undefined,
+            }))}
+            activeKey={filter}
+            onChange={(key) => setFilter(key as TaskFilter)}
+          />
           <div className="sg-task-toolbar">
             <label className="sg-task-search">
               <Search size={16} />
@@ -1284,29 +1279,20 @@ export function TaskDetailPage() {
       </section>
       <div className="sg-task-detail-layout">
         <main className="sg-task-detail-main">
-          <div className="sg-task-detail-tabs" role="tablist">
-            {(
+          <AppTabs
+            items={(
               [
                 { id: "process", label: "执行过程" },
                 { id: "findings", label: "关键发现" },
                 { id: "preview", label: "输出预览" },
-                { id: "sources", label: `引用来源 ${evidence.length || ""}` },
+                { id: "sources", label: "引用来源", count: evidence.length },
                 { id: "report", label: "生成报告" },
                 { id: "settings", label: "任务设置" },
-              ] as Array<{ id: DetailTab; label: string }>
-            ).map((item) => (
-              <button
-                type="button"
-                role="tab"
-                aria-selected={tab === item.id}
-                className={tab === item.id ? "active" : ""}
-                key={item.id}
-                onClick={() => setTab(item.id)}
-              >
-                {item.label}
-              </button>
-            ))}
-          </div>
+              ] as Array<{ id: DetailTab; label: string; count?: number }>
+            ).map((item) => ({ key: item.id, label: item.label, count: item.count }))}
+            activeKey={tab}
+            onChange={(key) => setTab(key as DetailTab)}
+          />
           {tab === "process" && <TaskProcess task={task} steps={steps} />}
           {tab === "findings" && <TaskFindings task={task} evidence={evidence} />}
           {tab === "preview" && (

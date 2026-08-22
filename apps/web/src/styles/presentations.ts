@@ -132,38 +132,6 @@ export const PresentationsGlobalStyles = createGlobalStyle(css`
   color: var(--sg-success);
   font-size: 8px;
 }
-.sg-presentation-tabs {
-  display: flex;
-  height: 48px;
-  align-items: end;
-  gap: 28px;
-  margin-top: 10px;
-  overflow-x: auto;
-  border-bottom: 1px solid var(--sg-border);
-}
-.sg-presentation-tabs button {
-  position: relative;
-  height: 40px;
-  flex: none;
-  padding: 0 2px;
-  border: 0;
-  color: var(--sg-muted);
-  background: transparent;
-  font-size: 10px;
-  cursor: pointer;
-}
-.sg-presentation-tabs button.active {
-  color: #b99cff;
-}
-.sg-presentation-tabs button.active::after {
-  position: absolute;
-  right: 0;
-  bottom: 0;
-  left: 0;
-  height: 2px;
-  background: var(--sg-accent);
-  content: "";
-}
 .sg-presentation-toolbar {
   display: flex;
   min-width: 0;
@@ -842,9 +810,6 @@ export const PresentationsGlobalStyles = createGlobalStyle(css`
   .sg-presentation-stats article > span {
     width: 32px;
     height: 32px;
-  }
-  .sg-presentation-tabs {
-    gap: 20px;
   }
   .sg-presentation-search {
     width: 100%;

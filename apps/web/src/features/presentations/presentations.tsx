@@ -38,6 +38,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { getAuthSession } from "../../auth/session.js";
 import { type Asset, api, type Publish, type PublishStatsSummary } from "../../entities/api.js";
+import { AppTabs } from "../../shared/AppTabs.js";
 import { isOwnedBySession, ownerDisplayName } from "../../shared/owner.js";
 import { useShellBreadcrumb } from "../../shell/layout.js";
 import { PublishDialog } from "../publishing/publish-dialog.js";
@@ -373,20 +374,11 @@ export function PresentationsPage() {
             })}
           </section>
 
-          <div className="sg-presentation-tabs" role="tablist">
-            {tabs.map((item) => (
-              <button
-                type="button"
-                role="tab"
-                aria-selected={tab === item.id}
-                className={tab === item.id ? "active" : ""}
-                key={item.id}
-                onClick={() => setTab(item.id)}
-              >
-                {item.label}
-              </button>
-            ))}
-          </div>
+          <AppTabs
+            items={tabs.map((item) => ({ key: item.id, label: item.label }))}
+            activeKey={tab}
+            onChange={(key) => setTab(key as typeof tab)}
+          />
 
           <section className="sg-presentation-toolbar">
             <label className="sg-presentation-search">

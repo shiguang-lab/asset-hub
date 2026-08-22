@@ -445,13 +445,6 @@ select {
   background: #17151c;
   transform: none;
 }
-.sg-tabs {
-  margin-bottom: 14px;
-}
-.sg-tab {
-  padding: 8px 12px;
-  font-size: 12.5px;
-}
 .sg-table {
   font-size: 12.5px;
 }
@@ -643,7 +636,6 @@ select {
   flex-direction: column;
 }
 .sg-document-editor-page.is-content-editing > .sg-row-between,
-.sg-document-editor-page.is-content-editing > .sg-tabs,
 .sg-document-editor-page.is-content-editing > .ant-tabs {
   flex: 0 0 auto;
 }

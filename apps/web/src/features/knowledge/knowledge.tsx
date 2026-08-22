@@ -31,6 +31,7 @@ import {
   type KnowledgeSource,
   uploadFile,
 } from "../../entities/api.js";
+import { AppTabs } from "../../shared/AppTabs.js";
 import { Markdown } from "../../shared/markdown.js";
 
 type KnowledgeScope = "mine" | "team" | "public";
@@ -387,26 +388,17 @@ export function KnowledgePage() {
         })}
       </section>
 
-      <div className="sg-knowledge-scope-tabs" role="tablist" aria-label="知识库范围">
-        {(
+      <AppTabs
+        items={(
           [
             ["mine", "我的知识库"],
             ["team", "团队知识库"],
             ["public", "公开知识库"],
           ] as const
-        ).map(([id, label]) => (
-          <button
-            key={id}
-            type="button"
-            role="tab"
-            aria-selected={scope === id}
-            className={scope === id ? "active" : ""}
-            onClick={() => setScope(id)}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
+        ).map(([id, label]) => ({ key: id, label }))}
+        activeKey={scope}
+        onChange={(key) => setScope(key as KnowledgeScope)}
+      />
 
       <div className="sg-knowledge-workspace">
         <section className="sg-knowledge-main">
@@ -642,26 +634,17 @@ export function KnowledgePage() {
                   <MoreHorizontal size={18} />
                 </button>
               </div>
-              <div className="sg-knowledge-detail-tabs" role="tablist">
-                {[
+              <AppTabs
+                items={[
                   ["overview", "概览"],
                   ["documents", "文档"],
                   ["permissions", "权限"],
                   ["settings", "设置"],
                   ["activity", "操作日志"],
-                ].map(([id, label]) => (
-                  <button
-                    key={id}
-                    type="button"
-                    role="tab"
-                    aria-selected={detailTab === id}
-                    className={detailTab === id ? "active" : ""}
-                    onClick={() => setDetailTab(id)}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
+                ].map(([id, label]) => ({ key: id, label }))}
+                activeKey={detailTab}
+                onChange={setDetailTab}
+              />
               <div className="sg-knowledge-detail-body">
                 {detailTab === "overview" && (
                   <>

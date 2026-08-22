@@ -434,38 +434,6 @@ button.sg-global-search-icon {
 .sg-global-search-preview > header > button.active svg {
   fill: currentColor;
 }
-.sg-global-search-preview-tabs {
-  display: flex;
-  height: 45px;
-  align-items: end;
-  gap: 24px;
-  padding: 0 14px;
-  overflow-x: auto;
-  border-bottom: 1px solid var(--sg-border);
-}
-.sg-global-search-preview-tabs button {
-  position: relative;
-  height: 37px;
-  flex: none;
-  padding: 0;
-  border: 0;
-  color: var(--sg-muted);
-  background: transparent;
-  font-size: 13px;
-  cursor: pointer;
-}
-.sg-global-search-preview-tabs button.active {
-  color: #c0a8ff;
-}
-.sg-global-search-preview-tabs button.active::after {
-  position: absolute;
-  right: 0;
-  bottom: 0;
-  left: 0;
-  height: 2px;
-  background: var(--sg-accent);
-  content: "";
-}
 .sg-global-search-preview-body {
   min-height: 430px;
   padding: 18px 17px;

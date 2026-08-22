@@ -47,7 +47,19 @@ const buildComponents = (mode: ThemeMode): ThemeConfig["components"] => {
       borderRadius: platformPalette.borderRadius,
     },
     Tabs: {
-      titleFontSize: platformPalette.fontSize,
+      titleFontSize: 13,
+      titleFontSizeSM: 13,
+      titleFontSizeLG: 13,
+      horizontalItemGutter: 2,
+      horizontalItemPadding: "9px 12px 12px",
+      horizontalMargin: "0 0 14px",
+      itemColor: "#777489",
+      itemHoverColor: "#b8b5c9",
+      itemSelectedColor: "#c6b1ff",
+      itemActiveColor: "#c6b1ff",
+      inkBarColor: "#7c3cff",
+      // nav 底部下划线，对齐资产页 .sg-type-bar 的 --sg-border
+      colorBorderSecondary: "#2a2731",
     },
     Layout: {
       headerHeight: 56,

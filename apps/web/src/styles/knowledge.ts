@@ -153,37 +153,6 @@ export const KnowledgeGlobalStyles = createGlobalStyle(css`
   color: var(--sg-muted);
 }
 
-.sg-knowledge-scope-tabs {
-  display: flex;
-  width: max-content;
-  max-width: 100%;
-  margin-bottom: 14px;
-  overflow: hidden;
-  border: 1px solid var(--sg-border);
-  border-radius: 6px;
-  background: #0e0d12;
-}
-.sg-knowledge-scope-tabs button {
-  height: 34px;
-  padding: 0 18px;
-  border: 0;
-  border-right: 1px solid var(--sg-border);
-  color: var(--sg-fg-2);
-  background: transparent;
-  font-size: 12px;
-  cursor: pointer;
-}
-.sg-knowledge-scope-tabs button:last-of-type {
-  border-right: 0;
-}
-.sg-knowledge-scope-tabs button:hover {
-  color: var(--sg-fg);
-}
-.sg-knowledge-scope-tabs button.active {
-  color: #e4d9ff;
-  background: rgba(124, 60, 255, 0.24);
-}
-
 .sg-knowledge-workspace {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 350px;
@@ -654,41 +623,6 @@ export const KnowledgeGlobalStyles = createGlobalStyle(css`
   width: 26px;
   height: 30px;
 }
-.sg-knowledge-detail-tabs {
-  display: flex;
-  height: 42px;
-  overflow: hidden;
-  padding: 0 12px;
-  border-top: 1px solid var(--sg-border);
-  border-bottom: 1px solid var(--sg-border);
-}
-.sg-knowledge-detail-tabs button {
-  position: relative;
-  min-width: 0;
-  flex: 1;
-  padding: 0 4px;
-  border: 0;
-  color: var(--sg-muted);
-  background: transparent;
-  font-size: 10.5px;
-  white-space: nowrap;
-  cursor: pointer;
-}
-.sg-knowledge-detail-tabs button:hover {
-  color: var(--sg-fg);
-}
-.sg-knowledge-detail-tabs button.active {
-  color: #ba9cff;
-}
-.sg-knowledge-detail-tabs button.active::after {
-  position: absolute;
-  right: 9px;
-  bottom: 0;
-  left: 9px;
-  height: 2px;
-  background: var(--sg-accent);
-  content: "";
-}
 .sg-knowledge-detail-body {
   min-height: 486px;
   padding: 14px 15px;
@@ -1018,14 +952,6 @@ export const KnowledgeGlobalStyles = createGlobalStyle(css`
   }
   .sg-knowledge-stat-copy strong {
     font-size: 17px;
-  }
-  .sg-knowledge-scope-tabs {
-    width: 100%;
-  }
-  .sg-knowledge-scope-tabs button {
-    min-width: 0;
-    flex: 1;
-    padding: 0 8px;
   }
   .sg-knowledge-toolbar {
     flex-wrap: wrap;

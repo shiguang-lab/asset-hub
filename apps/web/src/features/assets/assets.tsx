@@ -29,6 +29,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { canWriteWorkspace, getAuthSession } from "../../auth/session.js";
 import { type Asset, api } from "../../entities/api.js";
+import { AppTabs } from "../../shared/AppTabs.js";
 import { isOwnedBySession, ownerDisplayName } from "../../shared/owner.js";
 import { useDeleteConfirm } from "../../shared/useDeleteConfirm";
 
@@ -369,23 +370,14 @@ export function AssetsPage() {
             </div>
           </div>
 
-          <div className="sg-type-bar" role="tablist">
-            {TYPE_ORDER.map((t) => (
-              <button
-                key={t.id}
-                type="button"
-                role="tab"
-                aria-selected={type === t.id}
-                className={`sg-type-chip ${type === t.id ? "active" : ""}`}
-                onClick={() => {
-                  setType(t.id);
-                  setSelected(new Set());
-                }}
-              >
-                {t.label} <em>{typeCount(t.id)}</em>
-              </button>
-            ))}
-          </div>
+          <AppTabs
+            items={TYPE_ORDER.map((t) => ({ key: t.id, label: t.label, count: typeCount(t.id) }))}
+            activeKey={type}
+            onChange={(key) => {
+              setType(key);
+              setSelected(new Set());
+            }}
+          />
 
           <div className="sg-assets-toolbar">
             <Input

@@ -109,11 +109,38 @@ Web 工作台默认使用近黑色暗黑主题，禁止将页面背景改为蓝�
 
 ## 3.3 样式实现规范（锁定）
 
-- Web 应用与 `@shiguang/ui` 的项目自有样式统一使用 `antd-style`，禁止新增业务 `.css` 文件或在页面入口导入项目自有 CSS。
+- Web 应用与 `@shiguang/ui` 的项目自有样式统一使用 `antd-style`，禁止新增业务 `.css` / `.less` 文件或在页面入口导入项目自有 CSS。
 - 组件内聚样式优先使用 `createStyles`；跨组件基础样式、第三方组件覆盖和需要保留稳定类名的兼容层使用 `createGlobalStyle`。
 - 全局样式必须按业务模块拆分并由 `ThemeProvider` 统一挂载，禁止重新建立单体 `styles.css`。
 - 颜色、间距、圆角和组件状态优先引用 Ant Design token 与项目主题 token，不得在业务页面重新定义主题。
 - KaTeX 等第三方依赖自带的样式可由构建工具直接导入，但不得把第三方 CSS 复制进项目样式模块。
+
+### 3.3.1 组件外观：Theme Token 优先，antd-style 只补 Token 表达不了的
+
+Ant Design 组件的「主题外观」应通过 `ThemeConfig.components.*` 的 Theme Token 配置（统一收敛在
+`apps/web/src/theme/tokens.ts`），**不要在组件内用 `createStyles` 重复写一遍 Token 已覆盖的属性**
+（否则 createStyles 优先级更高，会覆盖 Theme Token，导致主题配置失效）。
+
+| 外观维度 | 用 Theme Token | 用 antd-style createStyles |
+| --- | --- | --- |
+| 字号、间距、padding、外边距 | ✅ 组件专属 Token（如 `Tabs.titleFontSize`、`horizontalItemPadding`） | ❌ |
+| 各态配色、高亮线颜色、边框 | ✅ 组件专属 Token（如 `Tabs.itemColor`、`inkBarColor`、`colorBorderSecondary`） | ❌ |
+| 结构/布局、伪元素、动画细节 | ❌ 部分 Token 无对应字段 | ✅（如占位撑宽、徽标、ink-bar 圆角） |
+
+关键注意点：`createStyles` 回调的 `token` 是**全局 AliasToken**，不含组件专属 Token（如
+`Tabs.itemColor`、`titleFontSize`），因此组件内无法直接读取组件专属 Token——这正是它们必须
+配置在 `tokens.ts` 的原因。
+
+首个落地范式：`apps/web/src/shared/AppTabs.tsx`
+- 主题外观（13px 字号、间距、padding、muted 配色、选中紫、高亮紫线、nav 边框）全部由
+  `tokens.ts` 的 `components.Tabs` 提供；
+- 组件内 `createStyles` 仅保留 Token 表达不了的 3 件事：隐藏 600 字重占位撑宽（选中加粗不抖动）、
+  数字徽标 `<em>`、ink-bar 圆角/高度；
+- 后续新增自定义组件请遵循同样的「Token 先行、createStyles 兜底」结构。
+
+> 迁移提示：`apps/web/src/styles/*.ts` 中的 `createGlobalStyle` 业务样式属于历史遗留，
+> 新代码不得继续新增该类全局样式；涉及第三方组件外观覆盖时优先通过 Theme Token 收敛。
+
 
 ## 4. 数据获取
 
