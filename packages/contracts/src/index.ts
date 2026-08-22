@@ -393,14 +393,6 @@ export type PresentationDocument = z.infer<typeof presentationDocumentSchema>;
  * 演示「章节大纲」：AI 从源内容提炼出的叙事结构（不是页面 1:1 列表）。
  * 一个 section 在生成阶段可展开为 1..N 页（由内容量与视觉类型决定）。
  */
-export const outlineDataPointSchema = z.object({
-  id: z.string(),
-  label: z.string(),
-  value: z.string(),
-  note: z.string().optional(),
-});
-export type OutlineDataPoint = z.infer<typeof outlineDataPointSchema>;
-
 export const outlineVisualSchema = z.enum([
   "default",
   "metrics",
@@ -416,7 +408,6 @@ export const presentationSectionSchema = z.object({
   title: z.string(),
   summary: z.string().default(""),
   points: z.array(z.string()).default([]),
-  data: z.array(outlineDataPointSchema).default([]),
   visual: outlineVisualSchema.default("default"),
 });
 export type PresentationSection = z.infer<typeof presentationSectionSchema>;

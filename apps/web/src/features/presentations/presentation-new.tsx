@@ -5,18 +5,11 @@ import { useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { type Asset, api } from "../../entities/api.js";
 
-interface DataPoint {
-  id: string;
-  label: string;
-  value: string;
-  note?: string;
-}
 interface Section {
   id: string;
   title: string;
   summary: string;
   points: string[];
-  data: DataPoint[];
   visual: string;
 }
 interface Outline {
@@ -46,20 +39,7 @@ export function normalizeOutline(value: unknown): Outline | null {
         points: Array.isArray(section.points)
           ? section.points.filter((point): point is string => typeof point === "string")
           : [],
-        data: Array.isArray(section.data)
-          ? section.data.flatMap((point, pointIndex) => {
-              if (!point || typeof point !== "object") return [];
-              const dataPoint = point as Record<string, unknown>;
-              return [
-                {
-                  id: stringValue(dataPoint.id, `d-${pointIndex + 1}`),
-                  label: stringValue(dataPoint.label),
-                  value: stringValue(dataPoint.value),
-                  ...(typeof dataPoint.note === "string" ? { note: dataPoint.note } : {}),
-                },
-              ];
-            })
-          : [],
+
         visual: VISUAL_OPTIONS.some((option) => option.value === section.visual)
           ? String(section.visual)
           : "default",
@@ -87,7 +67,7 @@ export function normalizeOutline(value: unknown): Outline | null {
         title: stringValue(slide.title, `要点 ${index + 1}`),
         summary: points[0] ?? "",
         points: points.slice(0, 4),
-        data: [],
+
         visual: "default",
       });
     }
@@ -118,8 +98,12 @@ export function PresentationNewPage() {
   const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
   const [assetId, setAssetId] = useState(params.get("asset") ?? "");
   const [title, setTitle] = useState("");
+  const [prompt, setPrompt] = useState(params.get("topic") ?? "");
   const [theme, setTheme] = useState("light");
   const [outline, setOutline] = useState<Outline | null>(null);
+  const [sourceMode, setSourceMode] = useState<"document" | "report" | "template" | "ai">(
+    (params.get("source") as "document" | "report" | "template" | "ai") || "document",
+  );
 
   const { data: assets } = useQuery<{ items: Asset[] }>({
     queryKey: ["assets"],
@@ -129,7 +113,7 @@ export function PresentationNewPage() {
     mutationFn: () =>
       api<{ outline?: unknown }>("/presentations/outline", {
         method: "POST",
-        body: { assetId: assetId || undefined, title: title || undefined, theme },
+        body: { assetId: assetId || undefined, title: title || undefined, theme, prompt: prompt || undefined },
       }),
     onSuccess: (data) => {
       // Accept both the current `{ outline }` envelope and older direct-outline responses.
@@ -143,7 +127,7 @@ export function PresentationNewPage() {
       setStep(2);
       toast("success", "章节大纲已生成，可编辑后确认");
     },
-    onError: (e: Error) => toast("error", e.message),
+    onError: (e: Error) => toast("error", `生成失败：${e.message}，可点击「生成大纲」重试`),
   });
 
   const confirmMutation = useMutation({
@@ -166,8 +150,17 @@ export function PresentationNewPage() {
     onError: (e: Error) => toast("error", e.message),
   });
 
-  const docAssets = (assets?.items ?? []).filter((a) => ["document", "report"].includes(a.type));
-  const recentAssets = (assets?.items ?? []).slice(0, 4);
+  const docAssets = (assets?.items ?? []).filter((a) =>
+    sourceMode === "document"
+      ? a.type === "document"
+      : sourceMode === "report"
+        ? a.type === "report"
+        : ["document", "report"].includes(a.type),
+  );
+  const recentAssets = (assets?.items ?? [])
+    .slice()
+    .sort((a, b) => (b.updatedAt ?? "").localeCompare(a.updatedAt ?? ""))
+    .slice(0, 4);
 
   const updateSection = (index: number, patch: Partial<Section>) => {
     setOutline((o) =>
@@ -182,23 +175,7 @@ export function PresentationNewPage() {
         .filter(Boolean),
     });
   };
-  const updateData = (index: number, value: string) => {
-    // 每行格式：标签|数值|备注
-    const data: DataPoint[] = value
-      .split("\n")
-      .map((line) => line.trim())
-      .filter(Boolean)
-      .map((line, i) => {
-        const [label = "", val = "", note] = line.split("|");
-        return {
-          id: `d-${i}`,
-          label: label.trim(),
-          value: val.trim(),
-          note: note?.trim() || undefined,
-        };
-      });
-    updateSection(index, { data });
-  };
+
   const removeSection = (index: number) => {
     setOutline((o) => o && { ...o, sections: o.sections.filter((_, i) => i !== index) });
   };
@@ -214,7 +191,7 @@ export function PresentationNewPage() {
                 title: "新章节",
                 summary: "",
                 points: [],
-                data: [],
+
                 visual: "default",
               },
             ],
@@ -222,12 +199,11 @@ export function PresentationNewPage() {
         : o,
     );
   };
-  const dataText = (s: Section) =>
-    s.data.map((d) => [d.label, d.value, d.note ?? ""].join("|")).join("\n");
+
 
   return (
     <div className="sg-workflow-page">
-      <h1 className="sg-h1 sg-mb">新建在线演示</h1>
+
       <div className="sg-stepper">
         {[
           { id: 1, label: "选择内容来源" },
@@ -250,12 +226,19 @@ export function PresentationNewPage() {
           <p className="sg-subtle">选择现有内容或从空白开始，AI 将帮助您生成演示大纲</p>
           <div className="sg-grid" style={{ gridTemplateColumns: "repeat(4, 1fr)" }}>
             {[
-              { label: "从文档选择", sub: "从文档中提取内容，智能生成演示", icon: "📄" },
-              { label: "从报告选择", sub: "基于研究报告快速生成专业演示", icon: "📊" },
-              { label: "从模板创建", sub: "使用精选模板，快速创建演示", icon: "▣" },
-              { label: "AI 智能生成", sub: "输入主题，AI 帮你生成完整演示", icon: "✦" },
+              { mode: "document", label: "从文档选择", sub: "从文档中提取内容，智能生成演示", icon: "📄" },
+              { mode: "report", label: "从报告选择", sub: "基于研究报告快速生成专业演示", icon: "📊" },
+              { mode: "template", label: "从模板创建", sub: "使用精选模板，快速创建演示", icon: "▣" },
+              { mode: "ai", label: "AI 智能生成", sub: "输入主题，AI 帮你生成完整演示", icon: "✦" },
             ].map((item) => (
-              <Card key={item.label} hoverable onClick={() => setStep(2)}>
+              <Card
+                key={item.label}
+                hoverable
+                onClick={() => {
+                  setSourceMode(item.mode as "document" | "report" | "template" | "ai");
+                  setStep(2);
+                }}
+              >
                 <div style={{ fontSize: 26, marginBottom: 8 }}>{item.icon}</div>
                 <strong>{item.label}</strong>
                 <p className="sg-subtle" style={{ margin: "6px 0" }}>
@@ -313,41 +296,77 @@ export function PresentationNewPage() {
                 </Button>
               </div>
             </div>
-            <div className="sg-row sg-mt">
-              <Select
-                value={assetId}
-                onChange={setAssetId}
-                options={[
-                  { value: "", label: "选择来源文档…" },
-                  ...docAssets.map((a) => ({ value: a.id, label: a.title })),
-                ]}
-                style={{ maxWidth: 300 }}
-              />
-              <Input
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                placeholder="演示标题"
-                style={{ maxWidth: 260 }}
-              />
-              <Select
-                value={theme}
-                onChange={setTheme}
-                options={[
-                  { value: "light", label: "明亮" },
-                  { value: "dark", label: "深色" },
-                  { value: "brand", label: "商务" },
-                  { value: "minimal", label: "简约" },
-                  { value: "gradient", label: "创意" },
-                ]}
-                style={{ width: 120 }}
-              />
-              <Button
-                type="primary"
-                disabled={(!assetId && !title) || outlineMutation.isPending}
-                onClick={() => outlineMutation.mutate()}
-              >
-                {outlineMutation.isPending ? <Spin size="small" /> : "生成大纲"}
-              </Button>
+            <div className="sg-col sg-mt" style={{ gap: 16 }}>
+              <div className="sg-grid" style={{ gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+                <div>
+                  <small className="sg-subtle" style={{ display: "block", marginBottom: 4 }}>
+                    来源文档
+                  </small>
+                  <Select
+                    showSearch
+                    optionFilterProp="label"
+                    value={assetId}
+                    onChange={setAssetId}
+                    options={[
+                      { value: "", label: "不指定来源文档" },
+                      ...docAssets.map((a) => ({ value: a.id, label: a.title })),
+                    ]}
+                    placeholder="搜索或选择来源文档…"
+                    style={{ width: "100%" }}
+                  />
+                </div>
+                <div>
+                  <small className="sg-subtle" style={{ display: "block", marginBottom: 4 }}>
+                    演示标题
+                  </small>
+                  <Input
+                    value={title}
+                    onChange={(e) => setTitle(e.target.value)}
+                    placeholder="输入演示标题（可选）"
+                    style={{ width: "100%" }}
+                  />
+                </div>
+              </div>
+              <div>
+                <small className="sg-subtle" style={{ display: "block", marginBottom: 4 }}>
+                  生成要求（可选）
+                </small>
+                <Input.TextArea
+                  value={prompt}
+                  onChange={(e) => setPrompt(e.target.value)}
+                  placeholder="补充生成指令，例如：侧重财务数据、面向高管汇报、控制在 6 页以内"
+                  autoSize={{ minRows: 4, maxRows: 8 }}
+                  style={{ width: "100%" }}
+                />
+              </div>
+              <div className="sg-grid" style={{ gridTemplateColumns: "auto 1fr", gap: 16, alignItems: "end" }}>
+                <div>
+                  <small className="sg-subtle" style={{ display: "block", marginBottom: 4 }}>
+                    演示风格
+                  </small>
+                  <Select
+                    value={theme}
+                    onChange={setTheme}
+                    options={[
+                      { value: "light", label: "明亮" },
+                      { value: "dark", label: "深色" },
+                      { value: "brand", label: "商务" },
+                      { value: "minimal", label: "简约" },
+                      { value: "gradient", label: "创意" },
+                    ]}
+                    style={{ width: 200 }}
+                  />
+                </div>
+                <div className="sg-row" style={{ justifyContent: "flex-end" }}>
+                  <Button
+                    type="primary"
+                    disabled={(!assetId && !prompt) || outlineMutation.isPending}
+                    onClick={() => outlineMutation.mutate()}
+                  >
+                    {outlineMutation.isPending ? <Spin size="small" /> : "生成大纲"}
+                  </Button>
+                </div>
+              </div>
             </div>
           </Card>
 
@@ -381,35 +400,33 @@ export function PresentationNewPage() {
                         </Button>
                       </div>
                     </div>
-                    <Input
-                      value={section.title}
-                      onChange={(e) => updateSection(i, { title: e.target.value })}
-                      placeholder="断言式章节标题"
-                      className="sg-mb-sm"
-                    />
-                    <Input
-                      value={section.summary}
-                      onChange={(e) => updateSection(i, { summary: e.target.value })}
-                      placeholder="一句话概述（可选）"
-                      className="sg-mb-sm"
-                    />
-                    <div className="sg-grid sg-mb-sm" style={{ gridTemplateColumns: "1fr 1fr" }}>
-                      <div>
-                        <small className="sg-subtle">要点（每行一条）</small>
-                        <Input.TextArea
-                          value={section.points.join("\n")}
-                          onChange={(e) => updatePoints(i, e.target.value)}
-                          style={{ minHeight: 72, marginTop: 4 }}
-                        />
-                      </div>
-                      <div>
-                        <small className="sg-subtle">数据点（每行：标签|数值|备注）</small>
-                        <Input.TextArea
-                          value={dataText(section)}
-                          onChange={(e) => updateData(i, e.target.value)}
-                          style={{ minHeight: 72, marginTop: 4 }}
-                        />
-                      </div>
+                    <div className="sg-mb-sm">
+                      <small className="sg-subtle" style={{ display: "block", marginBottom: 4 }}>
+                        章节标题
+                      </small>
+                      <Input
+                        value={section.title}
+                        onChange={(e) => updateSection(i, { title: e.target.value })}
+                        placeholder="断言式标题，如「营收同比增长 23%」"
+                      />
+                    </div>
+                    <div className="sg-mb-sm">
+                      <small className="sg-subtle" style={{ display: "block", marginBottom: 4 }}>
+                        一句话概述（可选）
+                      </small>
+                      <Input
+                        value={section.summary}
+                        onChange={(e) => updateSection(i, { summary: e.target.value })}
+                        placeholder="该章的一句话概述"
+                      />
+                    </div>
+                    <div className="sg-mb-sm">
+                      <small className="sg-subtle">要点（每行一条）</small>
+                      <Input.TextArea
+                        value={section.points.join("\n")}
+                        onChange={(e) => updatePoints(i, e.target.value)}
+                        style={{ minHeight: 72, marginTop: 4 }}
+                      />
                     </div>
                   </div>
                 ))}

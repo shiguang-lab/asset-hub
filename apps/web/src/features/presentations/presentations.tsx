@@ -15,10 +15,13 @@ import {
 } from "@shiguang/content";
 import { Empty, Scrollbar, useToast } from "@shiguang/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Button, Input, Modal, Select } from "antd";
+import { Button, Input, Modal, Popconfirm, Select, Tooltip } from "antd";
 import {
+  ArrowDown,
+  ArrowUp,
   ChevronLeft,
   ChevronRight,
+  Copy,
   Eye,
   FileText,
   Grid2X2,
@@ -26,6 +29,7 @@ import {
   LayoutList,
   MoreHorizontal,
   Play,
+  Plus,
   Search,
   Share2,
   Sparkles,
@@ -82,28 +86,67 @@ function useHistory<T>(initial: T) {
   };
 }
 
-/** 在预览 iframe 内注入「点击选中 + 高亮」桥接脚本（不改动存储的 HTML 本体）。 */
+/** 在预览 iframe 内注入「点击选中 + 高亮 + 翻页 + 进场动画兜底」桥接脚本（不改动存储的 HTML 本体）。 */
 const SG_EDIT_BRIDGE = `<script>
 (function () {
-  var CSS = ".sg-editor-selected{outline:2px solid var(--sg-primary,#7c5cff) !important;outline-offset:3px;box-shadow:0 0 0 9999px rgba(124,92,255,0.06)}";
+  var CSS = [
+    ".sg-editor-selected{outline:2px solid var(--sg-primary,#7c5cff) !important;outline-offset:3px;box-shadow:0 0 0 9999px rgba(124,92,255,0.06)}",
+    ".sg-nav,.sg-progress,.sg-page-no{display:none !important}",
+    "[data-sg-enter]{opacity:1 !important;transform:none !important;animation:none !important}",
+    "[data-sg-page]{display:flex}",
+    "[data-sg-page] ~ [data-sg-page]{display:none}"
+  ].join("\\n");
   var st = document.createElement("style"); st.textContent = CSS; document.head.appendChild(st);
+
+  function triggerEnters() {
+    document.querySelectorAll("[data-sg-enter]:not(.sg-enter)").forEach(function (el) { el.classList.add("sg-enter"); });
+  }
+  triggerEnters();
+  setTimeout(triggerEnters, 200);
+
+  function showPage(pageId) {
+    var pages = Array.prototype.slice.call(document.querySelectorAll("[data-sg-page]"));
+    if (!pages.length) return;
+    var idx = -1;
+    if (pageId) {
+      for (var i = 0; i < pages.length; i++) {
+        if (pages[i].getAttribute("data-sg-id") === pageId) { idx = i; break; }
+      }
+    }
+    if (idx < 0) idx = 0;
+    pages.forEach(function (p, k) {
+      var show = k === idx;
+      p.classList.toggle("sg-active", show);
+      p.setAttribute("aria-hidden", show ? "false" : "true");
+      p.style.setProperty("display", show ? "flex" : "none", "important");
+    });
+    triggerEnters();
+  }
+
   document.addEventListener("click", function (e) {
     var el = e.target && e.target.closest ? e.target.closest("[data-sg-id]") : null;
     if (el) { window.parent.postMessage({ source: "sg-editor-preview", type: "select", id: el.getAttribute("data-sg-id") }, "*"); }
   });
   window.addEventListener("message", function (ev) {
     var d = ev.data || {};
-    if (d.source !== "sg-editor" || d.type !== "highlight") return;
-    document.querySelectorAll(".sg-editor-selected").forEach(function (x) { x.classList.remove("sg-editor-selected"); });
-    if (d.id) { var t = document.querySelector("[data-sg-id=\\"" + d.id + "\\"]"); if (t) t.classList.add("sg-editor-selected"); }
+    if (d.source !== "sg-editor") return;
+    if (d.type === "highlight") {
+      document.querySelectorAll(".sg-editor-selected").forEach(function (x) { x.classList.remove("sg-editor-selected"); });
+      if (d.id) { var t = document.querySelector("[data-sg-id=\\"" + d.id + "\\"]"); if (t) t.classList.add("sg-editor-selected"); }
+    } else if (d.type === "navigate") {
+      showPage(d.pageId || null);
+    }
   });
+  showPage(null);
 })();
 </script>`;
 
-/** 预览 srcDoc：在原 HTML 末尾注入选中桥接。 */
+/** 预览 srcDoc：在原 HTML 末尾注入编辑桥接脚本（含进场动画兜底 + 翻页控制）。 */
 function buildPreviewSrcDoc(html: string): string {
-  if (html.includes("</body>")) return html.replace("</body>", `${SG_EDIT_BRIDGE}</body>`);
-  return `${html}${SG_EDIT_BRIDGE}`;
+  if (!html) return "<!doctype html><html><body><div style='padding:20px;color:#999'>加载中...</div></body></html>";
+  return html.includes("</body>")
+    ? html.replace("</body>", `${SG_EDIT_BRIDGE}</body>`)
+    : `${html}${SG_EDIT_BRIDGE}`;
 }
 
 /** 单页缩略图 srcDoc：截取第 pageIndex 页，按 16:9 缩放到 240×135 的小窗口。 */
@@ -123,6 +166,7 @@ ${styles}
 html,body{margin:0;padding:0;overflow:hidden;width:240px;height:135px}
 .page-scaler{width:960px;height:540px;transform:scale(0.25);transform-origin:top left}
 .page-scaler [data-sg-page]{display:flex !important;height:540px !important;min-height:540px !important;overflow:hidden;padding:32px !important}
+[data-sg-enter]{opacity:1 !important;transform:none !important;animation:none !important}
 </style></head>
 <body><div class="page-scaler">${section.outerHTML}</div></body></html>`;
   } catch {
@@ -832,6 +876,7 @@ export function PresentationEditorPage() {
     canRedo,
   } = useHistory<string>("");
   const [activePageId, setActivePageId] = useState<string | null>(null);
+  const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [publishOpen, setPublishOpen] = useState(false);
   const [aiEditOpen, setAiEditOpen] = useState(false);
@@ -888,6 +933,15 @@ export function PresentationEditorPage() {
     );
   }, [selectedId, html]);
 
+  // 左侧缩略图点击 → 通知预览 iframe 翻到对应页
+  useEffect(() => {
+    if (!activePageId) return;
+    previewRef.current?.contentWindow?.postMessage(
+      { source: "sg-editor", type: "navigate", pageId: activePageId },
+      "*",
+    );
+  }, [activePageId, html]);
+
   const pages = useMemo(() => {
     try {
       return listPages(parsePresentationHtml(html));
@@ -907,9 +961,9 @@ export function PresentationEditorPage() {
   };
 
   const addPage = () => {
-    const nid = `slide-${Date.now().toString(36)}`;
+    const nid = `page-${Date.now().toString(36)}`;
     applyAst((tree) => astAddPage(tree, { id: nid, layout: "content", title: "新页面" }));
-    setActivePageId(`page-${nid}`);
+    setActivePageId(nid);
   };
   const removeActivePage = () => {
     if (!activePageId) return;
@@ -923,6 +977,7 @@ export function PresentationEditorPage() {
     if (!activePageId) return;
     const nid = `page-${Date.now().toString(36)}`;
     applyAst((tree) => astDuplicatePage(tree, activePageId, nid));
+    setActivePageId(nid);
   };
 
   const [theme, setTheme] = useState("light");
@@ -1025,51 +1080,68 @@ export function PresentationEditorPage() {
           <div className="sg-row-between" style={{ padding: "4px 4px 10px" }}>
             <strong style={{ fontSize: 13 }}>页面（{pages.length}）</strong>
             <div className="sg-row">
-              <Button size="small" type="text" onClick={addPage} aria-label="新增页面">
-                +
-              </Button>
-              <Button
-                size="small"
-                type="text"
-                disabled={!activePageId}
-                onClick={() => moveActivePage(-1)}
-                aria-label="上移"
-              >
-                ↑
-              </Button>
-              <Button
-                size="small"
-                type="text"
-                disabled={!activePageId}
-                onClick={() => moveActivePage(1)}
-                aria-label="下移"
-              >
-                ↓
-              </Button>
-              <Button
-                size="small"
-                type="text"
-                disabled={!activePageId}
-                onClick={duplicateActivePage}
-                aria-label="复制页面"
-              >
-                ⧉
-              </Button>
-              <Button
-                size="small"
-                type="text"
-                disabled={!activePageId}
-                onClick={removeActivePage}
-                aria-label="删除页面"
-              >
-                ×
-              </Button>
+              <Tooltip title="新增页面">
+                <Button size="small" type="text" onClick={addPage} icon={<Plus size={15} />} />
+              </Tooltip>
+              <Tooltip title={activePageId ? "上移" : "请先选择页面"}>
+                <Button
+                  size="small"
+                  type="text"
+                  disabled={!activePageId}
+                  onClick={() => moveActivePage(-1)}
+                  icon={<ArrowUp size={15} />}
+                />
+              </Tooltip>
+              <Tooltip title={activePageId ? "下移" : "请先选择页面"}>
+                <Button
+                  size="small"
+                  type="text"
+                  disabled={!activePageId}
+                  onClick={() => moveActivePage(1)}
+                  icon={<ArrowDown size={15} />}
+                />
+              </Tooltip>
+              <Tooltip title={activePageId ? "复制页面" : "请先选择页面"}>
+                <Button
+                  size="small"
+                  type="text"
+                  disabled={!activePageId}
+                  onClick={duplicateActivePage}
+                  icon={<Copy size={15} />}
+                />
+              </Tooltip>
+              <Popconfirm title="确定删除该页面？" onConfirm={removeActivePage} disabled={!activePageId}>
+                <Tooltip title={activePageId ? "删除页面" : "请先选择页面"}>
+                  <Button
+                    size="small"
+                    type="text"
+                    danger
+                    disabled={!activePageId}
+                    icon={<Trash2 size={15} />}
+                  />
+                </Tooltip>
+              </Popconfirm>
             </div>
           </div>
           {pages.map((p, i) => (
             <button
               type="button"
               key={p.id}
+              draggable
+              onDragStart={() => setDragIndex(i)}
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={() => {
+                if (dragIndex === null || dragIndex === i) return;
+                const sourceId = pages[dragIndex]?.id;
+                if (sourceId) {
+                  const direction = i > dragIndex ? 1 : -1;
+                  const steps = Math.abs(i - dragIndex);
+                  applyAst((tree) => {
+                    for (let s = 0; s < steps; s++) astMovePage(tree, sourceId, direction);
+                  });
+                }
+                setDragIndex(null);
+              }}
               className={`sg-slide-thumb ${activePageId === p.id ? "active" : ""}`}
               onClick={() => {
                 setActivePageId(p.id);
@@ -1096,7 +1168,7 @@ export function PresentationEditorPage() {
           <iframe
             ref={previewRef}
             title="演示预览"
-            sandbox="allow-scripts allow-forms allow-popups allow-modals"
+            sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals"
             srcDoc={buildPreviewSrcDoc(html)}
             style={{
               width: "100%",

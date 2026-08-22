@@ -46,7 +46,7 @@ function buildOutlineSystemPrompt(): string {
 
 核心原则（参考金字塔原理与断言-证据法）：
 1. 每章提炼一个「结论先行」的断言式标题（完整句子，表达观点，而非"背景/现状/趋势"这类标签）。
-2. 每章必须含 2~4 个具体要点（来自正文的数据、事实、判断），并尽量抽取可量化的数据点。
+2. 每章必须含 2~4 个具体要点（来自正文的数据、事实、判断），量化数据直接写入要点文本（如「营收同比增长 23%，创历史新高」）。
 3. 章节之间要有清晰的叙事递进（现状→问题→分析→结论→行动）。
 
 输出 JSON 结构：
@@ -60,9 +60,7 @@ function buildOutlineSystemPrompt(): string {
       "title": "断言式章节标题（完整结论句）",
       "summary": "该章一句话概述",
       "points": ["要点1", "要点2"],
-      "data": [
-        { "id": "d1", "label": "指标名", "value": "数值", "note": "口径/来源/时间" }
-      ],
+
       "visual": "${OUTLINE_VISUALS} 之一"
     }
   ]
@@ -70,38 +68,11 @@ function buildOutlineSystemPrompt(): string {
 
 要求：
 - 章节数按内容体量：短文 3~5 章，长文 6~10 章。每章是一个相对独立的主题单元（生成时一个章节可再展开为多页）。
-- 有量化数据时 visual 优先选 metrics（指标卡）或 chart（图表）；有对比选 two-column；有金句选 quote；有阶段演进选 timeline。
-- 所有内容必须来自源内容，禁止编造数字；数据不足时 data 留空数组。
+- 有对比选 two-column；有金句选 quote；有阶段演进选 timeline；有量化数据选 metrics；其余选 default。
+- 所有内容必须来自源内容，禁止编造数字。
 - 只输出 JSON，不要 Markdown 代码围栏、不要解释。`;
 }
 
-function fallbackOutline(
-  sourceTitle: string,
-  source: string,
-  theme: string,
-): Record<string, unknown> {
-  const paragraphs = source
-    .split(/\r?\n{2,}/)
-    .map((p) => p.replace(/^#{1,6}\s*/, "").trim())
-    .filter(Boolean);
-  const sections = (paragraphs.length >= 2 ? paragraphs : [source]).slice(0, 8).map((text, i) => {
-    const lines = text
-      .split(/\r?\n/)
-      .map((l) => l.trim())
-      .filter(Boolean);
-    const title = lines[0] ?? `要点 ${i + 1}`;
-    const points = lines.slice(1, 4);
-    return {
-      id: `sec-${i + 1}`,
-      title,
-      summary: title,
-      points,
-      data: [],
-      visual: "default",
-    };
-  });
-  return { title: sourceTitle || "演示文稿", theme, aspectRatio: "16:9", sections };
-}
 
 const pagePlanSchema = z.object({
   slides: z.array(slideSchema).min(1),
@@ -118,13 +89,13 @@ function buildPagePlanSystemPrompt(): string {
 1. 第一页固定 layout=title（封面：标题 + 副标题文字块）；最后一页固定 layout=closing（总结页）。
 2. 每个章节至少一页；内容丰富的章节拆成「章节引言页（layout=section）+ 内容页」。
 3. 视觉类型映射到页面：
-   - metrics → layout=content，用多个 metric 块（大数字指标卡，meta 带 label/value/note）；
+   - metrics → layout=content，heading + bullet（量化数据写在 bullet 文本中）；
    - chart → layout=data，用 chart 块（meta.chart 给 {type, data, labels}）；
    - two-column → layout=two-column，左右各放 card/heading+bullet；
    - quote → layout=quote，title 放金句，blocks 放出处；
    - timeline → layout=content，用 timeline 块（每行"时期：事件"）；
    - default → layout=content，heading + bullet。
-4. 每页标题用断言式完整句；bullet 用短句，每条 ≤ 24 字；指标/图表数值必须来自大纲 data，不得编造。
+4. 每页标题用断言式完整句；bullet 用短句，每条 ≤ 24 字；所有数值必须来自大纲要点，不得编造。
 
 输出 JSON（严格按下面结构）：
 {
@@ -142,8 +113,7 @@ function buildPagePlanSystemPrompt(): string {
       "layout": "content",
       "title": "断言式标题",
       "blocks": [
-        { "id": "b2", "type": "metric", "content": "", "meta": { "label": "指标名", "value": "数值", "note": "口径" } },
-        { "id": "b3", "type": "bullet", "content": "要点一\\n要点二" }
+        { "id": "b2", "type": "bullet", "content": "要点一\\n要点二" }
       ]
     }
   ]
@@ -162,7 +132,6 @@ async function expandOutlineToSlides(
     title: string;
     summary: string;
     points: string[];
-    data: Array<{ id: string; label: string; value: string; note?: string }>;
     visual: string;
   }>,
   source: string,
@@ -199,7 +168,6 @@ function deterministicSlides(
     title: string;
     summary: string;
     points: string[];
-    data: Array<{ id: string; label: string; value: string; note?: string }>;
     visual: string;
   }>,
 ): z.infer<typeof slideSchema>[] {
@@ -229,16 +197,7 @@ function deterministicSlides(
       content: string;
       meta?: Record<string, unknown>;
     }> = [];
-    if (section.visual === "metrics" && section.data.length > 0) {
-      section.data.forEach((d) => {
-        blocks.push({
-          id: `b${i}-m-${d.id}`,
-          type: "metric",
-          content: "",
-          meta: { label: d.label, value: d.value, note: d.note ?? "" },
-        });
-      });
-    }
+
     if (section.visual === "timeline" && section.points.length > 0) {
       blocks.push({
         id: `b${i}-tl`,
@@ -358,10 +317,11 @@ export function registerPresentations(app: FastifyInstance): void {
         sourceText: z.string().max(100_000).optional(),
         title: z.string().max(200).optional(),
         theme: presentationThemeSchema.optional(),
+        prompt: z.string().max(2000).optional(),
       })
       .parse(req.body);
-    if (!body.assetId && !body.sourceText) {
-      throw badRequest("SOURCE_REQUIRED", "需要提供 assetId 或 sourceText");
+    if (!body.assetId && !body.sourceText && !body.prompt) {
+      throw badRequest("SOURCE_REQUIRED", "需要提供 assetId、sourceText 或 prompt");
     }
     let source = body.sourceText ?? "";
     let sourceTitle = body.title ?? "";
@@ -370,35 +330,34 @@ export function registerPresentations(app: FastifyInstance): void {
       const content = await ctx.store.readContent(body.assetId);
       source = content?.text ?? "";
       sourceTitle = sourceTitle || asset.title;
+    } else if (!source && body.prompt) {
+      source = body.prompt;
+      sourceTitle = sourceTitle || body.prompt.slice(0, 60);
     }
     const theme = body.theme ?? "light";
-    let outline: Record<string, unknown>;
-    let provider = "model-gateway";
-    try {
-      const res = await ctx.ai.completeJson(
-        {
-          messages: [
-            {
-              role: "system",
-              content: buildOutlineSystemPrompt(),
-            },
-            {
-              role: "user",
-              content: `title: ${sourceTitle}\ntheme: ${theme}\nsource:\n${source.slice(0, 40_000)}`,
-            },
-          ],
-          quality: "balanced",
-          maxTokens: 8192,
-        },
-        outlineSchema,
-      );
-      provider = res.provider;
-      outline = res.data as Record<string, unknown>;
-      if (!Array.isArray(outline.sections) || outline.sections.length === 0) {
-        outline = fallbackOutline(sourceTitle, source, theme);
-      }
-    } catch {
-      outline = fallbackOutline(sourceTitle, source, theme);
+    const res = await ctx.ai.completeJson(
+      {
+        messages: [
+          {
+            role: "system",
+            content: buildOutlineSystemPrompt(),
+          },
+          {
+            role: "user",
+            content: `title: ${sourceTitle}\ntheme: ${theme}\n${
+              body.prompt ? `用户要求：${body.prompt}\n` : ""
+            }source:\n${source.slice(0, 40_000)}`,
+          },
+        ],
+        quality: "balanced",
+        maxTokens: 8192,
+      },
+      outlineSchema,
+    );
+    const provider = res.provider;
+    const outline = res.data as Record<string, unknown>;
+    if (!Array.isArray(outline.sections) || outline.sections.length === 0) {
+      throw badRequest("OUTLINE_EMPTY", "AI 返回的大纲为空，请重试");
     }
     await ctx.store.audit(
       req.actor.workspaceId,

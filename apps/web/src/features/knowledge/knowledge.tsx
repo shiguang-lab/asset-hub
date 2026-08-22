@@ -480,7 +480,7 @@ export function KnowledgePage() {
 
           {paged.length === 0 ? (
             <div className="sg-knowledge-empty">
-              <BookOpen size={32} />
+              <BookOpen size={48} />
               <strong>没有匹配的知识库</strong>
               <span>调整筛选条件，或在 Header 右侧新建知识库。</span>
             </div>
@@ -837,7 +837,7 @@ export function KnowledgePage() {
             </>
           ) : (
             <div className="sg-knowledge-detail-empty">
-              <BookOpen size={30} />
+              <BookOpen size={44} />
               <strong>选择一个知识库</strong>
               <span>查看概览、文档和权限信息</span>
             </div>

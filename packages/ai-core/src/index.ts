@@ -450,6 +450,7 @@ export class AiService {
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
+      console.warn("[ai-core] model gateway failed, falling back to local:", message);
       if (process.env.AI_FALLBACK_TO_LOCAL === "false") {
         throw err;
       }
@@ -470,7 +471,15 @@ export class AiService {
       .trim()
       .replace(/^```(?:json)?\s*/i, "")
       .replace(/\s*```$/, "");
-    return { data: schema.parse(JSON.parse(raw)), provider: res.provider, usage: res.usage };
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      const fallbackMatch = raw.match(/ai-fallback:\s*([^>]+)/);
+      const hint = fallbackMatch?.[1] ? `（网关错误：${fallbackMatch[1].trim()}）` : "";
+      throw new Error(`AI 服务返回了非 JSON 内容${hint}，可能余额不足或服务不可用`);
+    }
+    return { data: schema.parse(parsed), provider: res.provider, usage: res.usage };
   }
 }
 
