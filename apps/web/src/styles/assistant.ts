@@ -162,9 +162,7 @@ export const AssistantGlobalStyles = createGlobalStyle(css`
     flex: 1;
     width: auto;
   }
-  .sg-content {
-    padding: 14px 12px 48px;
-  }
+
   .sg-home-hero {
     min-height: 240px;
     padding: 30px 22px;

@@ -10,6 +10,7 @@ interface Section {
   title: string;
   summary: string;
   points: string[];
+  data: unknown[];
   visual: string;
 }
 interface Outline {
@@ -39,6 +40,7 @@ export function normalizeOutline(value: unknown): Outline | null {
         points: Array.isArray(section.points)
           ? section.points.filter((point): point is string => typeof point === "string")
           : [],
+        data: Array.isArray(section.data) ? section.data : [],
 
         visual: VISUAL_OPTIONS.some((option) => option.value === section.visual)
           ? String(section.visual)
@@ -67,6 +69,7 @@ export function normalizeOutline(value: unknown): Outline | null {
         title: stringValue(slide.title, `要点 ${index + 1}`),
         summary: points[0] ?? "",
         points: points.slice(0, 4),
+        data: [],
 
         visual: "default",
       });
@@ -191,6 +194,7 @@ export function PresentationNewPage() {
                 title: "新章节",
                 summary: "",
                 points: [],
+                data: [],
 
                 visual: "default",
               },

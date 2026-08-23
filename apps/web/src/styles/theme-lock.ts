@@ -253,7 +253,6 @@ body,
   color: #b8b5c9;
 }
 .sg-create-button.ant-btn {
-  width: 104px;
   min-width: 104px;
   height: 36px;
   border-radius: 9px;
@@ -351,10 +350,7 @@ body,
   cursor: default !important;
   opacity: 1;
 }
-.sg-content {
-  max-width: none;
-  padding: 24px;
-}
+
 
 .sg-docs .sg-assets-head {
   align-items: flex-start;
@@ -733,9 +729,7 @@ body,
     width: auto;
     flex: 1;
   }
-  .sg-content {
-    padding: 20px 14px 40px;
-  }
+
   .sg-docs-stats {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }

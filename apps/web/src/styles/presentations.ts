@@ -715,9 +715,487 @@ export const PresentationsGlobalStyles = createGlobalStyle(css`
   font-size: 12px;
 }
 
+.sg-page {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+
+/* ============ 在线演示编辑器（三栏 + WPS 风格工作区） ============ */
+/* 三栏布局：左缩略图栏固定宽，中工作区自适应，右属性面板固定宽 */
+.sg-slide-editor {
+  display: grid;
+  grid-template-columns: 184px minmax(0, 1fr) 300px;
+  gap: 12px;
+  align-items: stretch;
+  flex: 1;
+}
+.sg-slide-list {
+  width: 184px;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: 10px 8px;
+  overflow: auto;
+  border: 1px solid var(--sg-border);
+  border-radius: 8px;
+  background: var(--sg-bg-2);
+}
+.sg-slide-list-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 2px 4px 10px;
+  font-size: 13px;
+  color: var(--sg-fg-2);
+}
+.sg-slide-list-head strong {
+  font-weight: 650;
+}
+/* 每个缩略图项：相对定位，承载“分割线插入”按钮 */
+.sg-slide-item {
+  position: relative;
+  display: block;
+}
+/* 分割线插入按钮：默认隐藏，hover 到项上或分割线时浮现（对齐业内 slice 间 ＋） */
+.sg-slide-insert {
+  position: absolute;
+  top: -11px;
+  left: 50%;
+  z-index: 2;
+  display: flex;
+  width: 22px;
+  height: 22px;
+  align-items: center;
+  justify-content: center;
+  transform: translateX(-50%) scale(0.6);
+  border: 1px solid var(--sg-border);
+  border-radius: 50%;
+  color: var(--sg-muted);
+  background: var(--sg-bg-2);
+  opacity: 0;
+  cursor: pointer;
+  transition: opacity 0.12s ease, transform 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+}
+.sg-slide-item:hover > .sg-slide-insert,
+.sg-slide-insert:hover {
+  opacity: 1;
+  transform: translateX(-50%) scale(1);
+  color: #b99cff;
+  border-color: #5e467f;
+}
+.sg-slide-thumb {
+  position: relative;
+  display: block;
+  width: 100%;
+  margin: 4px 0;
+  padding: 0;
+  overflow: hidden;
+  border: 2px solid transparent;
+  border-radius: 6px;
+  background: #0d0c10;
+  cursor: pointer;
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
+}
+.sg-slide-thumb:hover {
+  border-color: #3a3346;
+}
+.sg-slide-thumb.active {
+  border-color: #7c5cff;
+  box-shadow: 0 0 0 2px rgba(124, 92, 255, 0.25);
+}
+.sg-slide-thumb-frame {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border: 0;
+  pointer-events: none;
+  background: #fff;
+}
+.sg-slide-thumb-no {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  z-index: 1;
+  padding: 1px 5px;
+  border-radius: 3px;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.55);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.sg-slide-thumb-label {
+  display: block;
+  padding: 4px 6px;
+  overflow: hidden;
+  color: var(--sg-fg-2);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 列表底部固定“新建页面”入口 */
+.sg-slide-add {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 9px 0;
+  border: 1px dashed var(--sg-border);
+  border-radius: 6px;
+  color: var(--sg-fg-2);
+  background: transparent;
+  font-size: 13px;
+  cursor: pointer;
+  transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease;
+}
+.sg-slide-add:hover {
+  color: #b99cff;
+  border-color: #5e467f;
+  background: rgba(124, 60, 255, 0.08);
+}
+/* 中间工作区：WPS/PowerPoint 网页版风格——中性工作区底色，画布居中浮于其上 */
+.sg-slide-workarea {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 24px;
+  overflow: auto;
+  border: 1px solid var(--sg-border);
+  border-radius: 8px;
+  background:
+    radial-gradient(circle at 50% 40%, rgba(124, 92, 255, 0.05), transparent 60%),
+    #0b0a0e;
+}
+/* 16:9 画布舞台：等比缩放填满可用区域，四周留工作区边距、带阴影 */
+.sg-slide-stage {
+  width: 100%;
+  max-width: min(100%, calc((100vh - 260px) * 16 / 9));
+  aspect-ratio: 16 / 9;
+  margin: auto;
+  border-radius: 6px;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.55);
+  overflow: hidden;
+}
+.sg-slide-frame {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: #fff;
+}
+.sg-editor-hint {
+  flex: none;
+  color: var(--sg-muted);
+  font-size: 12px;
+  text-align: center;
+}
+/* 空状态：无页面时的引导卡片 */
+.sg-slide-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  min-height: 320px;
+}
+.sg-slide-empty-card {
+  text-align: center;
+  padding: 40px 48px;
+  border: 1px dashed color-mix(in srgb, var(--sg-primary) 35%, transparent);
+  border-radius: 16px;
+  background: rgba(124, 92, 255, 0.04);
+  max-width: 420px;
+}
+.sg-slide-empty-card h3 {
+  margin: 0 0 10px;
+  font-size: 20px;
+  color: var(--sg-text-primary);
+}
+.sg-slide-empty-card p {
+  margin: 0 0 20px;
+  color: var(--sg-muted);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+/* ============ 演示编辑器：右侧属性面板（跟随选区 + 分组折叠） ============ */
+.sg-editor-right {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: 14px;
+  overflow: auto;
+  border: 1px solid var(--sg-border);
+  border-radius: 8px;
+  background: var(--sg-bg-2);
+  width: 300px;
+}
+.sg-editor-right h4 {
+  margin: 0 0 10px;
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--sg-fg-2);
+}
+.sg-el-section {
+  padding-bottom: 14px;
+  margin-bottom: 14px;
+  border-bottom: 1px solid var(--sg-border);
+}
+.sg-el-section:last-of-type {
+  border-bottom: 0;
+  margin-bottom: 0;
+  padding-bottom: 0;
+}
+.sg-el-full {
+  width: 100%;
+}
+.sg-el-empty {
+  padding: 14px;
+  border: 1px dashed var(--sg-border);
+  border-radius: 8px;
+}
+.sg-el-empty-title {
+  margin: 0 0 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--sg-fg);
+}
+.sg-el-multi-bar {
+  padding: 6px 0;
+}
+.sg-el-multi-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+.sg-el-overview {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin: 12px 0 0;
+}
+.sg-el-overview div {
+  padding: 8px 10px;
+  border: 1px solid var(--sg-border);
+  border-radius: 6px;
+  background: var(--sg-bg);
+}
+.sg-el-overview dt {
+  color: var(--sg-muted);
+  font-size: 11px;
+}
+.sg-el-overview dd {
+  margin: 3px 0 0;
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sg-el-inspector {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.sg-el-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.sg-el-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 4px;
+  color: #b99cff;
+  background: rgba(124, 60, 255, 0.14);
+  font-size: 12px;
+  font-weight: 600;
+}
+.sg-el-id {
+  overflow: hidden;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sg-el-group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 4px;
+}
+.sg-el-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.sg-el-field > .sg-el-label {
+  color: var(--sg-muted);
+  font-size: 12px;
+}
+.sg-el-foot {
+  margin-top: auto;
+  padding-top: 12px;
+  text-align: left;
+}
+
+.sg-el-hint-inline {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sg-el-raw {
+  border: 1px solid var(--sg-border);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 12px;
+  color: var(--sg-muted);
+}
+.sg-el-raw > summary {
+  cursor: pointer;
+  user-select: none;
+}
+.sg-el-raw > summary:hover {
+  color: var(--sg-primary);
+}
+
+.sg-el-color-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.sg-el-swatch {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  border: 1px solid var(--sg-border);
+  cursor: pointer;
+  padding: 0;
+  transition: transform 0.12s ease;
+}
+.sg-el-swatch:hover {
+  transform: scale(1.12);
+}
+.sg-el-swatch.active {
+  outline: 2px solid var(--sg-primary);
+  outline-offset: 2px;
+}
+.sg-el-color-input {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--sg-border);
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+}
+/* 主题配色预设：mini 预览条（背景/表面/主色 3 段）+ 名称，选中态 outline，自定义入口同形态 */
+.sg-el-palette-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.sg-el-palette-reset {
+  padding: 0;
+  height: auto;
+  font-size: 12px;
+}
+.sg-el-palette-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.sg-el-palette {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+}
+.sg-el-palette-swatch {
+  display: flex;
+  width: 52px;
+  height: 22px;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid var(--sg-border);
+  transition: transform 0.12s ease;
+}
+.sg-el-palette-swatch > span {
+  flex: 1;
+}
+.sg-el-palette-name {
+  font-size: 11px;
+  line-height: 1;
+  color: var(--sg-muted);
+}
+.sg-el-palette:hover .sg-el-palette-swatch {
+  transform: scale(1.06);
+}
+.sg-el-palette.active .sg-el-palette-swatch {
+  outline: 2px solid var(--sg-primary);
+  outline-offset: 1px;
+}
+/* 图片外观开关行（圆角外的边框 / 投影复选） */
+.sg-el-switch-row {
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+.sg-el-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--sg-text-primary);
+  cursor: pointer;
+  user-select: none;
+}
+.sg-el-switch input {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--sg-primary);
+  cursor: pointer;
+}
+.sg-el-pos-row {
+  flex-direction: row;
+  gap: 12px;
+}
+.sg-el-pos-col {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.sg-el-pos-col .sg-el-label {
+  font-size: 12px;
+}
+.sg-el-hint-sm {
+  margin: 4px 0 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--sg-muted);
+}
+.sg-el-z-row {
+  flex-direction: row;
+  gap: 8px;
+}
+
 @media (min-width: 1440px) {
   .sg-presentation-layout {
-    grid-template-columns: minmax(0, 1fr) 300px;
     gap: 16px;
   }
   .sg-presentation-stats {
@@ -725,13 +1203,6 @@ export const PresentationsGlobalStyles = createGlobalStyle(css`
   }
 }
 @media (max-width: 1180px) {
-  .sg-presentation-layout {
-    grid-template-columns: 1fr;
-  }
-  .sg-presentation-side {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
   .sg-presentation-toolbar {
     flex-wrap: wrap;
   }

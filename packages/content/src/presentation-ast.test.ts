@@ -99,4 +99,15 @@ describe("presentation AST", () => {
     expect(setTheme(tree, "dark")).toBe(true);
     expect(serializePresentationHtml(tree)).toContain("--sg-background: #0f1420");
   });
+
+  it("does not list the page section itself as an editable element", () => {
+    // 页面 section 自身带 data-sg-id（见 addPage），但不是可编辑元素。
+    // 预览侧 closest("[data-sg-id]") 点空区域会冒泡到 section，宿主若把该 id
+    // 当作选中元素就会在 elements 里找不到。这里锁定 listEditableElements 永远
+    // 不返回 section 自身的 id，作为"选中 page id 即无效选中"的数据层前提。
+    const tree = sampleTree();
+    const elements = listEditableElements(tree, "page-s1");
+    expect(elements.map((e) => e.id)).not.toContain("page-s1");
+    expect(listPages(tree).map((p) => p.id)).toContain("page-s1");
+  });
 });
