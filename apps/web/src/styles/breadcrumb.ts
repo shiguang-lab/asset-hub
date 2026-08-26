@@ -1,6 +1,7 @@
-import { createGlobalStyle, css } from "antd-style";
+import { createStyles } from "antd-style";
 
-export const BreadcrumbGlobalStyles = createGlobalStyle(css`
+export const useBreadcrumbStyles = createStyles(({ css }) => ({
+  root: css`
 /* Header breadcrumb rule: every route keeps its location at the left edge. */
 .sg-header .sg-breadcrumb {
   display: flex !important;
@@ -41,8 +42,7 @@ export const BreadcrumbGlobalStyles = createGlobalStyle(css`
     padding-inline: 12px !important;
   }
   .sg-header .sg-breadcrumb {
-    flex: 0 1 96px;
-    font-size: 13px;
+    display: none !important;
   }
   .sg-header-tools {
     min-width: 0;
@@ -52,9 +52,11 @@ export const BreadcrumbGlobalStyles = createGlobalStyle(css`
   }
   .sg-header-tools .sg-search {
     min-width: 0;
+    width: auto;
+    flex: 1;
   }
   .sg-header-actions {
-    gap: 4px !important;
+    gap: 2px !important;
   }
   .sg-create-button.ant-btn {
     width: 72px;
@@ -63,8 +65,21 @@ export const BreadcrumbGlobalStyles = createGlobalStyle(css`
   }
   .sg-create-button.is-context {
     width: auto;
-    min-width: 104px;
-    padding-inline: 8px;
+    min-width: 0;
+    max-width: 99px;
+    padding-inline: 6px;
+  }
+  .sg-create-button.is-context > span:last-child {
+    max-width: 62px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .sg-space-switcher.ant-btn {
+    max-width: 72px;
+    gap: 4px;
+    padding-inline: 4px;
   }
 }
-`);
+  `,
+}));

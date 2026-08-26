@@ -20,7 +20,7 @@ Node 与 Go 契约通过生成代码共享，不让 Go 解析 TypeScript 类型�
 | --- | --- |
 | `X-Request-ID` | 端到端请求标识；网关生成或校验 |
 | `traceparent` | W3C Trace Context |
-| `Idempotency-Key` | 创建任务、发布、Credit 操作等可重试命令 |
+| `Idempotency-Key` | 创建任务、发布等可重试命令 |
 | `If-Match` | Asset/Document 乐观锁，值为 version/etag |
 | `Last-Event-ID` | SSE 断点续传 |
 
@@ -90,9 +90,9 @@ Node 与 Go 契约通过生成代码共享，不让 Go 解析 TypeScript 类型�
 | `knowledge.source.added` | api/knowledge | worker | sourceId/versionRef |
 | `knowledge.source.ready/failed` | api projector | notification, UI | sourceId/indexVersion/errorCode |
 | `task.progressed` | workers | task projector, realtime | monotonic sequence/progress/step |
-| `task.completed/partial/failed` | api projector | notification, billing | outputs/cost/error summary |
+| `task.completed/partial/failed` | api projector | notification, realtime | outputs/error summary |
 | `publish.released/revoked` | api/publishing | public cache purge | releaseId/slug/etag |
-| `credit.reserved/settled/released` | api/billing | usage projection | ledgerEntryId/amount |
+| `credit.updated` | external points service | web balance cache | workspaceId/balance |
 
 ## 5. Task 状态与命令
 
@@ -151,9 +151,8 @@ Worker 结果示例：
 1. 插入 `projection_inbox`；
 2. 创建 Asset/Version/Relation；
 3. 更新 Task/Step 读模型；
-4. 结算 Credit ledger；
-5. 写 Outbox；
-6. 提交后再发布完成事件。
+4. 写 Outbox；
+5. 提交后再发布完成事件。
 
 ## 7. SSE 协议
 

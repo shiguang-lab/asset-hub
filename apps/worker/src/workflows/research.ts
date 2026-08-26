@@ -103,19 +103,13 @@ export async function runResearchWorkflow(
     });
   }
 
-  await step(ctx, "research.project", 95, "投影结果：生成资产并结算 Credits", async () => {
+  await step(ctx, "research.project", 95, "投影结果：生成资产", async () => {
     const result = await ctx.api.projectResult({
       resultSchema: "research-result/v1",
       taskId: ctx.taskId,
       runId: ctx.runId,
       attempt: 1,
       outputs,
-      usage: {
-        inputTokens: 0,
-        outputTokens: 0,
-        providerCostMicros: 0,
-        creditUnits: spec.depth === "quick" ? 150 : spec.depth === "deep" ? 1200 : 400,
-      },
       failures: [],
       evidence,
     });

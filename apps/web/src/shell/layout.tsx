@@ -1,7 +1,7 @@
 import { cx, Scrollbar, useToast } from "@shiguang/ui";
 import { useQuery } from "@tanstack/react-query";
 import type { MenuProps } from "antd";
-import { Badge, Button, Dropdown, Flex, Input, Layout, Menu, Select, Space } from "antd";
+import { Badge, Button, Checkbox, Dropdown, Flex, Input, Layout, Menu, Select, Space } from "antd";
 import { createStyles } from "antd-style";
 import {
   ArrowRight,
@@ -59,7 +59,6 @@ import {
 import {
   type Asset,
   api,
-  type CreditAccount,
   type HomeData,
   type SearchResult,
   uploadFile,
@@ -123,17 +122,41 @@ const useShellStyles = createStyles(() => ({
     overflow: "hidden",
   },
   main: {
+    flex: "1 1 0",
     minWidth: 0,
     minHeight: 0,
     overflow: "hidden",
+    display: "flex",
+    flexDirection: "column",
   },
   content: {
+    flex: "1 1 0",
     minHeight: 0,
     overflow: "hidden",
+    display: "flex",
+    flexDirection: "column",
   },
   viewport: {
+    height: "auto",
+    flex: "1 1 0",
+    minHeight: 0,
+    width: "100%",
+    overflowY: "auto",
+  },
+  sidebarViewport: {
     height: "100%",
     minHeight: 0,
+    width: "100%",
+    overflowY: "auto",
+  },
+  sidebarContent: {
+    height: "100%",
+    minHeight: "100%",
+  },
+  nav: {
+    background: "transparent",
+    border: "none",
+    flex: 1,
   },
 }));
 
@@ -161,7 +184,7 @@ const BREADCRUMBS: Array<{ match: RegExp; label: string }> = [
   { match: /^\/publishes/, label: "已发布" },
   { match: /^\/assistant/, label: "AI 助手" },
   { match: /^\/notifications/, label: "通知中心" },
-  { match: /^\/billing/, label: "套餐 / Credits" },
+  { match: /^\/billing/, label: "积分余额" },
   { match: /^\/profile/, label: "个人中心" },
   { match: /^\/settings/, label: "设置" },
 ];
@@ -191,22 +214,19 @@ export function Shell() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [pageBreadcrumb, setPageBreadcrumb] = useState<ShellBreadcrumb | null>(null);
-  const { styles } = useShellStyles();
   const { data: home } = useQuery<HomeData>({
     queryKey: ["home"],
     queryFn: () => api<HomeData>("/home"),
   });
-  const { data: creditData } = useQuery<{ account: CreditAccount | null }>({
+  const { data: creditData } = useQuery<{ balance: number }>({
     queryKey: ["credits"],
     queryFn: () => api("/credits"),
   });
   const authSession = getAuthSession();
   const canWrite = canWriteWorkspace(authSession);
-  const creditAccount = creditData?.account;
-  const creditTotal = Math.max(creditAccount?.totalGranted ?? home?.credits ?? 0, 0);
-  const creditsUsed = Math.max(creditAccount?.totalUsed ?? 0, 0);
-  const creditUsagePercent = creditTotal > 0 ? Math.min(100, (creditsUsed / creditTotal) * 100) : 0;
+  const creditBalance = creditData?.balance ?? 0;
   const displayName = authSession?.displayName ?? "用户";
+  const { styles } = useShellStyles();
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -421,6 +441,29 @@ export function Shell() {
     }
   };
 
+  const contentViewportClass = !paletteOpen
+    ? (() => {
+        if (/^\/documents\/[^/]+/.test(location.pathname)) {
+          return location.pathname.endsWith("/preview")
+            ? "sg-content-viewport-document-preview"
+            : "sg-content-viewport-document-editor";
+        }
+        if (/^\/assets\/[^/]+$/.test(location.pathname)) {
+          return "sg-content-viewport-asset-detail";
+        }
+        if (location.pathname === "/presentations/new") {
+          return "sg-content-viewport-presentation-new";
+        }
+        if (/^\/presentations\/generate(?:\/|$)/.test(location.pathname)) {
+          return "sg-content-viewport-presentation-generation";
+        }
+        if (/^\/presentations\/[^/]+$/.test(location.pathname)) {
+          return "sg-content-viewport-presentation-editor";
+        }
+        return undefined;
+      })()
+    : undefined;
+
   return (
     <ShellBreadcrumbContext.Provider value={setPageBreadcrumb}>
       <ShellDocumentActionsContext.Provider value={documentActions}>
@@ -458,8 +501,8 @@ export function Shell() {
             }}
           />
           <Sider width={266} className="sg-sidebar" theme="dark">
-            <Scrollbar className={styles.viewport}>
-              <Flex vertical style={{ minHeight: "100%" }}>
+            <Scrollbar className={styles.sidebarViewport}>
+              <Flex vertical className={styles.sidebarContent}>
                 <Link to="/" className="sg-sidebar-logo">
                   <span className="sg-brand-mark">
                     <Blocks size={18} />
@@ -474,8 +517,7 @@ export function Shell() {
                   items={menuItems}
                   selectedKeys={[activeKey]}
                   onClick={onMenuClick}
-                  className="sg-nav"
-                  style={{ background: "transparent", border: "none", flex: 1 }}
+                  className={cx("sg-nav", styles.nav)}
                 />
                 <div className="sg-sidebar-footer">
                   <Link
@@ -492,12 +534,11 @@ export function Shell() {
                   <Link to="/billing" className="sg-credits-box">
                     <div className="sg-credits-head">
                       <span className="sg-credits-title">
-                        <CircleDollarSign size={13} /> AI Credits
+                        <CircleDollarSign size={13} /> 积分余额
                       </span>
-                      <span className="sg-credits-percent">{Math.round(creditUsagePercent)}%</span>
-                    </div>
-                    <div className="sg-credits-progress">
-                      <span style={{ width: `${creditUsagePercent}%` }} />
+                      <span className="sg-credits-percent">
+                        {creditBalance.toLocaleString("zh-CN")} <small>积分</small>
+                      </span>
                     </div>
                   </Link>
                 </div>
@@ -606,16 +647,7 @@ export function Shell() {
               </div>
             </Header>
             <Content className={cx(styles.content, "sg-content-shell")}>
-              <Scrollbar
-                className={cx(
-                  styles.viewport,
-                  !paletteOpen &&
-                    /^\/documents\/[^/]+/.test(location.pathname) &&
-                    (location.pathname.endsWith("/preview")
-                      ? "sg-content-viewport-document-preview"
-                      : "sg-content-viewport-document-editor"),
-                )}
-              >
+              <Scrollbar className={cx(styles.viewport, contentViewportClass)}>
                 <div className={cx("sg-content", paletteOpen && "sg-search-content")}>
                   {paletteOpen ? (
                     <SearchWorkspace
@@ -829,7 +861,6 @@ interface SearchWorkspaceItem {
   updatedAt: string;
   owner: string;
   source: string;
-  tags: string[];
   meta: string;
 }
 
@@ -875,7 +906,6 @@ function SearchWorkspace({
   const [timeFilter, setTimeFilter] = useState("all");
   const [creatorFilter, setCreatorFilter] = useState("all");
   const [sourceFilter, setSourceFilter] = useState("all");
-  const [tagFilter, setTagFilter] = useState("all");
   const [mineOnly, setMineOnly] = useState(false);
   const [sort, setSort] = useState("relevance");
   const [selectedId, setSelectedId] = useState("");
@@ -914,7 +944,6 @@ function SearchWorkspace({
           ? "我创建的"
           : ownerDisplayName(asset, authSession),
         source: asset.sourceType || "manual",
-        tags: asset.tags ?? [],
         meta: `${asset.type === "report" ? "研究报告" : SEARCH_KIND_META[kind].label} · ${relativeSearchTime(asset.updatedAt)}`,
       });
     }
@@ -932,7 +961,6 @@ function SearchWorkspace({
             ? "我创建的"
             : task.ownerSubject || "我创建的",
         source: "task",
-        tags: [task.type],
         meta: `${task.status === "completed" ? "已完成" : "执行中"} · ${relativeSearchTime(task.updatedAt)}`,
       });
     }
@@ -947,17 +975,12 @@ function SearchWorkspace({
         updatedAt: knowledge.updatedAt,
         owner: "我创建的",
         source: "knowledge",
-        tags: [],
         meta: `包含 ${knowledge.chunkCount} 个内容 · ${relativeSearchTime(knowledge.updatedAt)}`,
       });
     }
     return result;
   }, [authSession, data, normalizedQuery]);
 
-  const availableTags = useMemo(
-    () => [...new Set(items.flatMap((item) => item.tags))].slice(0, 20),
-    [items],
-  );
   const filteredItems = useMemo(() => {
     const now = Date.now();
     const result = items.filter((item) => {
@@ -966,7 +989,6 @@ function SearchWorkspace({
       if (creatorFilter === "mine" && item.owner !== "我创建的") return false;
       if (mineOnly && item.owner !== "我创建的") return false;
       if (sourceFilter !== "all" && item.source !== sourceFilter) return false;
-      if (tagFilter !== "all" && !item.tags.includes(tagFilter)) return false;
       if (timeFilter !== "all") {
         const age = now - new Date(item.updatedAt).getTime();
         const limit =
@@ -981,17 +1003,7 @@ function SearchWorkspace({
       );
     if (sort === "title") return result.sort((a, b) => a.title.localeCompare(b.title, "zh-CN"));
     return result;
-  }, [
-    category,
-    creatorFilter,
-    items,
-    mineOnly,
-    sort,
-    sourceFilter,
-    tagFilter,
-    timeFilter,
-    typeFilter,
-  ]);
+  }, [category, creatorFilter, items, mineOnly, sort, sourceFilter, timeFilter, typeFilter]);
   const selectedIndex = Math.max(
     0,
     filteredItems.findIndex((item) => item.id === selectedId),
@@ -1046,7 +1058,7 @@ function SearchWorkspace({
 
   return (
     <div className="sg-global-search">
-      <nav className="sg-global-search-tabs" aria-label="搜索类型">
+      <Scrollbar as="nav" className="sg-global-search-tabs" aria-label="搜索类型">
         {categoryTabs.map((item) => {
           const TabIcon = item.icon;
           const count =
@@ -1066,8 +1078,8 @@ function SearchWorkspace({
             </button>
           );
         })}
-      </nav>
-      <section className="sg-global-search-filters">
+      </Scrollbar>
+      <Scrollbar className="sg-global-search-filters">
         <Select
           value={typeFilter}
           onChange={setTypeFilter}
@@ -1108,23 +1120,13 @@ function SearchWorkspace({
             { value: "task", label: "任务输出" },
           ]}
         />
-        <Select
-          value={tagFilter}
-          onChange={setTagFilter}
-          options={[
-            { value: "all", label: "标签" },
-            ...availableTags.map((tag) => ({ value: tag, label: tag })),
-          ]}
-        />
-        <label>
+        <Checkbox
+          className="sg-global-search-mine"
+          checked={mineOnly}
+          onChange={(event) => setMineOnly(event.target.checked)}
+        >
           仅看我的
-          <input
-            type="checkbox"
-            checked={mineOnly}
-            onChange={(event) => setMineOnly(event.target.checked)}
-          />
-          <i />
-        </label>
+        </Checkbox>
         <div className="sg-global-search-sort">
           <span>排序：</span>
           <Select
@@ -1137,7 +1139,7 @@ function SearchWorkspace({
             ]}
           />
         </div>
-      </section>
+      </Scrollbar>
 
       {!normalizedQuery ? (
         <section className="sg-global-search-start">

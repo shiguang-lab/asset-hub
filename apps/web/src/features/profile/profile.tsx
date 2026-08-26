@@ -1,10 +1,20 @@
 import { Avatar, Field, useToast } from "@shiguang/ui";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Button, Card, Input, Select, Switch } from "antd";
+import { createStyles } from "antd-style";
 import { useState } from "react";
 import { api } from "../../entities/api.js";
 
+const useProfileStyles = createStyles(() => ({
+  summaryGrid: {
+    gridTemplateColumns: "1fr 2fr",
+    "@media (max-width: 760px)": { gridTemplateColumns: "1fr" },
+  },
+  profileCard: { flexDirection: "column", gap: 10 },
+}));
+
 export function ProfilePage() {
+  const { styles } = useProfileStyles();
   const toast = useToast();
   const { data } = useQuery<{
     profile: {
@@ -15,7 +25,6 @@ export function ProfilePage() {
       createdAt: string;
     };
     workspaceId: string;
-    credits: number;
   }>({
     queryKey: ["me"],
     queryFn: () => api("/me"),
@@ -44,12 +53,11 @@ export function ProfilePage() {
   return (
     <div>
       <h1 className="sg-h1 sg-mb">个人中心</h1>
-      <div className="sg-grid" style={{ gridTemplateColumns: "1fr 2fr" }}>
-        <Card className="sg-center" style={{ flexDirection: "column", gap: 10 }}>
+      <div className={`sg-grid ${styles.summaryGrid}`}>
+        <Card className={`sg-center ${styles.profileCard}`}>
           <Avatar name={name || profile?.name || "用户"} size={64} />
           <strong>{name || profile?.name || "未命名用户"}</strong>
           <span className="sg-subtle">工作区 {data?.workspaceId}</span>
-          <span className="sg-badge sg-badge-accent">{data?.credits ?? 0} Credits</span>
           <span className="sg-subtle">
             加入于 {profile ? new Date(profile.createdAt).toLocaleDateString("zh-CN") : "-"}
           </span>
@@ -77,7 +85,7 @@ export function ProfilePage() {
               value={(quality || profile?.defaultQuality) ?? "balanced"}
               onChange={setQuality}
               options={[
-                { value: "economy", label: "经济（省 Credits）" },
+                { value: "economy", label: "经济" },
                 { value: "balanced", label: "均衡" },
                 { value: "best", label: "最佳" },
               ]}

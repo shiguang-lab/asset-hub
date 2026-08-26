@@ -1,10 +1,10 @@
-import { Empty, StatusBadge, useToast } from "@shiguang/ui";
+import { Empty, Scrollbar, StatusBadge, useToast } from "@shiguang/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button, Card, Input, Select, Tabs } from "antd";
+import { createStyles } from "antd-style";
 import * as echarts from "echarts";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { AppTable } from "../../shared/AppTable.js";
 import {
   api,
   type ChartSpec,
@@ -12,8 +12,40 @@ import {
   type SavedView,
   uploadFile,
 } from "../../entities/api.js";
+import { AppPagination } from "../../shared/AppPagination.js";
+import { AppTable } from "../../shared/AppTable.js";
+
+const useDatasetStyles = createStyles(() => ({
+  uploadLabel: { cursor: "pointer" },
+  datasetGrid: {
+    gridTemplateColumns: "repeat(3, 1fr)",
+    "@media (max-width: 760px)": { gridTemplateColumns: "1fr" },
+  },
+  datasetMeta: { margin: "6px 0 0" },
+  hiddenColumn: { maxWidth: 200, display: "none" },
+  sortColumn: { width: 180 },
+  sortDirection: { width: 100 },
+  rowLimit: { width: 110 },
+  filterColumn: { width: 180 },
+  filterOperator: { width: 120 },
+  filterValue: { maxWidth: 160 },
+  viewName: { maxWidth: 200 },
+  tableScroll: {
+    maxWidth: "100%",
+    maxHeight: 560,
+    minWidth: 0,
+  },
+  tableContent: {
+    minWidth: "max-content",
+  },
+  quickChartTitle: { marginTop: 20 },
+  chartName: { maxWidth: 160 },
+  chart: { width: "100%", height: 420 },
+  qualityTitle: { marginTop: 16 },
+}));
 
 export function DatasetsPage() {
+  const { styles } = useDatasetStyles();
   const navigate = useNavigate();
   const toast = useToast();
   const queryClient = useQueryClient();
@@ -32,7 +64,7 @@ export function DatasetsPage() {
     <div>
       <div className="sg-row-between sg-mb">
         <h1 className="sg-h1">数据集</h1>
-        <label className="sg-btn sg-btn-primary" style={{ cursor: "pointer" }}>
+        <label className={`sg-btn sg-btn-primary ${styles.uploadLabel}`}>
           上传 CSV / JSON
           <input
             type="file"
@@ -45,14 +77,14 @@ export function DatasetsPage() {
       {(data?.length ?? 0) === 0 ? (
         <Empty title="还没有数据集" hint="上传 CSV/JSON 后，可筛选、统计并生成 AI 洞察。" />
       ) : (
-        <div className="sg-grid" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
+        <div className={`sg-grid ${styles.datasetGrid}`}>
           {data?.map((d) => (
             <Card key={d.id} onClick={() => navigate(`/datasets/${d.id}`)} hoverable>
               <div className="sg-row-between">
                 <strong>{d.name}</strong>
                 <StatusBadge status={d.status} />
               </div>
-              <p className="sg-subtle" style={{ margin: "6px 0 0" }}>
+              <p className={`sg-subtle ${styles.datasetMeta}`}>
                 {d.rowCount.toLocaleString()} 行 · {d.currentVersion?.columnCount ?? 0} 列
               </p>
             </Card>
@@ -71,6 +103,7 @@ interface QueryRow {
 }
 
 export function DatasetDetailPage() {
+  const { styles } = useDatasetStyles();
   const { id } = useParams<{ id: string }>();
   const toast = useToast();
   const queryClient = useQueryClient();
@@ -252,7 +285,7 @@ export function DatasetDetailPage() {
               placeholder="筛选列名…"
               value={query.select.length ? "" : ""}
               readOnly
-              style={{ maxWidth: 200, display: "none" }}
+              className={styles.hiddenColumn}
             />
             <Select
               value={sortCol}
@@ -264,8 +297,7 @@ export function DatasetDetailPage() {
                 { value: "", label: "排序列…" },
                 ...version.schema.map((c) => ({ value: c.name, label: c.name })),
               ]}
-              className=""
-              style={{ width: 180 }}
+              className={styles.sortColumn}
             />
             <Select
               value={sortDir}
@@ -280,8 +312,7 @@ export function DatasetDetailPage() {
                 { value: "asc", label: "升序" },
                 { value: "desc", label: "降序" },
               ]}
-              className=""
-              style={{ width: 100 }}
+              className={styles.sortDirection}
             />
             <Select
               value={String(query.limit)}
@@ -291,43 +322,33 @@ export function DatasetDetailPage() {
                 { value: "500", label: "500 行" },
                 { value: "1000", label: "1000 行" },
               ]}
-              className=""
-              style={{ width: 110 }}
+              className={styles.rowLimit}
             />
           </div>
-          <AppTable<Record<string, unknown>>
-            rowKey={(_, i) => String(i)}
-            dataSource={queryResult.data?.rows ?? []}
-            pagination={false}
-            size="middle"
-            scroll={{ x: "max-content", y: 560 }}
-            columns={(queryResult.data?.columns ?? []).map((c) => ({
-              title: c.name,
-              dataIndex: c.name,
-              key: c.id,
-              render: (v: unknown) => String(v ?? ""),
-              ellipsis: true,
-            }))}
+          <Scrollbar className={styles.tableScroll}>
+            <div className={styles.tableContent}>
+              <AppTable<Record<string, unknown>>
+                rowKey={(_, i) => String(i)}
+                dataSource={queryResult.data?.rows ?? []}
+                pagination={false}
+                size="middle"
+                columns={(queryResult.data?.columns ?? []).map((c) => ({
+                  title: c.name,
+                  dataIndex: c.name,
+                  key: c.id,
+                  render: (v: unknown) => String(v ?? ""),
+                  ellipsis: true,
+                }))}
+              />
+            </div>
+          </Scrollbar>
+          <AppPagination
+            total={queryResult.data?.total ?? 0}
+            current={Math.floor(query.offset / query.limit) + 1}
+            pageSize={query.limit}
+            onChange={(nextPage) => setQuery((q) => ({ ...q, offset: (nextPage - 1) * q.limit }))}
+            itemLabel="行"
           />
-          <div className="sg-pagination">
-            <span className="sg-subtle">
-              共 {queryResult.data?.total.toLocaleString() ?? "-"} 行
-            </span>
-            <Button
-              size="small"
-              disabled={query.offset === 0}
-              onClick={() => setQuery((q) => ({ ...q, offset: Math.max(0, q.offset - q.limit) }))}
-            >
-              上一页
-            </Button>
-            <Button
-              size="small"
-              disabled={(queryResult.data?.rows.length ?? 0) < query.limit}
-              onClick={() => setQuery((q) => ({ ...q, offset: q.offset + q.limit }))}
-            >
-              下一页
-            </Button>
-          </div>
         </Card>
       )}
 
@@ -342,8 +363,7 @@ export function DatasetDetailPage() {
                 { value: "", label: "列…" },
                 ...version.schema.map((c) => ({ value: c.name, label: c.name })),
               ]}
-              className=""
-              style={{ width: 180 }}
+              className={styles.filterColumn}
             />
             <Select
               value={filterOp}
@@ -358,15 +378,14 @@ export function DatasetDetailPage() {
                 { value: "contains", label: "包含" },
                 { value: "is_null", label: "为空" },
               ]}
-              className=""
-              style={{ width: 120 }}
+              className={styles.filterOperator}
             />
             {filterOp !== "is_null" && (
               <Input
                 value={filterVal}
                 onChange={(e) => setFilterVal(e.target.value)}
                 placeholder="值"
-                style={{ maxWidth: 160 }}
+                className={styles.filterValue}
               />
             )}
             <Button size="small" onClick={applyFilter}>
@@ -395,17 +414,15 @@ export function DatasetDetailPage() {
               value={viewName}
               onChange={(e) => setViewName(e.target.value)}
               placeholder="视图名称"
-              style={{ maxWidth: 200 }}
+              className={styles.viewName}
             />
             <Button size="small" disabled={!viewName} onClick={() => saveView.mutate()}>
               保存视图
             </Button>
           </div>
-          <h3 className="sg-h3" style={{ marginTop: 20 }}>
-            快速建图
-          </h3>
+          <h3 className={`sg-h3 ${styles.quickChartTitle}`}>快速建图</h3>
           <div className="sg-row">
-            <Input placeholder="图表名" id="chart-name" style={{ maxWidth: 160 }} />
+            <Input placeholder="图表名" id="chart-name" className={styles.chartName} />
             <Button
               size="small"
               onClick={() => {
@@ -430,7 +447,7 @@ export function DatasetDetailPage() {
           {(dataset.charts?.length ?? 0) === 0 ? (
             <Empty title="还没有图表" hint="在“查询构建”中快速生成图表。" />
           ) : (
-            <div ref={chartRef} style={{ width: "100%", height: 420 }} />
+            <div ref={chartRef} className={styles.chart} />
           )}
         </Card>
       )}
@@ -481,9 +498,7 @@ export function DatasetDetailPage() {
               </div>
             ))
           )}
-          <h3 className="sg-h3" style={{ marginTop: 16 }}>
-            列画像
-          </h3>
+          <h3 className={`sg-h3 ${styles.qualityTitle}`}>列画像</h3>
           <AppTable<{ columnId: string; name: string; type: string; distinctCount?: number }>
             rowKey="columnId"
             dataSource={version.schema}
@@ -498,7 +513,16 @@ export function DatasetDetailPage() {
                 render: (_v, c) => {
                   const p = (
                     version.profile?.columns as
-                      | Record<string, { nonNull: number; distinct: number; min: number | null; max: number | null; avg: number | null }>
+                      | Record<
+                          string,
+                          {
+                            nonNull: number;
+                            distinct: number;
+                            min: number | null;
+                            max: number | null;
+                            avg: number | null;
+                          }
+                        >
                       | undefined
                   )?.[c.name];
                   return p?.nonNull ?? "-";
@@ -510,7 +534,16 @@ export function DatasetDetailPage() {
                 render: (_v, c) => {
                   const p = (
                     version.profile?.columns as
-                      | Record<string, { nonNull: number; distinct: number; min: number | null; max: number | null; avg: number | null }>
+                      | Record<
+                          string,
+                          {
+                            nonNull: number;
+                            distinct: number;
+                            min: number | null;
+                            max: number | null;
+                            avg: number | null;
+                          }
+                        >
                       | undefined
                   )?.[c.name];
                   return p?.distinct ?? c.distinctCount ?? "-";
@@ -522,7 +555,16 @@ export function DatasetDetailPage() {
                 render: (_v, c) => {
                   const p = (
                     version.profile?.columns as
-                      | Record<string, { nonNull: number; distinct: number; min: number | null; max: number | null; avg: number | null }>
+                      | Record<
+                          string,
+                          {
+                            nonNull: number;
+                            distinct: number;
+                            min: number | null;
+                            max: number | null;
+                            avg: number | null;
+                          }
+                        >
                       | undefined
                   )?.[c.name];
                   return p?.min ?? "-";
@@ -534,7 +576,16 @@ export function DatasetDetailPage() {
                 render: (_v, c) => {
                   const p = (
                     version.profile?.columns as
-                      | Record<string, { nonNull: number; distinct: number; min: number | null; max: number | null; avg: number | null }>
+                      | Record<
+                          string,
+                          {
+                            nonNull: number;
+                            distinct: number;
+                            min: number | null;
+                            max: number | null;
+                            avg: number | null;
+                          }
+                        >
                       | undefined
                   )?.[c.name];
                   return p?.max ?? "-";
@@ -546,7 +597,16 @@ export function DatasetDetailPage() {
                 render: (_v, c) => {
                   const p = (
                     version.profile?.columns as
-                      | Record<string, { nonNull: number; distinct: number; min: number | null; max: number | null; avg: number | null }>
+                      | Record<
+                          string,
+                          {
+                            nonNull: number;
+                            distinct: number;
+                            min: number | null;
+                            max: number | null;
+                            avg: number | null;
+                          }
+                        >
                       | undefined
                   )?.[c.name];
                   return p?.avg != null ? Number(p.avg).toFixed(2) : "-";

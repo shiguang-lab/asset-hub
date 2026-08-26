@@ -1,11 +1,11 @@
 import { Empty, formatRelative, Loading, useToast } from "@shiguang/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import type { MenuProps } from "antd";
 import { Button, Dropdown, Input, Progress, Select } from "antd";
+import { createStyles } from "antd-style";
 import {
   BookOpen,
   ChartNoAxesCombined,
-  ChevronLeft,
-  ChevronRight,
   Clock,
   Code2,
   Database,
@@ -29,11 +29,18 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { canWriteWorkspace, getAuthSession } from "../../auth/session.js";
 import { type Asset, api } from "../../entities/api.js";
+import { AppPagination } from "../../shared/AppPagination.js";
 import { AppTable } from "../../shared/AppTable.js";
-import { OwnerAvatar } from "../../shared/OwnerAvatar.js";
 import { AppTabs } from "../../shared/AppTabs.js";
+import { OwnerAvatar } from "../../shared/OwnerAvatar.js";
 import { isOwnedBySession, ownerDisplayName } from "../../shared/owner.js";
 import { useDeleteConfirm } from "../../shared/useDeleteConfirm";
+
+const useAssetsPageStyles = createStyles(() => ({
+  headerActions: {
+    gap: 8,
+  },
+}));
 
 const TYPE_ORDER = [
   { id: "all", label: "全部" },
@@ -155,6 +162,7 @@ function withinDays(iso: string, days: number): boolean {
 
 export function AssetsPage() {
   const navigate = useNavigate();
+  const { styles } = useAssetsPageStyles();
   const toast = useToast();
   const { confirmDelete } = useDeleteConfirm();
   const queryClient = useQueryClient();
@@ -165,13 +173,12 @@ export function AssetsPage() {
   const [visibility, setVisibility] = useState("all");
   const [owner, setOwner] = useState("all");
   const [modified, setModified] = useState("all");
-  const [tagFilter, setTagFilter] = useState("all");
   const [quick, setQuick] = useState<QuickId>("all");
   const [sort, setSort] = useState("updatedAt");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [tagInput, setTagInput] = useState("");
+  const [openAssetMenuId, setOpenAssetMenuId] = useState<string | null>(null);
 
   const includeDeleted = quick === "trash";
 
@@ -185,7 +192,7 @@ export function AssetsPage() {
   });
 
   const batchMutation = useMutation({
-    mutationFn: (input: { action: "delete" | "restore" | "tag"; ids: string[]; tags?: string[] }) =>
+    mutationFn: (input: { action: "delete" | "restore"; ids: string[] }) =>
       api("/assets:batch", { method: "POST", body: input }),
     onSuccess: () => {
       toast("success", "批量操作成功");
@@ -235,34 +242,16 @@ export function AssetsPage() {
         if (modified === "7d") return withinDays(a.updatedAt, 7);
         return withinDays(a.updatedAt, 30);
       })
-      .filter((a) => (tagFilter === "all" ? true : a.tags.includes(tagFilter)))
       .filter((a) =>
-        q.trim()
-          ? `${a.title} ${a.description} ${a.tags.join(" ")}`
-              .toLowerCase()
-              .includes(q.toLowerCase())
-          : true,
+        q.trim() ? `${a.title} ${a.description}`.toLowerCase().includes(q.toLowerCase()) : true,
       )
       .sort((a, b) =>
         sort === "title"
           ? a.title.localeCompare(b.title)
           : new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
       );
-  }, [
-    all,
-    authSession,
-    includeDeleted,
-    quick,
-    type,
-    visibility,
-    owner,
-    modified,
-    tagFilter,
-    q,
-    sort,
-  ]);
+  }, [all, authSession, includeDeleted, quick, type, visibility, owner, modified, q, sort]);
 
-  const pageCount = Math.max(1, Math.ceil(items.length / pageSize));
   const paged = useMemo(
     () => items.slice((page - 1) * pageSize, page * pageSize),
     [items, page, pageSize],
@@ -270,7 +259,7 @@ export function AssetsPage() {
 
   useEffect(() => {
     setPage(1);
-  }, [type, q, visibility, owner, modified, tagFilter, quick, pageSize]);
+  }, [type, q, visibility, owner, modified, quick, pageSize]);
 
   const typeCount = (id: string) =>
     all.filter((a) =>
@@ -292,12 +281,6 @@ export function AssetsPage() {
     if (id === "trash") return all.filter((a) => !!a.deletedAt).length;
     return 0; // favorites
   };
-
-  const tagCloud = useMemo(() => {
-    const count = new Map<string, number>();
-    for (const a of all) for (const t of a.tags.slice(0, 4)) count.set(t, (count.get(t) ?? 0) + 1);
-    return [...count.entries()].sort((a, b) => b[1] - a[1]).slice(0, 12);
-  }, [all]);
 
   const recentOpen = useMemo(
     () =>
@@ -323,22 +306,6 @@ export function AssetsPage() {
     };
   }, [storage]);
 
-  const pageButtons = useMemo(() => {
-    const out: Array<number | "…"> = [];
-    if (pageCount <= 7) {
-      for (let i = 1; i <= pageCount; i++) out.push(i);
-      return out;
-    }
-    out.push(1);
-    const start = Math.max(2, page - 1);
-    const end = Math.min(pageCount - 1, page + 1);
-    if (start > 2) out.push("…");
-    for (let i = start; i <= end; i++) out.push(i);
-    if (end < pageCount - 1) out.push("…");
-    out.push(pageCount);
-    return out;
-  }, [page, pageCount]);
-
   const visibleType = (a: Asset) => {
     if (a.visibility === "public") return { icon: Globe, cls: "public", label: "公开" };
     if (a.visibility === "link") return { icon: Link2, cls: "link", label: "知道链接的人" };
@@ -354,7 +321,7 @@ export function AssetsPage() {
               <h1 className="sg-h1">资产中心</h1>
               <p className="sg-assets-sub">统一管理你的所有内容</p>
             </div>
-            <div className="sg-row" style={{ gap: 8 }}>
+            <div className={`sg-row ${styles.headerActions}`}>
               <Button className="sg-assets-head-btn" onClick={() => navigate("/documents/new")}>
                 <Plus size={15} /> 新建
               </Button>
@@ -376,7 +343,7 @@ export function AssetsPage() {
           <div className="sg-assets-toolbar">
             <Input
               className="sg-assets-search"
-              placeholder="搜索文件名、内容、标签…"
+              placeholder="搜索文件名、内容…"
               value={q}
               onChange={(e) => setQ(e.target.value)}
               prefix={<Search size={15} />}
@@ -404,15 +371,6 @@ export function AssetsPage() {
               ]}
             />
             <Select
-              value={tagFilter}
-              onChange={setTagFilter}
-              className="sg-assets-select"
-              options={[
-                { value: "all", label: "标签" },
-                ...tagCloud.slice(0, 8).map(([t]) => ({ value: t, label: t })),
-              ]}
-            />
-            <Select
               value={visibility}
               onChange={setVisibility}
               className="sg-assets-select"
@@ -435,41 +393,20 @@ export function AssetsPage() {
             {selected.size > 0 && (
               <div className="sg-row sg-assets-batch">
                 {!includeDeleted && (
-                  <>
-                    <Input
-                      placeholder="输入标签后回车"
-                      value={tagInput}
-                      onChange={(e) => setTagInput(e.target.value)}
-                      style={{ width: 140 }}
-                    />
-                    <Button
-                      size="small"
-                      onClick={() =>
-                        tagInput &&
-                        batchMutation.mutate({
-                          action: "tag",
-                          ids: [...selected],
-                          tags: [tagInput],
-                        })
-                      }
-                    >
-                      加标签
-                    </Button>
-                    <Button
-                      size="small"
-                      type="primary"
-                      danger
-                      onClick={() =>
-                        confirmDeleteAssets(
-                          all
-                            .filter((a) => selected.has(a.id))
-                            .map((a) => ({ id: a.id, title: a.title })),
-                        )
-                      }
-                    >
-                      删除
-                    </Button>
-                  </>
+                  <Button
+                    size="small"
+                    type="primary"
+                    danger
+                    onClick={() =>
+                      confirmDeleteAssets(
+                        all
+                          .filter((a) => selected.has(a.id))
+                          .map((a) => ({ id: a.id, title: a.title })),
+                      )
+                    }
+                  >
+                    删除
+                  </Button>
                 )}
                 {includeDeleted && (
                   <Button
@@ -531,13 +468,6 @@ export function AssetsPage() {
                           </span>
                           <span className="sg-asset-name-copy">
                             <span className="sg-asset-title">{asset.title}</span>
-                            <span className="sg-asset-tags">
-                              {asset.tags.slice(0, 3).map((t) => (
-                                <span key={t} className="sg-tag sg-asset-tag">
-                                  {t}
-                                </span>
-                              ))}
-                            </span>
                           </span>
                         </div>
                       );
@@ -600,52 +530,47 @@ export function AssetsPage() {
                     width: 60,
                     render: (_v, asset) => (
                       <Dropdown
-                        trigger={["click"]}
+                        trigger={["hover"]}
+                        mouseEnterDelay={0}
+                        mouseLeaveDelay={0.15}
                         placement="bottomRight"
-                        popupRender={() => (
-                          <div className="sg-asset-menu" onClick={(e) => e.stopPropagation()}>
-                            <button type="button" onClick={() => navigate(assetHref(asset))}>
-                              打开资产
-                            </button>
-                            {workspaceWritable && !includeDeleted ? (
-                              <button
-                                type="button"
-                                onClick={() => navigate(`/assets/${asset.id}/edit`)}
-                              >
-                                编辑资产
-                              </button>
-                            ) : null}
-                            {!includeDeleted ? (
-                              <button
-                                type="button"
-                                className="danger"
-                                onClick={() =>
-                                  confirmDeleteAssets([{ id: asset.id, title: asset.title }])
-                                }
-                              >
-                                删除
-                              </button>
-                            ) : (
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  batchMutation.mutate({ action: "restore", ids: [asset.id] })
-                                }
-                              >
-                                恢复
-                              </button>
-                            )}
-                          </div>
-                        )}
+                        open={openAssetMenuId === asset.id}
+                        onOpenChange={(open) => setOpenAssetMenuId(open ? asset.id : null)}
+                        menu={{
+                          items: [
+                            { key: "open", label: "打开资产" },
+                            ...(workspaceWritable && !includeDeleted
+                              ? [{ key: "edit", label: "编辑资产" }]
+                              : []),
+                            includeDeleted
+                              ? { key: "restore", label: "恢复" }
+                              : { key: "delete", label: "删除", danger: true },
+                          ] satisfies MenuProps["items"],
+                          onClick: ({ key }) => {
+                            if (key === "open") navigate(assetHref(asset));
+                            if (key === "edit") navigate(`/assets/${asset.id}/edit`);
+                            if (key === "delete") {
+                              confirmDeleteAssets([{ id: asset.id, title: asset.title }]);
+                            }
+                            if (key === "restore") {
+                              batchMutation.mutate({ action: "restore", ids: [asset.id] });
+                            }
+                          },
+                        }}
                       >
-                        <button
-                          type="button"
-                          className="sg-asset-more"
+                        <Button
+                          size="small"
+                          type="text"
+                          className="sg-list-action-btn"
                           onClick={(e) => e.stopPropagation()}
+                          onFocus={() => setOpenAssetMenuId(asset.id)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Escape") setOpenAssetMenuId(null);
+                          }}
                           aria-label="更多操作"
                         >
                           <MoreHorizontal size={16} />
-                        </button>
+                        </Button>
                       </Dropdown>
                     ),
                   },
@@ -655,58 +580,13 @@ export function AssetsPage() {
           )}
 
           {!isLoading && paged.length > 0 && (
-            <div className="sg-pager">
-              <span className="sg-pager-total">共 {items.length} 项</span>
-              <div className="sg-pager-pages">
-                <button
-                  type="button"
-                  className="sg-page-btn"
-                  disabled={page <= 1}
-                  onClick={() => setPage((p) => p - 1)}
-                  aria-label="上一页"
-                >
-                  <ChevronLeft size={15} />
-                </button>
-                {pageButtons.map((p, i) =>
-                  p === "…" ? (
-                    <span key={`e-${i}`} className="sg-page-ellipsis">
-                      …
-                    </span>
-                  ) : (
-                    <button
-                      key={p}
-                      type="button"
-                      className={`sg-page-btn ${page === p ? "active" : ""}`}
-                      onClick={() => setPage(p)}
-                    >
-                      {p}
-                    </button>
-                  ),
-                )}
-                <button
-                  type="button"
-                  className="sg-page-btn"
-                  disabled={page >= pageCount}
-                  onClick={() => setPage((p) => p + 1)}
-                  aria-label="下一页"
-                >
-                  <ChevronRight size={15} />
-                </button>
-              </div>
-              <span className="sg-pager-size">
-                每页
-                <Select
-                  value={String(pageSize)}
-                  onChange={(v: string) => setPageSize(Number(v))}
-                  className="sg-pager-size-select"
-                  options={[
-                    { value: "10", label: "10 项" },
-                    { value: "20", label: "20 项" },
-                    { value: "50", label: "50 项" },
-                  ]}
-                />
-              </span>
-            </div>
+            <AppPagination
+              total={items.length}
+              current={page}
+              pageSize={pageSize}
+              onChange={setPage}
+              onPageSizeChange={setPageSize}
+            />
           )}
         </div>
 
@@ -771,17 +651,6 @@ export function AssetsPage() {
                   </button>
                 );
               })}
-            </div>
-          </div>
-
-          <div className="sg-side-card">
-            <h3 className="sg-h3 sg-side-title">标签云</h3>
-            <div className="sg-tag-cloud">
-              {tagCloud.map(([tag, n]) => (
-                <button key={tag} type="button" className="sg-tag" onClick={() => setQ(tag)}>
-                  {tag} <em>{n}</em>
-                </button>
-              ))}
             </div>
           </div>
         </aside>

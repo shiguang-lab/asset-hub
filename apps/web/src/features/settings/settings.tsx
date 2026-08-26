@@ -1,8 +1,8 @@
 import { Field, formatDate, Scrollbar, useToast } from "@shiguang/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button, Card, Input, Select, Switch, Tabs } from "antd";
+import { createStyles } from "antd-style";
 import { useState } from "react";
-import { AppTable } from "../../shared/AppTable.js";
 import {
   addOrganizationMember,
   fetchOrganizationMembers,
@@ -14,6 +14,31 @@ import {
   updateOrganizationMember,
 } from "../../auth/session.js";
 import { type ApiToken, api, type McpConfig } from "../../entities/api.js";
+import { AppTable } from "../../shared/AppTable.js";
+
+const useSettingsStyles = createStyles(({ token }) => ({
+  twoColumns: {
+    gridTemplateColumns: "1fr 1fr",
+    "@media (max-width: 760px)": { gridTemplateColumns: "1fr" },
+  },
+  repoUrl: { fontSize: 12 },
+  syncStatus: { fontSize: 11 },
+  domainSelect: { width: 220 },
+  dnsCard: { background: token.colorBgElevated },
+  dnsInput: { maxWidth: 240 },
+  memberInput: { maxWidth: 260 },
+  roleSelect: { width: 120 },
+  guideScroll: { maxHeight: 280 },
+  guidePre: {
+    margin: 0,
+    background: "#101625",
+    color: "#e6e9f2",
+    padding: 14,
+    borderRadius: 10,
+    fontSize: 12,
+  },
+  tokenCard: { background: token.colorBgElevated },
+}));
 
 export function SettingsPage() {
   const [tab, setTab] = useState("profile");
@@ -64,6 +89,7 @@ interface GitConnection {
 }
 
 function GitSettings() {
+  const { styles } = useSettingsStyles();
   const toast = useToast();
   const queryClient = useQueryClient();
   const { data } = useQuery<GitConnection[]>({
@@ -109,7 +135,7 @@ function GitSettings() {
   return (
     <div className="sg-col">
       <Card>
-        <div className="sg-grid" style={{ gridTemplateColumns: "1fr 1fr" }}>
+        <div className={`sg-grid ${styles.twoColumns}`}>
           <Field label="连接名称">
             <Input
               value={name}
@@ -143,7 +169,7 @@ function GitSettings() {
             placeholder={provider === "local" ? "/Users/me/docs" : "https://…"}
           />
         </Field>
-        <div className="sg-grid" style={{ gridTemplateColumns: "1fr 1fr" }}>
+        <div className={`sg-grid ${styles.twoColumns}`}>
           <Field label="分支">
             <Input value={branch} onChange={(e) => setBranch(e.target.value)} />
           </Field>
@@ -168,7 +194,11 @@ function GitSettings() {
           size="middle"
           columns={[
             { title: "名称", dataIndex: "name" },
-            { title: "仓库", dataIndex: "repo_url", render: (v) => <span style={{ fontSize: 12 }}>{v}</span> },
+            {
+              title: "仓库",
+              dataIndex: "repo_url",
+              render: (v) => <span className={styles.repoUrl}>{v}</span>,
+            },
             { title: "分支", dataIndex: "branch" },
             { title: "状态", dataIndex: "status" },
             {
@@ -177,7 +207,9 @@ function GitSettings() {
               render: (_v, c) => (
                 <>
                   {c.last_sync_at ? formatDate(c.last_sync_at) : "-"}
-                  {c.last_sync_status && <div style={{ fontSize: 11 }}>{c.last_sync_status}</div>}
+                  {c.last_sync_status && (
+                    <div className={styles.syncStatus}>{c.last_sync_status}</div>
+                  )}
                 </>
               ),
             },
@@ -212,6 +244,7 @@ interface CustomDomain {
 }
 
 function DomainSettings() {
+  const { styles } = useSettingsStyles();
   const toast = useToast();
   const queryClient = useQueryClient();
   const { data } = useQuery<CustomDomain[]>({
@@ -296,8 +329,7 @@ function DomainSettings() {
                     label: `${p.slug}（${p.assetId}）`,
                   })),
                 ]}
-                className=""
-                style={{ width: 220 }}
+                className={styles.domainSelect}
               />
               <Button size="small" type="primary" danger onClick={() => remove.mutate(d.id)}>
                 删除
@@ -305,7 +337,7 @@ function DomainSettings() {
             </div>
           </div>
           {d.status !== "verified" && (
-            <div className="sg-card sg-mt" style={{ background: "var(--sg-bg-3)" }}>
+            <div className={`sg-card sg-mt ${styles.dnsCard}`}>
               <p className="sg-label">添加 DNS TXT 记录：</p>
               <code>{d.verification_token}</code>
               <div className="sg-row sg-mt-sm">
@@ -313,7 +345,7 @@ function DomainSettings() {
                   value={token}
                   onChange={(e) => setToken(e.target.value)}
                   placeholder="粘贴验证 Token"
-                  style={{ maxWidth: 240 }}
+                  className={styles.dnsInput}
                 />
                 <Button size="small" type="primary" onClick={() => verify.mutate(d.id)}>
                   验证
@@ -328,6 +360,7 @@ function DomainSettings() {
 }
 
 function TeamSettings() {
+  const { styles } = useSettingsStyles();
   const toast = useToast();
   const queryClient = useQueryClient();
   const session = getAuthSession();
@@ -400,13 +433,13 @@ function TeamSettings() {
             value={loginName}
             onChange={(e) => setLoginName(e.target.value)}
             placeholder="成员登录账号"
-            style={{ maxWidth: 260 }}
+            className={styles.memberInput}
           />
           <Select
             value={role}
             onChange={(value) => setRole(value as OrganizationRole)}
             options={ORGANIZATION_ROLE_OPTIONS}
-            style={{ width: 120 }}
+            className={styles.roleSelect}
           />
           <Button
             type="primary"
@@ -430,7 +463,7 @@ function TeamSettings() {
             title: "成员",
             key: "member",
             render: (_v, member) => {
-              const memberRole = organizationRole(member.roles);
+              const _memberRole = organizationRole(member.roles);
               return (
                 <>
                   <strong>{member.displayName || member.loginName}</strong>
@@ -454,7 +487,7 @@ function TeamSettings() {
                     })
                   }
                   options={ORGANIZATION_ROLE_OPTIONS}
-                  style={{ width: 120 }}
+                  className={styles.roleSelect}
                 />
               ) : (
                 ORGANIZATION_ROLE_OPTIONS.find((option) => option.value === memberRole)?.label
@@ -538,7 +571,7 @@ function ProfileSettings() {
           value={quality || (data?.profile.defaultQuality ?? "balanced")}
           onChange={setQuality}
           options={[
-            { value: "economy", label: "经济（省 Credits）" },
+            { value: "economy", label: "经济" },
             { value: "balanced", label: "均衡" },
             { value: "best", label: "最佳" },
           ]}
@@ -556,6 +589,7 @@ function ProfileSettings() {
 }
 
 function McpSettings() {
+  const { styles } = useSettingsStyles();
   const toast = useToast();
   const queryClient = useQueryClient();
   const { data } = useQuery<{ config: McpConfig; serverUrl: string }>({
@@ -570,7 +604,7 @@ function McpSettings() {
   }>({
     queryKey: ["mcp-guide"],
     queryFn: () => api("/integrations/mcp/connection-guide"),
-    enabled: data?.config.enabled === true,
+    enabled: data?.config?.enabled === true,
   });
   const update = useMutation({
     mutationFn: (patch: Partial<McpConfig>) =>
@@ -651,33 +685,13 @@ function McpSettings() {
             在设置页创建 API Token（读取范围即可），然后用以下配置接入外部 Agent：
           </p>
           <Field label="Cursor / Claude Desktop (mcpServers)">
-            <Scrollbar style={{ maxHeight: 280 }}>
-              <pre
-                style={{
-                  background: "#101625",
-                  color: "#e6e9f2",
-                  padding: 14,
-                  borderRadius: 10,
-                  fontSize: 12,
-                }}
-              >
-                {JSON.stringify(guide?.cursor ?? {}, null, 2)}
-              </pre>
+            <Scrollbar className={styles.guideScroll}>
+              <pre className={styles.guidePre}>{JSON.stringify(guide?.cursor ?? {}, null, 2)}</pre>
             </Scrollbar>
           </Field>
           <Field label="ChatGPT">
-            <Scrollbar style={{ maxHeight: 280 }}>
-              <pre
-                style={{
-                  background: "#101625",
-                  color: "#e6e9f2",
-                  padding: 14,
-                  borderRadius: 10,
-                  fontSize: 12,
-                }}
-              >
-                {JSON.stringify(guide?.chatgpt ?? {}, null, 2)}
-              </pre>
+            <Scrollbar className={styles.guideScroll}>
+              <pre className={styles.guidePre}>{JSON.stringify(guide?.chatgpt ?? {}, null, 2)}</pre>
             </Scrollbar>
           </Field>
         </Card>
@@ -687,6 +701,7 @@ function McpSettings() {
 }
 
 function TokenSettings() {
+  const { styles } = useSettingsStyles();
   const queryClient = useQueryClient();
   const { data } = useQuery<ApiToken[]>({
     queryKey: ["tokens"],
@@ -734,7 +749,7 @@ function TokenSettings() {
       </Button>
 
       {created && (
-        <div className="sg-card sg-mt" style={{ background: "var(--sg-bg-3)" }}>
+        <div className={`sg-card sg-mt ${styles.tokenCard}`}>
           <strong>Token 已创建（仅显示一次）</strong>
           <Input readOnly value={created.secret} onFocus={(e) => e.target.select()} />
           <p className="sg-hint">请立即复制保存；Token 只存哈希，无法再次查看。</p>
@@ -749,8 +764,12 @@ function TokenSettings() {
         columns={[
           { title: "名称", dataIndex: "name" },
           { title: "权限", dataIndex: "scopes", render: (v) => v.join(", ") },
-          { title: "创建时间", dataIndex: "createdAt", render: (v) => new Date(v).toLocaleDateString("zh-CN") },
-          { title: "状态", dataIndex: "revokedAt", render: (v) => v ? "已撤销" : "有效" },
+          {
+            title: "创建时间",
+            dataIndex: "createdAt",
+            render: (v) => new Date(v).toLocaleDateString("zh-CN"),
+          },
+          { title: "状态", dataIndex: "revokedAt", render: (v) => (v ? "已撤销" : "有效") },
           {
             title: "操作",
             key: "actions",
@@ -817,13 +836,23 @@ function AuditLog() {
       {(data?.length ?? 0) === 0 ? (
         <p className="sg-subtle">暂无审计记录。</p>
       ) : (
-        <AppTable<{ action: string; resource: string; outcome: string; createdAt: string; actor: string }>
+        <AppTable<{
+          action: string;
+          resource: string;
+          outcome: string;
+          createdAt: string;
+          actor: string;
+        }>
           rowKey={(_, i) => String(i)}
           dataSource={data ?? []}
           pagination={false}
           size="middle"
           columns={[
-            { title: "时间", dataIndex: "createdAt", render: (v) => new Date(v).toLocaleString("zh-CN") },
+            {
+              title: "时间",
+              dataIndex: "createdAt",
+              render: (v) => new Date(v).toLocaleString("zh-CN"),
+            },
             { title: "操作", dataIndex: "action" },
             { title: "资源", dataIndex: "resource" },
             { title: "结果", dataIndex: "outcome" },

@@ -59,6 +59,7 @@ export const MARKDOWN_SURFACE_STYLES = `
 .sg-markdown-content pre {
   max-width: 100%;
   margin: 16px 0;
+  /* XMarkdown owns this generated node; the page/panel containing it uses Scrollbar. */
   overflow: auto;
   padding: 14px 16px;
   border: 1px solid var(--sg-markdown-code-border);

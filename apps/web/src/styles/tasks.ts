@@ -1,6 +1,7 @@
-import { createGlobalStyle, css } from "antd-style";
+import { createStyles } from "antd-style";
 
-export const TasksGlobalStyles = createGlobalStyle(css`
+export const useTasksStyles = createStyles(({ css }) => ({
+  root: css`
 /* Task center and task workspace: reference layout 2026-08-13. */
 .sg-task-center,
 .sg-task-new-page,
@@ -41,33 +42,9 @@ export const TasksGlobalStyles = createGlobalStyle(css`
   gap: 8px;
   padding: 14px 0 12px;
 }
-.sg-task-search,
-.sg-task-resource-search,
-.sg-task-source-head label {
-  display: flex;
-  min-width: 0;
-  height: 34px;
-  align-items: center;
-  gap: 8px;
-  padding: 0 11px;
-  border: 1px solid var(--sg-border);
-  border-radius: 6px;
-  color: var(--sg-muted);
-  background: var(--sg-bg-2);
-}
-.sg-task-search {
+.sg-task-search.ant-input-affix-wrapper {
   width: 240px;
-}
-.sg-task-search input,
-.sg-task-resource-search input,
-.sg-task-source-head input {
-  min-width: 0;
-  width: 100%;
-  border: 0;
-  outline: 0;
-  color: var(--sg-fg);
-  background: transparent;
-  font-size: 11px;
+  flex: none;
 }
 .sg-task-filter-select.ant-select {
   width: 140px;
@@ -808,20 +785,6 @@ export const TasksGlobalStyles = createGlobalStyle(css`
   position: relative;
   flex-direction: column;
   align-items: stretch;
-  overflow: hidden;
-  border: 1px solid var(--sg-border);
-  border-radius: 6px;
-  background: #0f0e13;
-}
-.sg-task-description-field textarea {
-  min-height: 96px;
-  resize: vertical;
-  padding: 11px;
-  border: 0;
-  outline: 0;
-  color: var(--sg-fg);
-  background: transparent;
-  font: 11px / 1.7 var(--sg-font);
 }
 .sg-task-description-field > span {
   padding: 0 10px 7px;
@@ -907,7 +870,8 @@ export const TasksGlobalStyles = createGlobalStyle(css`
   right: 7px;
   color: #a57fff;
 }
-.sg-task-resource-search {
+.sg-task-resource-search.ant-input-affix-wrapper {
+  width: 100%;
   max-width: 360px;
   margin-bottom: 10px;
 }
@@ -1010,28 +974,6 @@ export const TasksGlobalStyles = createGlobalStyle(css`
   color: var(--sg-fg-2);
   font-size: 10px;
   line-height: 1.5;
-}
-.sg-task-credit-estimate {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-top: 12px;
-  padding: 12px;
-  border-radius: 6px;
-  color: #b595ff;
-  background: rgba(124, 60, 255, 0.1);
-}
-.sg-task-credit-estimate b,
-.sg-task-credit-estimate small {
-  display: block;
-}
-.sg-task-credit-estimate b {
-  font-size: 10px;
-}
-.sg-task-credit-estimate small {
-  margin-top: 3px;
-  color: var(--sg-muted);
-  font-size: 8px;
 }
 .sg-task-new-footer {
   justify-content: space-between;
@@ -1753,8 +1695,9 @@ export const TasksGlobalStyles = createGlobalStyle(css`
   justify-content: space-between;
   margin-bottom: 10px;
 }
-.sg-task-source-head label {
+.sg-task-source-search.ant-input-affix-wrapper {
   width: 220px;
+  flex: none;
 }
 .sg-task-sources > article {
   gap: 10px;
@@ -1961,18 +1904,13 @@ export const TasksGlobalStyles = createGlobalStyle(css`
   border-radius: 4px;
   background: #111016;
 }
-.sg-task-report-page-control input {
+.sg-task-report-page-input.ant-input {
   width: 34px;
-  height: 100%;
   padding: 0;
-  border: 0;
-  color: var(--sg-fg);
-  background: #18161d;
-  font-size: 9px;
   text-align: center;
   appearance: textfield;
 }
-.sg-task-report-page-control input::-webkit-inner-spin-button {
+.sg-task-report-page-input.ant-input::-webkit-inner-spin-button {
   appearance: none;
 }
 .sg-task-report-page-control span {
@@ -1985,7 +1923,6 @@ export const TasksGlobalStyles = createGlobalStyle(css`
 }
 .sg-task-report-canvas {
   height: 616px;
-  overflow: auto;
   padding: 12px;
   background: #08070b;
 }
@@ -2423,7 +2360,7 @@ export const TasksGlobalStyles = createGlobalStyle(css`
     margin-left: 0;
   }
   .sg-task-stage-hero {
-    overflow-x: auto;
+    min-width: 0;
   }
   .sg-task-stage-hero > div {
     min-width: 115px;
@@ -2492,4 +2429,5 @@ export const TasksGlobalStyles = createGlobalStyle(css`
     display: none;
   }
 }
-`);
+  `,
+}));

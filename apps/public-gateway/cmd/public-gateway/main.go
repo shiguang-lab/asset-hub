@@ -33,10 +33,11 @@ type PublishMeta struct {
 		Status        string  `json:"status"`
 	} `json:"publish"`
 	Release *struct {
-		ID       string         `json:"id"`
-		Etag     string         `json:"etag"`
-		Manifest map[string]any `json:"manifest"`
-		Created  string         `json:"createdAt"`
+		ID             string         `json:"id"`
+		Etag           string         `json:"etag"`
+		AssetVersionID string         `json:"assetVersionId"`
+		Manifest       map[string]any `json:"manifest"`
+		Created        string         `json:"createdAt"`
 	} `json:"release"`
 	Asset *struct {
 		ID               string  `json:"id"`
@@ -55,16 +56,28 @@ type PublishMeta struct {
 }
 
 type publicMarkdownContent struct {
-	Title         string `json:"title"`
-	Markdown      string `json:"markdown"`
-	Visibility    string `json:"visibility"`
-	VisitorCount  int    `json:"visitorCount"`
-	PublishID     string `json:"publishId"`
-	ReleaseID     string `json:"releaseId"`
-	Publisher     *struct {
+	Title        string `json:"title"`
+	Markdown     string `json:"markdown"`
+	Visibility   string `json:"visibility"`
+	VisitorCount int    `json:"visitorCount"`
+	PublishID    string `json:"publishId"`
+	ReleaseID    string `json:"releaseId"`
+	Publisher    *struct {
 		Name      string  `json:"name"`
 		AvatarURL *string `json:"avatarUrl"`
 	} `json:"publisher"`
+	AllowDownload bool              `json:"allowDownload"`
+	AllowCopy     bool              `json:"allowCopy"`
+	AssetLinks    map[string]string `json:"assetLinks"`
+}
+
+type publicPresentationContent struct {
+	Title         string            `json:"title"`
+	HTML          string            `json:"html"`
+	Visibility    string            `json:"visibility"`
+	VisitorCount  int               `json:"visitorCount"`
+	PublishID     string            `json:"publishId"`
+	ReleaseID     string            `json:"releaseId"`
 	AllowDownload bool              `json:"allowDownload"`
 	AllowCopy     bool              `json:"allowCopy"`
 	AssetLinks    map[string]string `json:"assetLinks"`
@@ -162,6 +175,41 @@ func main() {
 			AllowDownload: meta.Publish.AllowDownload,
 			AllowCopy:     meta.Publish.AllowCopy,
 			AssetLinks:    releaseAssetLinks(meta, slug),
+		})
+	})
+
+	mux.HandleFunc("GET /p/{slug}/presentation-content", func(w http.ResponseWriter, r *http.Request) {
+		slug := r.PathValue("slug")
+		meta, status := cache.resolve(slug)
+		if status != http.StatusOK || meta.Release == nil || !isPresentationPublish(meta) {
+			writeJSON(w, statusOrNotFound(status), map[string]string{"code": "PRESENTATION_NOT_FOUND"})
+			return
+		}
+		if meta.Publish.Visibility == "password" && !unlocked(r, meta.Publish.ID, cfg) {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"code": "PASSWORD_REQUIRED"})
+			return
+		}
+		data, fetchStatus, err := cfg.FetchPresentationContent(meta.Publish.ID, meta.Release.ID)
+		if err != nil || fetchStatus != http.StatusOK {
+			writeJSON(w, statusOrNotFound(fetchStatus), map[string]string{"code": "PRESENTATION_NOT_FOUND"})
+			return
+		}
+		var source struct {
+			HTML string `json:"html"`
+		}
+		if err := json.Unmarshal(data, &source); err != nil || strings.TrimSpace(source.HTML) == "" {
+			writeJSON(w, http.StatusNotFound, map[string]string{"code": "PRESENTATION_NOT_FOUND"})
+			return
+		}
+		visitorCount := 0
+		if meta.Stats != nil {
+			visitorCount = meta.Stats.UniqueVisitors
+		}
+		writeJSON(w, http.StatusOK, publicPresentationContent{
+			Title: meta.Asset.Title, HTML: source.HTML, Visibility: meta.Publish.Visibility,
+			VisitorCount: visitorCount, PublishID: meta.Publish.ID, ReleaseID: meta.Release.ID,
+			AllowDownload: meta.Publish.AllowDownload, AllowCopy: meta.Publish.AllowCopy,
+			AssetLinks: releaseAssetLinks(meta, slug),
 		})
 	})
 
@@ -284,6 +332,10 @@ func main() {
 			serveSSR(w, r, cfg, slug)
 			return
 		}
+		if isPresentationPublish(meta) {
+			serveSSRPresentation(w, r, cfg, slug)
+			return
+		}
 		serveReleaseFile(w, r, cfg, meta, "index.html", false, "")
 		go recordAccess(cfg, meta, "index.html", r)
 	})
@@ -321,6 +373,10 @@ func main() {
 		}
 		if !meta.Publish.AllowDownload {
 			serveErrorPage(w, http.StatusForbidden, "禁止下载", "内容所有者未开放下载权限。")
+			return
+		}
+		if isPresentationPublish(meta) {
+			servePresentationSource(w, r, cfg, meta, true)
 			return
 		}
 		path, name, ok := releaseDownload(meta)
@@ -387,6 +443,10 @@ func main() {
 			serveSSR(w, r, cfg, meta.Publish.Slug)
 			return
 		}
+		if isPresentationPublish(meta) {
+			serveSSRPresentation(w, r, cfg, meta.Publish.Slug)
+			return
+		}
 		serveReleaseFile(w, r, cfg, meta, "index.html", false, "")
 		go recordAccess(cfg, meta, "index.html", r)
 	})
@@ -446,6 +506,10 @@ func main() {
 			serveErrorPage(w, http.StatusForbidden, "禁止下载", "内容所有者未开放下载权限。")
 			return
 		}
+		if isPresentationPublish(meta) {
+			servePresentationSource(w, r, cfg, meta, true)
+			return
+		}
 		path, name, ok := releaseDownload(meta)
 		if !ok || !manifestAllows(meta, path) {
 			serveErrorPage(w, http.StatusNotFound, "下载不可用", "该发布内容没有可下载文件。")
@@ -501,6 +565,10 @@ func main() {
 		if meta.Publish.Visibility == "password" && !unlocked(r, meta.Publish.ID, cfg) {
 			basePath := "/p/" + url.PathEscape(meta.Publish.Slug)
 			serveUnlockPage(w, basePath, basePath)
+			return
+		}
+		if isPresentationPublish(meta) {
+			serveSSRPresentation(w, r, cfg, meta.Publish.Slug)
 			return
 		}
 		serveReleaseFile(w, r, cfg, meta, "index.html", false, "")
@@ -624,6 +692,14 @@ func serveSSR(w http.ResponseWriter, r *http.Request, cfg platform.Config, slug 
 	proxySSR(w, r, cfg)
 }
 
+func serveSSRPresentation(w http.ResponseWriter, r *http.Request, cfg platform.Config, slug string) {
+	originalPath, originalRawPath := r.URL.Path, r.URL.RawPath
+	r.URL.Path = "/render-presentation/" + url.PathEscape(slug)
+	r.URL.RawPath = ""
+	defer func() { r.URL.Path, r.URL.RawPath = originalPath, originalRawPath }()
+	proxySSR(w, r, cfg)
+}
+
 func serveSSRReference(w http.ResponseWriter, r *http.Request, cfg platform.Config, slug, assetID string) {
 	originalPath, originalRawPath := r.URL.Path, r.URL.RawPath
 	r.URL.Path = "/render/" + url.PathEscape(slug) + "/ref/" + url.PathEscape(assetID)
@@ -719,19 +795,12 @@ func serveReleaseFile(w http.ResponseWriter, r *http.Request, cfg platform.Confi
 		if csp, ok := meta.Release.Manifest["csp"].(string); ok && csp != "" {
 			h.Add("Content-Security-Policy", csp)
 		}
-		// Published HTML shares the product origin by deployment decision. This
-		// mandatory policy prevents it from reading authenticated API responses,
-		// embedding product pages, submitting forms, or exfiltrating through
-		// third-party subresources. A manifest CSP may only make it stricter.
-		h.Add("Content-Security-Policy", strings.Join([]string{
-			"default-src 'self' data: blob:",
-			"connect-src 'none'",
-			"frame-src 'none'",
-			"frame-ancestors 'none'",
-			"form-action 'none'",
-			"base-uri 'none'",
-			"object-src 'none'",
-		}, "; "))
+		// Published HTML shares the product origin by deployment decision. Keep
+		// network and embedding capabilities locked down, but allow the inline
+		// CSS/JS that makes a self-contained presentation artifact executable.
+		// Without these explicit directives, default-src blocks the SG Runtime and
+		// the slide falls back to unstyled document flow.
+		h.Add("Content-Security-Policy", publishedHTMLSandboxCSP())
 		if meta.Release.Etag != "" {
 			h.Set("ETag", meta.Release.Etag)
 		}
@@ -745,6 +814,63 @@ func serveReleaseFile(w http.ResponseWriter, r *http.Request, cfg platform.Confi
 		modified = parsed
 	}
 	http.ServeContent(w, r, relPath, modified, bytes.NewReader(data))
+}
+
+func servePresentationSource(w http.ResponseWriter, r *http.Request, cfg platform.Config, meta PublishMeta, download bool) {
+	if meta.Release == nil {
+		serveErrorPage(w, http.StatusNotFound, "内容不存在", "该发布物不存在。")
+		return
+	}
+	data, status, err := cfg.FetchPresentationContent(meta.Publish.ID, meta.Release.ID)
+	if err != nil || status != http.StatusOK {
+		serveErrorPage(w, statusOrNotFound(status), "下载不可用", "演示源文件暂时不可用。")
+		return
+	}
+	var source struct {
+		HTML string `json:"html"`
+	}
+	if err := json.Unmarshal(data, &source); err != nil || source.HTML == "" {
+		serveErrorPage(w, http.StatusNotFound, "下载不可用", "演示源文件不存在。")
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Cache-Control", "private, no-store")
+	if download {
+		name := safeDownloadName(meta.Asset.Title)
+		w.Header().Set("Content-Disposition", "attachment; filename=download.html; filename*=UTF-8''"+url.PathEscape(name))
+	}
+	_, _ = io.WriteString(w, source.HTML)
+}
+
+func safeDownloadName(title string) string {
+	name := strings.TrimSpace(title)
+	if name == "" {
+		name = "presentation"
+	}
+	name = strings.Map(func(r rune) rune {
+		if r == '/' || r == '\\' || r == ':' || r == '*' || r == '?' || r == '"' || r == '<' || r == '>' || r == '|' {
+			return '-'
+		}
+		return r
+	}, name)
+	return name + ".html"
+}
+
+func publishedHTMLSandboxCSP() string {
+	return strings.Join([]string{
+		"default-src 'self' data: blob:",
+		"script-src 'self' 'unsafe-inline' https:",
+		"style-src 'self' 'unsafe-inline' https:",
+		"img-src 'self' data: blob: https:",
+		"font-src 'self' data: https:",
+		"connect-src 'none'",
+		"frame-src 'none'",
+		"frame-ancestors 'none'",
+		"form-action 'none'",
+		"base-uri 'none'",
+		"object-src 'none'",
+	}, "; ")
 }
 
 func releaseDownload(meta PublishMeta) (path string, name string, ok bool) {
@@ -791,6 +917,10 @@ func isMarkdownPublish(meta PublishMeta) bool {
 	default:
 		return false
 	}
+}
+
+func isPresentationPublish(meta PublishMeta) bool {
+	return meta.Asset != nil && meta.Asset.Type == "presentation"
 }
 
 func releaseAssetLinks(meta PublishMeta, slug string) map[string]string {

@@ -1,6 +1,7 @@
-import { createGlobalStyle, css } from "antd-style";
+import { createStyles } from "antd-style";
 
-export const UiOverlaysGlobalStyles = createGlobalStyle(css`
+export const useUiOverlaysStyles = createStyles(({ css }) => ({
+  root: css`
 /* ---------------- modal ---------------- */
 .sg-modal-backdrop {
   position: fixed;
@@ -19,7 +20,6 @@ export const UiOverlaysGlobalStyles = createGlobalStyle(css`
   width: 100%;
   max-width: 560px;
   max-height: 86vh;
-  overflow: auto;
   box-shadow: var(--sg-shadow-lg);
 }
 .sg-modal-head {
@@ -160,4 +160,5 @@ export const UiOverlaysGlobalStyles = createGlobalStyle(css`
     background-position: -200% 0;
   }
 }
-`);
+`,
+}));

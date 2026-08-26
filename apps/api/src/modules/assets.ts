@@ -35,7 +35,6 @@ export function registerAssets(app: FastifyInstance): void {
     const page = await ctx.store.listAssets(req.actor.workspaceId, {
       type: query.type,
       q: query.q,
-      tag: query.tag,
       status: query.status,
       visibility: query.visibility,
       includeDeleted: query.includeDeleted,
@@ -63,7 +62,6 @@ export function registerAssets(app: FastifyInstance): void {
             type: input.type,
             title: input.title,
             ...(input.description !== undefined ? { description: input.description } : {}),
-            ...(input.tags !== undefined ? { tags: input.tags } : {}),
             ...(input.visibility !== undefined ? { visibility: input.visibility } : {}),
             content,
           });
@@ -95,7 +93,6 @@ export function registerAssets(app: FastifyInstance): void {
       type: input.type,
       title: input.title,
       ...(input.description !== undefined ? { description: input.description } : {}),
-      ...(input.tags !== undefined ? { tags: input.tags } : {}),
       ...(input.visibility !== undefined ? { visibility: input.visibility } : {}),
       content,
     });
@@ -300,7 +297,6 @@ export function registerAssets(app: FastifyInstance): void {
       .object({
         title: z.string().optional(),
         description: z.string().optional(),
-        tags: z.array(z.string()).optional(),
         visibility: z.enum(["private", "link", "public"]).optional(),
         content: z.record(z.string(), z.unknown()).optional(),
       })
@@ -510,17 +506,12 @@ export function registerAssets(app: FastifyInstance): void {
   app.post("/api/v1/assets:batch", async (req) => {
     const body = z
       .object({
-        action: z.enum(["delete", "restore", "tag"]),
+        action: z.enum(["delete", "restore"]),
         ids: z.array(z.string()).min(1),
-        tags: z.array(z.string()).optional(),
       })
       .parse(req.body);
-    await Promise.all(
-      body.ids.map((id) =>
-        requireAssetAccess(ctx, req.actor, id, body.action === "tag" ? "write" : "delete"),
-      ),
-    );
-    const changed = await ctx.store.batchUpdateAssets(req.actor, body.ids, body.action, body.tags);
+    await Promise.all(body.ids.map((id) => requireAssetAccess(ctx, req.actor, id, "delete")));
+    const changed = await ctx.store.batchUpdateAssets(req.actor, body.ids, body.action);
     await ctx.store.audit(
       req.actor.workspaceId,
       req.actor.subject,

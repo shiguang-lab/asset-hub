@@ -1,6 +1,7 @@
-import { createGlobalStyle, css } from "antd-style";
+import { createStyles } from "antd-style";
 
-export const AssetsGlobalStyles = createGlobalStyle(css`
+export const useAssetsStyles = createStyles(({ css }) => ({
+  root: css`
 /* Assets center: per design 16_16_03 (3) — header, underline tabs, filter bar, table list, right rail, pager */
 .sg-assets {
   width: 100%;
@@ -66,7 +67,6 @@ export const AssetsGlobalStyles = createGlobalStyle(css`
 }
 .sg-assets-search.ant-input-affix-wrapper {
   width: 260px;
-  height: 34px;
   border-radius: 7px;
   background: #141218;
   border-color: var(--sg-border);
@@ -85,7 +85,7 @@ export const AssetsGlobalStyles = createGlobalStyle(css`
 
 /* Table list */
 .sg-assets-table-wrap {
-  overflow-x: auto;
+  min-width: 0;
 }
 .sg-assets-row {
   cursor: pointer;
@@ -170,21 +170,6 @@ export const AssetsGlobalStyles = createGlobalStyle(css`
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-.sg-asset-tags {
-  display: flex;
-  gap: 4px;
-  overflow: hidden;
-}
-.sg-asset-tag {
-  flex: none;
-  padding: 0 7px;
-  border: 0;
-  border-radius: 4px;
-  color: #8d89a0;
-  background: #1e1b26;
-  font-size: 10.5px;
-  line-height: 18px;
 }
 .sg-owner-stack {
   display: inline-flex;
@@ -273,96 +258,6 @@ export const AssetsGlobalStyles = createGlobalStyle(css`
   color: var(--sg-fg);
   background: #221f2b;
 }
-.sg-asset-menu {
-  display: flex;
-  flex-direction: column;
-  padding: 5px;
-  border: 1px solid #332d45;
-  border-radius: 8px;
-  background: #17151f;
-  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.5);
-}
-.sg-asset-menu button {
-  padding: 7px 12px;
-  border: 0;
-  border-radius: 5px;
-  color: var(--sg-fg-2);
-  background: transparent;
-  font-size: 13px;
-  text-align: left;
-  cursor: pointer;
-}
-.sg-asset-menu button:hover {
-  color: var(--sg-fg);
-  background: #221f2d;
-}
-.sg-asset-menu button.danger {
-  color: #ff8089;
-}
-
-/* Pager */
-.sg-pager {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 13px 4px 0;
-}
-.sg-pager-total {
-  color: var(--sg-muted);
-  font-size: 12.5px;
-}
-.sg-pager-pages {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  margin: 0 auto;
-}
-.sg-page-btn {
-  min-width: 28px;
-  height: 28px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0 7px;
-  border: 1px solid transparent;
-  border-radius: 6px;
-  color: var(--sg-fg-2);
-  background: transparent;
-  font-size: 12.5px;
-  cursor: pointer;
-}
-.sg-page-btn:hover:not(:disabled) {
-  color: var(--sg-fg);
-  background: #1a1820;
-}
-.sg-page-btn.active {
-  border-color: transparent;
-  color: #fff;
-  background: var(--sg-accent);
-}
-.sg-page-btn:disabled {
-  opacity: 0.35;
-  cursor: not-allowed;
-}
-.sg-page-ellipsis {
-  padding: 0 3px;
-  color: var(--sg-muted);
-}
-.sg-pager-size {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--sg-muted);
-  font-size: 12.5px;
-}
-.sg-pager-size-select.ant-select {
-  width: 92px;
-}
-.sg-pager-size-select .ant-select-selector {
-  border-radius: 6px !important;
-  background: #141218 !important;
-}
-
 /* Right rail */
 .sg-assets-side {
   display: flex;
@@ -492,31 +387,5 @@ export const AssetsGlobalStyles = createGlobalStyle(css`
   color: var(--sg-muted);
   font-size: 11px;
 }
-.sg-tag-cloud {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-.sg-tag-cloud .sg-tag {
-  padding: 3px 9px;
-  border: 0;
-  border-radius: 6px;
-  color: #b79aff;
-  background: rgba(124, 60, 255, 0.13);
-  font-size: 12px;
-  line-height: 1.45;
-  cursor: pointer;
-  transition:
-    color 120ms ease,
-    background 120ms ease;
-}
-.sg-tag-cloud .sg-tag:hover {
-  color: #d5c4ff;
-  background: rgba(124, 60, 255, 0.22);
-}
-.sg-tag-cloud em {
-  font-style: normal;
-  opacity: 0.7;
-  margin-left: 3px;
-}
-`);
+  `,
+}));

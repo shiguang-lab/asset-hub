@@ -1,6 +1,7 @@
-import { createGlobalStyle, css } from "antd-style";
+import { createStyles } from "antd-style";
 
-export const HomeGlobalStyles = createGlobalStyle(css`
+export const useHomeStyles = createStyles(({ css }) => ({
+  root: css`
 /* Home content follows 10_28_25, translated into the dark shell. */
 .sg-home {
   width: 100%;
@@ -364,6 +365,21 @@ export const HomeGlobalStyles = createGlobalStyle(css`
 .sg-recent-table {
   width: 100%;
 }
+.sg-home-recent-name {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+}
+.sg-home-recent-name strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sg-home-recent-row {
+  cursor: pointer;
+}
 .sg-file-icon {
   width: 29px;
   height: 29px;
@@ -409,4 +425,58 @@ export const HomeGlobalStyles = createGlobalStyle(css`
 .sg-view-all:hover {
   color: #a990ff;
 }
-`);
+
+@media (max-width: 760px) {
+  .sg-home-hero {
+    min-height: 236px;
+    padding: 28px 20px;
+  }
+  .sg-home-hero h1 {
+    width: 100%;
+    margin-bottom: 18px;
+    font-size: 28px;
+  }
+  .sg-hero-compose {
+    width: 100%;
+    margin-left: 0;
+    min-height: 64px;
+    padding-left: 14px;
+  }
+  .sg-quick-create {
+    gap: 10px;
+  }
+  .sg-quick-item {
+    min-height: 84px;
+    gap: 8px;
+    padding: 12px;
+  }
+  .sg-quick-item .icon {
+    width: 44px;
+    height: 44px;
+  }
+  .sg-quick-item .icon svg {
+    width: 24px;
+    height: 24px;
+  }
+  .sg-quick-item .arrow {
+    width: 14px;
+    height: 14px;
+  }
+  .sg-quick-copy strong {
+    overflow: hidden;
+    font-size: 14px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .sg-quick-copy small {
+    font-size: 10px;
+  }
+  .sg-home-columns {
+    grid-template-columns: 1fr;
+  }
+  .sg-home-panel {
+    min-height: 0;
+  }
+}
+  `,
+}));

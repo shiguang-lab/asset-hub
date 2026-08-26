@@ -1,6 +1,7 @@
-import { createGlobalStyle, css } from "antd-style";
+import { createStyles } from "antd-style";
 
-export const UiControlsGlobalStyles = createGlobalStyle(css`
+export const useUiControlsStyles = createStyles(({ css }) => ({
+  root: css`
 /* ---------------- buttons ---------------- */
 .sg-btn {
   display: inline-flex;
@@ -269,4 +270,5 @@ export const UiControlsGlobalStyles = createGlobalStyle(css`
 .sg-table tr:hover td {
   background: var(--sg-bg-3);
 }
-`);
+`,
+}));

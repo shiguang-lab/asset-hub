@@ -32,8 +32,9 @@ export default defineConfig(({ command, mode }) => {
     plugins.push({
       name: "asset-hub-local-auth-broker",
       async configureServer(server) {
-        await broker.identity();
-        server.middlewares.use(createLocalAuthMiddleware(broker));
+        // broker 初始化异步进行，不阻塞中间件注册；失败时中间件会用 demo 用户 fallback
+        broker.identity().catch(() => {});
+        server.middlewares.use(createLocalAuthMiddleware(broker, loginName));
       },
     });
   }

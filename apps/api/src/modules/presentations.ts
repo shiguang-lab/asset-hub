@@ -1,21 +1,14 @@
 import {
-  type PresentationRenderDocument,
+  ensurePresentationRuntimeHtml,
   renderPresentationHtml,
+  stripPresentationPlatformShell,
   validatePresentationHtml,
 } from "@shiguang/content";
-import {
-  nextId,
-  nowIso,
-  presentationOutlineSchema,
-  presentationSectionSchema,
-  presentationThemeSchema,
-  slideSchema,
-} from "@shiguang/contracts";
+import { nextId, nowIso } from "@shiguang/contracts";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { requireAssetAccess } from "../platform/authorization.js";
 import { badRequest, notFound } from "../platform/errors.js";
-import { loadEchartsJs } from "../platform/render.js";
 import type { AppContext } from "../types.js";
 
 export const presentationThemes = [
@@ -26,122 +19,335 @@ export const presentationThemes = [
   { id: "gradient", name: "渐变", colors: ["#0d0b1e", "#ffffff", "#7c5cff"] },
 ] as const;
 
-export const presentationLayouts = [
-  { id: "title", name: "封面" },
-  { id: "section", name: "章节页" },
-  { id: "content", name: "内容页" },
-  { id: "two-column", name: "双栏" },
-  { id: "quote", name: "引用" },
-  { id: "data", name: "数据页" },
-  { id: "image", name: "图片" },
-  { id: "closing", name: "结束页" },
-] as const;
-
-const outlineSchema = presentationOutlineSchema;
-
-const OUTLINE_VISUALS = "default / metrics / chart / two-column / quote / timeline";
-
-function buildOutlineSystemPrompt(): string {
-  return `你是资深演示文稿策划。请阅读源内容后，提炼出**叙事结构（章节大纲）**，而不是简单地罗列标题。
-
-核心原则（参考金字塔原理与断言-证据法）：
-1. 每章提炼一个「结论先行」的断言式标题（完整句子，表达观点，而非"背景/现状/趋势"这类标签）。
-2. 每章必须含 2~4 个具体要点（来自正文的数据、事实、判断），量化数据直接写入要点文本（如「营收同比增长 23%，创历史新高」）。
-3. 章节之间要有清晰的叙事递进（现状→问题→分析→结论→行动）。
-
-输出 JSON 结构：
-{
-  "title": "演示标题",
-  "theme": "light | dark | brand | minimal | gradient",
-  "aspectRatio": "16:9",
-  "sections": [
-    {
-      "id": "sec-1",
-      "title": "断言式章节标题（完整结论句）",
-      "summary": "该章一句话概述",
-      "points": ["要点1", "要点2"],
-
-      "visual": "${OUTLINE_VISUALS} 之一"
+/* Structured outline/page-plan compiler removed: generation is HTML-first.
+function blocksForSection(section: PlanSection, index: number): PlanBlock[] {
+  const data = section.data;
+  switch (section.visual) {
+    case "dashboard": {
+      const blocks: PlanBlock[] = [];
+      if (data.chart && data.chart.data.length > 0) {
+        blocks.push({
+          id: `b${index}-dashboard-chart`,
+          type: "chart",
+          content: data.chart.title || section.title,
+          meta: {
+            chart: { type: data.chart.type, labels: data.chart.labels, data: data.chart.data },
+            sourceRef: data.chart.sourceRef,
+          },
+        });
+      }
+      if (data.table && data.table.headers.length > 0) {
+        blocks.push({
+          id: `b${index}-dashboard-table`,
+          type: "table",
+          content: [data.table.headers, ...data.table.rows].map((row) => row.join("\t")).join("\n"),
+          meta: { sourceRef: data.table.sourceRef },
+        });
+      }
+      if (data.metrics.length > 0) {
+        blocks.push(
+          ...data.metrics
+            .slice(0, 3)
+            .map((metric, metricIndex) => ({
+              id: metric.id || `b${index}-dashboard-metric-${metricIndex}`,
+              type: "metric" as const,
+              content: String(metric.value),
+              meta: {
+                label: metric.label,
+                value: metric.value,
+                unit: metric.unit,
+                note: metric.note,
+                sourceRef: metric.sourceRef,
+              },
+            })),
+        );
+      }
+      return blocks.length > 0 ? blocks : fallbackTextBlocks(section, index);
     }
-  ]
-}
-
-要求：
-- 章节数按内容体量：短文 3~5 章，长文 6~10 章。每章是一个相对独立的主题单元（生成时一个章节可再展开为多页）。
-- 有对比选 two-column；有金句选 quote；有阶段演进选 timeline；有量化数据选 metrics；其余选 default。
-- 所有内容必须来自源内容，禁止编造数字。
-- 只输出 JSON，不要 Markdown 代码围栏、不要解释。`;
-}
-
-
-const pagePlanSchema = z.object({
-  slides: z.array(slideSchema).min(1),
-});
-
-const _PAGE_LAYOUTS = "title / section / content / two-column / quote / data / closing";
-const _PAGE_BLOCKS =
-  "heading / text / bullet / image / chart / quote / metric / card / timeline / divider / table";
-
-function buildPagePlanSystemPrompt(): string {
-  return `你是演示页面规划师。把「章节大纲」展开为具体页面（一个章节可以拆成 1~3 页，按内容量与视觉类型决定，不要求 1:1）。
-
-页面规划规则：
-1. 第一页固定 layout=title（封面：标题 + 副标题文字块）；最后一页固定 layout=closing（总结页）。
-2. 每个章节至少一页；内容丰富的章节拆成「章节引言页（layout=section）+ 内容页」。
-3. 视觉类型映射到页面：
-   - metrics → layout=content，heading + bullet（量化数据写在 bullet 文本中）；
-   - chart → layout=data，用 chart 块（meta.chart 给 {type, data, labels}）；
-   - two-column → layout=two-column，左右各放 card/heading+bullet；
-   - quote → layout=quote，title 放金句，blocks 放出处；
-   - timeline → layout=content，用 timeline 块（每行"时期：事件"）；
-   - default → layout=content，heading + bullet。
-4. 每页标题用断言式完整句；bullet 用短句，每条 ≤ 24 字；所有数值必须来自大纲要点，不得编造。
-
-输出 JSON（严格按下面结构）：
-{
-  "slides": [
-    {
-      "id": "s1",
-      "layout": "title",
-      "title": "封面标题",
-      "blocks": [
-        { "id": "b1", "type": "heading", "content": "副标题/一句定位" }
-      ]
-    },
-    {
-      "id": "s2",
-      "layout": "content",
-      "title": "断言式标题",
-      "blocks": [
-        { "id": "b2", "type": "bullet", "content": "要点一\\n要点二" }
-      ]
+    case "process":
+    case "rising": {
+      const items =
+        data.timeline.length > 0
+          ? data.timeline.map((item) => `${item.period}：${item.event}`)
+          : section.points;
+      return items.length
+        ? [
+            {
+              id: `b${index}-${section.visual}`,
+              type: "card",
+              content: items.join("\n"),
+              meta: { visual: section.visual === "process" ? "process" : "rising" },
+            },
+          ]
+        : fallbackTextBlocks(section, index);
     }
-  ]
+    case "quadrant": {
+      const items = data.compare
+        ? [data.compare.left, data.compare.right].flatMap((side) => [side.title, side.body])
+        : section.points;
+      return items.length
+        ? [
+            {
+              id: `b${index}-quadrant`,
+              type: "card",
+              content: items.slice(0, 4).join("\n"),
+              meta: { visual: "quadrant" },
+            },
+          ]
+        : fallbackTextBlocks(section, index);
+    }
+    case "metrics": {
+      const metrics = data.metrics.slice(0, 4);
+      if (metrics.length > 0) {
+        return metrics.map((metric, metricIndex) => ({
+          id: metric.id || `b${index}-metric-${metricIndex + 1}`,
+          type: "metric",
+          content: String(metric.value),
+          meta: {
+            label: metric.label,
+            value: metric.value,
+            unit: metric.unit,
+            note: metric.note,
+            sourceRef: metric.sourceRef,
+          },
+        }));
+      }
+      return fallbackTextBlocks(section, index);
+    }
+    case "chart": {
+      if (data.chart && data.chart.data.length > 0) {
+        const blocks: PlanBlock[] = [];
+        if (section.summary.trim()) {
+          blocks.push({
+            id: `b${index}-chart-summary`,
+            type: "text",
+            content: section.summary,
+            meta: {},
+          });
+        }
+        blocks.push({
+          id: `b${index}-chart`,
+          type: "chart",
+          content: data.chart.title || section.title,
+          meta: {
+            chart: {
+              type: data.chart.type,
+              labels: data.chart.labels,
+              data: data.chart.data,
+            },
+            unit: data.chart.unit,
+            sourceRef: data.chart.sourceRef,
+          },
+        });
+        return blocks;
+      }
+      return fallbackTextBlocks(section, index);
+    }
+    case "two-column": {
+      if (data.compare) {
+        const sides = [data.compare.left, data.compare.right];
+        return sides.map((side, sideIndex) => ({
+          id: `b${index}-compare-${sideIndex + 1}`,
+          type: "card",
+          content: [side.body, ...side.points].filter(Boolean).join("\n"),
+          meta: { title: side.title, sourceRef: side.sourceRef },
+        }));
+      }
+      const midpoint = Math.ceil(section.points.length / 2);
+      const left = section.points.slice(0, midpoint);
+      const right = section.points.slice(midpoint);
+      if (left.length > 0 || right.length > 0) {
+        return [
+          {
+            id: `b${index}-compare-1`,
+            type: "card",
+            content: left.join("\n"),
+            meta: { title: "关键发现" },
+          },
+          {
+            id: `b${index}-compare-2`,
+            type: "card",
+            content: right.join("\n"),
+            meta: { title: "对应影响" },
+          },
+        ];
+      }
+      return fallbackTextBlocks(section, index);
+    }
+    case "quote": {
+      if (data.quote?.text) {
+        return [
+          {
+            id: `b${index}-quote`,
+            type: "quote",
+            content: data.quote.text,
+            meta: { author: data.quote.author, sourceRef: data.quote.sourceRef },
+          },
+        ];
+      }
+      const quote = section.points[0] || section.summary || section.title;
+      return [{ id: `b${index}-quote`, type: "quote", content: quote, meta: {} }];
+    }
+    case "timeline": {
+      const items =
+        data.timeline.length > 0
+          ? data.timeline.map((item) => `${item.period}：${item.event}`)
+          : section.points;
+      if (items.length > 0) {
+        return [
+          { id: `b${index}-timeline`, type: "timeline", content: items.join("\n"), meta: {} },
+        ];
+      }
+      return fallbackTextBlocks(section, index);
+    }
+    case "image": {
+      const asset = data.assets.find((candidate) => candidate.src.trim());
+      if (asset) {
+        return [
+          {
+            id: asset.id || `b${index}-image`,
+            type: "image",
+            content: asset.src,
+            meta: {
+              alt: asset.alt,
+              caption: asset.caption,
+              sourceRef: asset.sourceRef,
+              focalPoint: asset.focalPoint,
+            },
+          },
+          ...(section.summary
+            ? [
+                {
+                  id: `b${index}-image-copy`,
+                  type: "text" as const,
+                  content: section.summary,
+                  meta: {},
+                },
+              ]
+            : []),
+        ];
+      }
+      return fallbackTextBlocks(section, index);
+    }
+    default:
+      return fallbackTextBlocks(section, index);
+  }
 }
 
-只输出 JSON，不要 Markdown 代码围栏、不要解释。`;
+function layoutForVisual(visual: string): Slide["layout"] {
+  switch (visual) {
+    case "quote":
+      return "quote";
+    case "two-column":
+      return "two-column";
+    case "chart":
+      return "data";
+    default:
+      return "content";
+  }
 }
 
-/** 章节大纲 → 页面计划（1:N 展开）。AI 失败时回退为确定性 1:1 展开，保证可用。 */
+function hasVisualForSection(slide: Slide, section: PlanSection): boolean {
+  switch (section.visual) {
+    case "metrics":
+      return slide.blocks.some((block) => block.type === "metric");
+    case "chart":
+      return slide.blocks.some((block) => {
+        if (block.type !== "chart") return false;
+        const chart = block.meta.chart;
+        return (
+          typeof chart === "object" &&
+          chart !== null &&
+          Array.isArray((chart as Record<string, unknown>).data) &&
+          ((chart as Record<string, unknown>).data as unknown[]).length > 0
+        );
+      });
+    case "two-column":
+      return slide.blocks.filter((block) => block.type === "card").length >= 2;
+    case "quote":
+      return slide.blocks.some((block) => block.type === "quote");
+    case "timeline":
+      return slide.blocks.some((block) => block.type === "timeline");
+    case "image":
+      return slide.blocks.some(
+        (block) => block.type === "image" && block.content.trim().length > 0,
+      );
+    default:
+      return true;
+  }
+}
+
+//
+ * AI 页面计划仍可能把视觉类型退化成 bullet。这里按 section.data 做一次
+ * 结构化修复，保留 AI 的标题和拆页结果，但不允许 chart/metric 等语义丢失。
+//
+function repairGeneratedSlides(slides: Slide[], sections: PlanSection[]): Slide[] {
+  let cursor = 0;
+  return slides.map((slide, slideIndex) => {
+    if (slide.layout === "title" || slide.layout === "closing") return slide;
+    const section =
+      (slide.sectionId && sections.find((candidate) => candidate.id === slide.sectionId)) ||
+      sections[Math.min(cursor++, sections.length - 1)];
+    if (!section) return slide;
+    if (hasVisualForSection(slide, section)) {
+      return {
+        ...slide,
+        sectionId: section.id,
+        layoutVariant: slide.layoutVariant || layoutVariantForVisual(section.visual, slideIndex),
+      };
+    }
+    return {
+      ...slide,
+      sectionId: section.id,
+      layoutVariant: layoutVariantForVisual(section.visual, slideIndex),
+      layout: layoutForVisual(section.visual),
+      blocks: blocksForSection(section, slideIndex),
+    };
+  });
+}
+
+function ensureCoverAndClosing(title: string, slides: Slide[], sections: PlanSection[]): Slide[] {
+  const result = [...slides];
+  if (result[0]?.layout !== "title") {
+    result.unshift({
+      id: "s-cover",
+      layout: "title",
+      layoutVariant: "hero-center",
+      title,
+      blocks: [{ id: "b-cover", type: "text", content: sections[0]?.summary || "", meta: {} }],
+      notes: "",
+    });
+  }
+  if (result[result.length - 1]?.layout !== "closing") {
+    result.push({
+      id: "s-closing",
+      layout: "closing",
+      layoutVariant: "closing-action",
+      title: "下一步",
+      blocks: [
+        { id: "b-closing", type: "text", content: "回到核心结论，明确下一步行动。", meta: {} },
+      ],
+      notes: "",
+    });
+  }
+  return result;
+}
+
+// 章节大纲 → 页面计划（1:N 展开）。AI 失败时回退为结构化确定性展开。
 async function expandOutlineToSlides(
   ctx: AppContext,
   title: string,
   theme: string,
-  sections: Array<{
-    id: string;
-    title: string;
-    summary: string;
-    points: string[];
-    visual: string;
-  }>,
+  profile: string,
+  sections: PlanSection[],
   source: string,
-): Promise<z.infer<typeof slideSchema>[]> {
+): Promise<Slide[]> {
   const outlineJson = JSON.stringify({ title, theme, sections });
   try {
     const res = await ctx.ai.completeJson(
       {
         messages: [
-          { role: "system", content: buildPagePlanSystemPrompt() },
+          { role: "system", content: buildPagePlanSystemPrompt(profile) },
           {
             role: "user",
             content: `章节大纲：\n${outlineJson}\n\n${
@@ -154,115 +360,87 @@ async function expandOutlineToSlides(
       },
       pagePlanSchema,
     );
-    if (res.data.slides.length > 0) return res.data.slides;
+    if (res.data.slides.length > 0) {
+      return repairGeneratedSlides(
+        ensureCoverAndClosing(title, res.data.slides, sections),
+        sections,
+      );
+    }
   } catch {
     // fall through to deterministic expansion
   }
   return deterministicSlides(title, sections);
 }
 
-function deterministicSlides(
-  title: string,
-  sections: Array<{
-    id: string;
-    title: string;
-    summary: string;
-    points: string[];
-    visual: string;
-  }>,
-): z.infer<typeof slideSchema>[] {
-  const slides: Array<{
-    id: string;
-    layout: string;
-    title: string;
-    blocks: Array<{
-      id: string;
-      type: string;
-      content: string;
-      meta?: Record<string, unknown>;
-    }>;
-    notes?: string;
-  }> = [
+export function deterministicSlides(title: string, sections: PlanSection[]): Slide[] {
+  const slides: Slide[] = [
     {
       id: "s1",
       layout: "title",
+      layoutVariant: "hero-center",
       title,
-      blocks: [{ id: "b1", type: "text", content: sections.map((s) => s.title).join(" · ") }],
+      blocks: [
+        {
+          id: "b1",
+          type: "text",
+          content: sections[0]?.summary || sections[0]?.title || "",
+          meta: {},
+        },
+      ],
+      notes: "",
     },
   ];
   sections.forEach((section, i) => {
-    const blocks: Array<{
-      id: string;
-      type: string;
-      content: string;
-      meta?: Record<string, unknown>;
-    }> = [];
-
-    if (section.visual === "timeline" && section.points.length > 0) {
-      blocks.push({
-        id: `b${i}-tl`,
-        type: "timeline",
-        content: section.points.join("\n"),
-      });
-    }
-    if (blocks.length === 0 && section.points.length > 0) {
-      blocks.push({
-        id: `b${i}-pts`,
-        type: "bullet",
-        content: section.points.join("\n"),
-      });
-    }
-    if (blocks.length === 0) {
-      blocks.push({ id: `b${i}-summary`, type: "text", content: section.summary || section.title });
-    }
     slides.push({
       id: `s${i + 2}`,
-      layout:
-        section.visual === "quote"
-          ? "quote"
-          : section.visual === "two-column"
-            ? "two-column"
-            : section.visual === "chart"
-              ? "data"
-              : "content",
+      sectionId: section.id,
+      layoutVariant: layoutVariantForVisual(section.visual, i),
+      layout: layoutForVisual(section.visual),
       title: section.title,
-      blocks,
+      blocks: blocksForSection(section, i),
+      notes: "",
     });
   });
   slides.push({
     id: `s${slides.length + 1}`,
     layout: "closing",
-    title: "谢谢观看",
-    blocks: [{ id: "b-end", type: "text", content: "核心结论回顾 · 行动建议" }],
+    layoutVariant: "closing-action",
+    title: "下一步",
+    blocks: [{ id: "b-end", type: "text", content: "回到核心结论，明确下一步行动。", meta: {} }],
+    notes: "",
   });
-  return slides as z.infer<typeof slideSchema>[];
+  return slides;
 }
+
+*/
 
 export function registerPresentations(app: FastifyInstance): void {
   const ctx: AppContext = app.ctx;
 
   app.get("/api/v1/presentations/themes", async () => presentationThemes);
-  app.get("/api/v1/presentations/layouts", async () => presentationLayouts);
 
   app.post("/api/v1/presentations/generate", async (req) => {
     const body = z
       .object({
-        assetId: z.string().optional(),
+        assetId: z.string().nullish(),
         title: z.string().max(200).optional(),
         sourceText: z.string().max(200_000).optional(),
+        prompt: z.string().max(20_000).optional(),
         theme: z.enum(["light", "dark", "brand", "minimal", "gradient"]).optional(),
+        profile: z.enum(["research", "pitch", "product-launch", "data-story"]).optional(),
         templateId: z.string().optional(),
       })
       .parse(req.body);
-    if (!body.assetId && !body.sourceText) {
-      throw badRequest("SOURCE_REQUIRED", "需要提供 assetId 或 sourceText");
+    if (!body.assetId && !body.sourceText && !body.prompt && !body.title) {
+      throw badRequest("SOURCE_REQUIRED", "需要提供标题、参考资料或创作要求");
     }
     const spec: Record<string, unknown> = {
       assetId: body.assetId ?? null,
       sourceText: body.sourceText ?? null,
       title: body.title ?? "",
       theme: body.theme ?? "light",
-      templateId: body.templateId ?? null,
+      profile: body.profile ?? "research",
+      prompt: body.prompt ?? "",
     };
     if (body.assetId) {
       await requireAssetAccess(ctx, req.actor, body.assetId, "read");
@@ -278,14 +456,6 @@ export function registerPresentations(app: FastifyInstance): void {
       spec,
       inputAssetIds: body.assetId ? [body.assetId] : [],
     });
-    const estimate = { min: 150, max: 400 };
-    const reserved = await ctx.store.reserveCredits(
-      req.actor.workspaceId,
-      task.id,
-      estimate.max,
-      `op_reserve_${task.id}`,
-    );
-    if (!reserved.ok) throw badRequest("CREDIT_INSUFFICIENT", "Credits 不足，无法生成演示", {});
     await ctx.bus.emit({
       eventId: nextId("evt"),
       eventType: "task.created",
@@ -305,151 +475,7 @@ export function registerPresentations(app: FastifyInstance): void {
       "success",
       {},
     );
-    return { task, estimate };
-  });
-
-  /* ---------------- 大纲确认流程（生成 → 确认 → 创建） ---------------- */
-
-  app.post("/api/v1/presentations/outline", async (req) => {
-    const body = z
-      .object({
-        assetId: z.string().optional(),
-        sourceText: z.string().max(100_000).optional(),
-        title: z.string().max(200).optional(),
-        theme: presentationThemeSchema.optional(),
-        prompt: z.string().max(2000).optional(),
-      })
-      .parse(req.body);
-    if (!body.assetId && !body.sourceText && !body.prompt) {
-      throw badRequest("SOURCE_REQUIRED", "需要提供 assetId、sourceText 或 prompt");
-    }
-    let source = body.sourceText ?? "";
-    let sourceTitle = body.title ?? "";
-    if (body.assetId) {
-      const asset = await requireAssetAccess(ctx, req.actor, body.assetId, "read");
-      const content = await ctx.store.readContent(body.assetId);
-      source = content?.text ?? "";
-      sourceTitle = sourceTitle || asset.title;
-    } else if (!source && body.prompt) {
-      source = body.prompt;
-      sourceTitle = sourceTitle || body.prompt.slice(0, 60);
-    }
-    const theme = body.theme ?? "light";
-    const res = await ctx.ai.completeJson(
-      {
-        messages: [
-          {
-            role: "system",
-            content: buildOutlineSystemPrompt(),
-          },
-          {
-            role: "user",
-            content: `title: ${sourceTitle}\ntheme: ${theme}\n${
-              body.prompt ? `用户要求：${body.prompt}\n` : ""
-            }source:\n${source.slice(0, 40_000)}`,
-          },
-        ],
-        quality: "balanced",
-        maxTokens: 8192,
-      },
-      outlineSchema,
-    );
-    const provider = res.provider;
-    const outline = res.data as Record<string, unknown>;
-    if (!Array.isArray(outline.sections) || outline.sections.length === 0) {
-      throw badRequest("OUTLINE_EMPTY", "AI 返回的大纲为空，请重试");
-    }
-    await ctx.store.audit(
-      req.actor.workspaceId,
-      req.actor.subject,
-      "presentation.outline",
-      "presentation",
-      "success",
-      {},
-    );
-    return {
-      outline: outline as {
-        title: string;
-        theme: string;
-        aspectRatio: string;
-        sections: unknown[];
-      },
-      provider,
-    };
-  });
-
-  app.post("/api/v1/presentations/outline/confirm", async (req) => {
-    const body = z
-      .object({
-        title: z.string().min(1).max(200),
-        theme: presentationThemeSchema,
-        aspectRatio: z.enum(["16:9", "4:3", "9:16"]),
-        sections: z.array(presentationSectionSchema).min(1),
-        sourceText: z.string().max(200_000).optional(),
-        sourceAssetId: z.string().optional(),
-      })
-      .parse(req.body);
-
-    // 读取源内容（用于让生成结果忠实于文档，而非仅靠大纲标题）
-    let source = body.sourceText ?? "";
-    if (body.sourceAssetId && !source) {
-      const content = await ctx.store.readContent(body.sourceAssetId).catch(() => null);
-      source = content?.text ?? "";
-    }
-
-    // 章节大纲 → 页面计划（1:N 展开，允许一个章节拆多页）
-    const slides = await expandOutlineToSlides(ctx, body.title, body.theme, body.sections, source);
-
-    const document = { theme: body.theme, aspectRatio: body.aspectRatio, slides };
-    const html = renderPresentationHtml(document as PresentationRenderDocument, body.title, {
-      echartsJs: loadEchartsJs(),
-    });
-    const asset = await ctx.store.createAssetWithVersion(req.actor, {
-      type: "presentation",
-      title: body.title,
-      sourceType: "template",
-      content: {
-        kind: "html",
-        text: html,
-        manifest: null,
-        refs: [],
-      },
-    });
-    if (body.sourceAssetId) {
-      await requireAssetAccess(ctx, req.actor, body.sourceAssetId, "read");
-      await ctx.store.addRelation(
-        req.actor.workspaceId,
-        body.sourceAssetId,
-        asset.asset.id,
-        "generated_from",
-        {
-          via: "outline-confirm",
-        },
-      );
-    }
-    await ctx.bus.emit({
-      eventId: nextId("evt"),
-      eventType: "asset.created",
-      schemaVersion: 1,
-      occurredAt: nowIso(),
-      producer: "api",
-      tenantId: req.actor.workspaceId,
-      aggregate: { type: "asset", id: asset.asset.id, version: 1 },
-      trace: {},
-      data: { assetId: asset.asset.id, assetType: "presentation" },
-    });
-    await ctx.store.audit(
-      req.actor.workspaceId,
-      req.actor.subject,
-      "presentation.create",
-      asset.asset.id,
-      "success",
-      {
-        sections: body.sections.length,
-        slides: slides.length,
-      },
-    );
-    return asset.asset;
+    return { task };
   });
 
   app.get("/api/v1/presentations/:id", async (req, reply) => {
@@ -459,8 +485,9 @@ export function registerPresentations(app: FastifyInstance): void {
       return reply.code(404).send({ code: "RESOURCE_NOT_FOUND" });
     }
     const content = await ctx.store.readContent(id);
-    const html =
-      content?.text ?? renderPresentationHtml({ theme: "light", slides: [] }, asset.title);
+    const html = ensurePresentationRuntimeHtml(
+      content?.text ?? renderPresentationHtml({ theme: "light", slides: [] }, asset.title),
+    );
     return { asset, html };
   });
 
@@ -469,7 +496,8 @@ export function registerPresentations(app: FastifyInstance): void {
     const body = z.object({ html: z.string().max(2_000_000) }).parse(req.body);
     const asset = await ctx.store.getAsset(req.actor.workspaceId, id);
     if (asset?.type !== "presentation") throw notFound("演示");
-    const issues = validatePresentationHtml(body.html);
+    const normalizedHtml = stripPresentationPlatformShell(body.html);
+    const issues = validatePresentationHtml(normalizedHtml);
     if (issues.length > 0) {
       throw badRequest(
         "PRESENTATION_HTML_INVALID",
@@ -479,7 +507,7 @@ export function registerPresentations(app: FastifyInstance): void {
     const saved = await ctx.store.saveContent(
       req.actor,
       id,
-      { kind: "html", text: body.html, manifest: null, refs: [] },
+      { kind: "html", text: normalizedHtml, manifest: null, refs: [] },
       { changeKind: "edit" },
     );
     await ctx.bus.emit({
@@ -500,7 +528,7 @@ export function registerPresentations(app: FastifyInstance): void {
     const { id } = req.params as { id: string };
     const body = z
       .object({
-        scope: z.enum(["element", "page", "presentation"]),
+        scope: z.enum(["element", "page", "presentation", "insert"]),
         targetId: z.string().optional(),
         instruction: z.string().max(2000).default("让内容更精炼、更有冲击力"),
       })
@@ -517,7 +545,7 @@ export function registerPresentations(app: FastifyInstance): void {
     return result;
   });
 
-  /* ---------------- 兼容旧接口：幻灯片级重生成 = page 作用域 AI 修改 ---------------- */
+  // ---------------- 兼容旧接口：幻灯片级重生成 = page 作用域 AI 修改 ----------------
 
   app.post("/api/v1/presentations/:id/slides/:slideId/regenerate", async (req) => {
     const { id, slideId } = req.params as { id: string; slideId: string };
@@ -542,12 +570,12 @@ async function runAiEdit(
   workspaceId: string,
   subject: string,
   id: string,
-  scope: "element" | "page" | "presentation",
+  scope: "element" | "page" | "presentation" | "insert",
   targetId: string | null,
   instruction: string,
 ): Promise<{
   revisionId: string;
-  scope: "element" | "page" | "presentation";
+  scope: "element" | "page" | "presentation" | "insert";
   targetId: string | null;
   proposal: string;
   provider: string;
@@ -562,7 +590,9 @@ async function runAiEdit(
       ? "只输出完整 HTML 文档"
       : scope === "page"
         ? `只输出完整 HTML 文档，但仅修改 data-sg-id="${targetId ?? ""}" 这一页`
-        : `只输出完整 HTML 文档，但仅修改 data-sg-id="${targetId ?? ""}" 这个元素`;
+        : scope === "insert"
+          ? `只输出完整 HTML 文档。在 data-sg-id="${targetId ?? ""}" 这一页的末尾新增一个独立元素来响应指令，不要改动页面已有的任何其它元素与结构。新增元素需带唯一 data-sg-id 与合适的 data-sg-* 属性。`
+          : `只输出完整 HTML 文档，但仅修改 data-sg-id="${targetId ?? ""}" 这个元素`;
 
   const res = await ctx.ai.complete({
     messages: [
@@ -586,7 +616,7 @@ async function runAiEdit(
     revisionId: nextId("rev"),
     scope,
     targetId,
-    proposal: stripCodeFence(res.text),
+    proposal: ensurePresentationRuntimeHtml(stripCodeFence(res.text)),
     provider: res.provider,
   };
 }

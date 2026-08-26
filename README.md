@@ -61,7 +61,7 @@ pnpm check
 | 应用 | 端口 | 职责 |
 | --- | --- | --- |
 | `apps/web` | 3000 | React 19 + Vite SPA：全部 P0 页面、CodeMirror 编辑器、IndexedDB 草稿、SSE 实时更新 |
-| `apps/api` | 3001 | Fastify 模块化单体：资产/文档/知识库/调研/任务/数据集/演示/模板/发布/通知/Credits/集成/MCP |
+| `apps/api` | 3001 | Fastify 模块化单体：资产/文档/知识库/调研/任务/数据集/演示/模板/发布/通知/积分余额展示/集成/MCP |
 | `apps/worker` | 轮询 3001 | Node 持久执行：Research、知识索引、演示生成、数据集导入，Outbox 消费 + 结果投影 |
 | `apps/compute-worker` | 3002 | Go：内容解析/分块 + Dataset 导入/画像/查询引擎（结构化 AST，确定性执行） |
 | `apps/public-gateway` | 3004 | Go：公开 URL/短链/密码/缓存头/访问事件，独立可信边界 |
@@ -76,7 +76,7 @@ pnpm check
 - 在线演示：文档/报告 → AI 大纲 → 结构化编辑（主题/布局/单页重写）→ 播放 → 发布；
 - 模板中心：Research/Presentation 模板、使用计数；
 - 发布：Public/Unlisted/Password、有效期、短链、二维码、访问统计、撤销；
-- Credits：账户/账本（grant/reserve/settle/release）、任务预估、额度不足拦截、套餐；
+- 积分余额：仅保留只读余额展示，积分账户、扣费、套餐和用量由外部积分系统负责；
 - 通知：任务完成/失败/部分完成、知识库索引、已读管理、Header 未读数；
 - 设置：个人偏好、MCP（默认关闭、Scope、Read Only 默认、写权限二次确认、Claude/Cursor/ChatGPT 连接向导）、API Token（Secret 仅显示一次、可撤销）、审计日志；
 - MCP：Streamable HTTP（`/mcp`），7 个工具（search/read/knowledge + create/update/task/publish），复用应用服务与授权；

@@ -18,6 +18,11 @@
     "typecheck": "tsc -p tsconfig.json --noEmit --pretty false"
   },
   "dependencies": {
+    "@ai-sdk/anthropic": "^4.0.16",
+    "@ai-sdk/google": "^4.0.18",
+    "@ai-sdk/openai": "^4.0.16",
+    "@ai-sdk/openai-compatible": "^3.0.13",
+    "@mastra/core": "1.55.0",
     "@shiguang/config": "workspace:*",
     "@shiguang/contracts": "workspace:*",
     "zod": "catalog:"

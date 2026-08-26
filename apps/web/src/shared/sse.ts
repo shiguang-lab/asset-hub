@@ -15,6 +15,18 @@ export function useSse(): void {
   const queryClient = useQueryClient();
   useEffect(() => {
     const source = new EventSource(SSE_URL);
+    const invalidatePresentationTask = (event: Event) => {
+      try {
+        const data = JSON.parse((event as MessageEvent).data) as { taskId?: string };
+        if (data.taskId) {
+          void queryClient.invalidateQueries({
+            queryKey: ["presentation-generation-task", data.taskId],
+          });
+        }
+      } catch {
+        // A malformed optional notification must not tear down the shared SSE channel.
+      }
+    };
     const onEvent = (key: string) => {
       const targets = EVENTS[key];
       if (!targets) return;
@@ -22,8 +34,14 @@ export function useSse(): void {
         void queryClient.invalidateQueries({ queryKey: parts as never });
       }
     };
-    source.addEventListener("task.updated", (_e) => onEvent("task.updated"));
-    source.addEventListener("task.completed", (_e) => onEvent("task.completed"));
+    source.addEventListener("task.updated", (event) => {
+      onEvent("task.updated");
+      invalidatePresentationTask(event);
+    });
+    source.addEventListener("task.completed", (event) => {
+      onEvent("task.completed");
+      invalidatePresentationTask(event);
+    });
     source.addEventListener("notification.created", (_e) => onEvent("notification.created"));
     source.addEventListener("knowledge.updated", (_e) => onEvent("knowledge.updated"));
     source.addEventListener("asset.updated", (_e) => onEvent("asset.updated"));

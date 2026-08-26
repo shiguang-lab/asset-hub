@@ -1,25 +1,38 @@
-import { createGlobalStyle, css } from "antd-style";
+import { createStyles } from "antd-style";
 
-export const ThemeLockGlobalStyles = createGlobalStyle(css`
+export const useThemeLockStyles = createStyles(({ css, token }) => {
+  const appToken = token as typeof token & Record<string, string>;
+  return {
+    root: css`
 /* Theme lock: keep the workstation on the original near-black dark palette. */
-:root,
-[data-theme="dark"] {
-  --sg-fg: #f4f3fb;
-  --sg-fg-2: #b8b5c9;
-  --sg-muted: #777489;
-  --sg-bg: #0b0a0f;
-  --sg-bg-2: #121116;
-  --sg-bg-3: #1a181f;
-  --sg-border: #2a2731;
-  --sg-accent: #7c3cff;
-  --sg-accent-2: #965eff;
-  --sg-accent-soft: rgba(124, 60, 255, 0.14);
-  --sg-success: #43d19e;
-  --sg-warning: #ffb14a;
+& {
+  --sg-fg: ${appToken.colorTextPrimary ?? "#f4f3fb"};
+  --sg-fg-2: ${appToken.colorTextSecondary ?? "#b8b5c9"};
+  --sg-muted: ${appToken.colorTextMuted ?? "#777489"};
+  --sg-bg: ${appToken.colorSurface ?? "#0b0a0f"};
+  --sg-bg-2: ${appToken.colorSurfaceSecondary ?? "#121116"};
+  --sg-bg-3: ${appToken.colorSurfaceTertiary ?? "#1a181f"};
+  --sg-border: ${appToken.colorStroke ?? "#2a2731"};
+  --sg-accent: ${appToken.colorAccent ?? "#7c3cff"};
+  --sg-accent-2: ${appToken.colorAccentHover ?? "#965eff"};
+  --sg-accent-soft: ${appToken.colorAccentSoft ?? "rgba(124, 60, 255, 0.14)"};
+  --sg-danger: ${token.colorError};
+  --sg-success: ${token.colorSuccess};
+  --sg-warning: ${token.colorWarning};
+  --sg-radius: 6px;
+  --sg-radius-sm: 5px;
+  --sg-shadow: 0 8px 26px rgba(0, 0, 0, 0.22);
+  --sg-shadow-lg: 0 18px 60px rgba(0, 0, 0, 0.52);
+  --sg-font:
+    Inter, ui-sans-serif, -apple-system, "PingFang SC", "Noto Sans SC", "Microsoft YaHei",
+    sans-serif;
+  --sg-mono: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
   --sg-sidebar-w: 266px;
+  /* One page gutter, sourced from antd's spacing token. */
+  --sg-page-gutter: ${token.padding}px;
 }
 
-body,
+&,
 .sg-shell {
   background: var(--sg-bg);
 }
@@ -128,8 +141,8 @@ body,
 .sg-credits-box {
   display: block;
   margin: 0 10px;
-  min-height: 76px;
-  padding: 15px 16px;
+  min-height: 0;
+  padding: 12px 14px;
   border: 1px solid #2a2731;
   border-radius: 10px;
   color: inherit;
@@ -143,11 +156,17 @@ body,
   display: flex;
   align-items: center;
   justify-content: space-between;
+  min-height: 18px;
 }
 .sg-credits-percent {
   color: #a887ff;
   font-size: 12px;
   font-weight: 600;
+}
+.sg-credits-percent small {
+  color: #777489;
+  font-size: 10px;
+  font-weight: 500;
 }
 .sg-credits-title {
   display: inline-flex;
@@ -463,14 +482,12 @@ body,
 }
 .sg-assets-search.ant-input-affix-wrapper {
   width: 312px;
-  height: 41px;
   border-radius: 8px;
   border-color: #20384f;
   background: #0e2034;
 }
 .sg-assets-select.ant-select {
   width: 168px;
-  height: 41px;
 }
 .sg-assets-select:nth-of-type(2) {
   width: 151px;
@@ -479,7 +496,6 @@ body,
   width: 180px;
 }
 .sg-assets-select .ant-select-selector {
-  height: 41px !important;
   border-radius: 8px !important;
   border-color: #20384f !important;
   background: #0e2034 !important;
@@ -488,29 +504,7 @@ body,
   color: #c4d0dd;
 }
 .sg-docs-view-toggle {
-  display: inline-flex;
-  align-items: center;
   margin-left: auto;
-  border: 1px solid #20384f;
-  border-radius: 8px;
-  background: #0e2034;
-}
-.sg-docs-view-toggle button {
-  width: 60px;
-  height: 39px;
-  display: grid;
-  place-items: center;
-  border: 0;
-  color: #788ca2;
-  background: transparent;
-  cursor: pointer;
-}
-.sg-docs-view-toggle button + button {
-  border-left: 1px solid #20384f;
-}
-.sg-docs-view-toggle button.active {
-  color: #a183ff;
-  background: rgba(111, 79, 240, 0.15);
 }
 .sg-docs-recent-section,
 .sg-docs-all-section {
@@ -723,11 +717,6 @@ body,
   .sg-header {
     height: 64px;
     min-height: 64px;
-    padding: 0 14px !important;
-  }
-  .sg-search {
-    width: auto;
-    flex: 1;
   }
 
   .sg-docs-stats {
@@ -755,7 +744,7 @@ body,
 .sg-shell.ant-layout,
 .sg-shell .ant-layout,
 .sg-content-shell,
-body {
+& {
   background: #0b0a0f !important;
 }
 .sg-sidebar.ant-layout-sider,
@@ -766,7 +755,6 @@ body {
 .sg-search,
 .sg-assets-search.ant-input-affix-wrapper,
 .sg-assets-select .ant-select-selector,
-.sg-docs-view-toggle,
 .sg-docs-recent-card,
 .sg-docs-stat,
 .sg-docs-table-wrap {
@@ -792,4 +780,6 @@ body {
   border-color: #2a2731;
   background: #141218;
 }
-`);
+  `,
+  };
+});

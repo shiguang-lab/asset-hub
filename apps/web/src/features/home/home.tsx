@@ -1,5 +1,6 @@
 import { formatRelative } from "@shiguang/ui";
 import { useQuery } from "@tanstack/react-query";
+import { createStyles } from "antd-style";
 import {
   ArrowRight,
   BarChart3,
@@ -15,6 +16,12 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { type Asset, api, type HomeData } from "../../entities/api.js";
 import { AppTable } from "../../shared/AppTable.js";
+
+const useHomePageStyles = createStyles((_token, props: { progress: number }) => ({
+  progress: {
+    width: `${props.progress}%`,
+  },
+}));
 
 const TEMPLATE_PREVIEWS = [
   "/reference/template-research.webp",
@@ -87,6 +94,7 @@ export function HomePage() {
   };
 
   const running = data?.runningTasks?.[0];
+  const { styles } = useHomePageStyles({ progress: running?.progress ?? 0 });
   const templates = [...(data?.templates ?? []), ...FALLBACK_TEMPLATES]
     .filter(
       (item, index, items) =>
@@ -183,7 +191,7 @@ export function HomePage() {
                 <span className="sg-running-info">
                   <strong>{running.goal}</strong>
                   <span className="sg-progress-line">
-                    <i style={{ width: `${running.progress}%` }} />
+                    <i className={styles.progress} />
                   </span>
                   <small>{running.currentStep || "正在读取资料"} · 可以关闭页面</small>
                 </span>
@@ -265,7 +273,7 @@ export function HomePage() {
                 pagination={false}
                 size="middle"
                 onRow={(asset) => ({
-                  style: { cursor: "pointer" },
+                  className: "sg-home-recent-row",
                   onClick: () => navigate(assetHref(asset)),
                 })}
                 columns={[
@@ -273,12 +281,12 @@ export function HomePage() {
                     title: "名称",
                     dataIndex: "title",
                     render: (_v, asset) => (
-                      <>
+                      <div className="sg-home-recent-name">
                         <span className={`sg-file-icon ${asset.type}`}>
                           <AssetIcon type={asset.type} />
                         </span>
                         <strong>{asset.title}</strong>
-                      </>
+                      </div>
                     ),
                   },
                   {

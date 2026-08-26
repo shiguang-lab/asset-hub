@@ -15,9 +15,6 @@ export const eventTypeSchema = z.enum([
   "knowledge.source.failed",
   "publish.released",
   "publish.revoked",
-  "credit.reserved",
-  "credit.settled",
-  "credit.released",
   "notification.created",
   "dataset.version.ready",
   "presentation.generated",
@@ -38,7 +35,6 @@ export const eventPayloads = {
   "task.completed": z.object({
     taskId: z.string(),
     outputAssetIds: z.array(z.string()),
-    creditsUsed: z.number(),
   }),
   "task.partial": z.object({
     taskId: z.string(),
@@ -63,9 +59,6 @@ export const eventPayloads = {
     releaseId: z.string(),
   }),
   "publish.revoked": z.object({ publishId: z.string(), slug: z.string() }),
-  "credit.reserved": z.object({ taskId: z.string(), amount: z.number() }),
-  "credit.settled": z.object({ taskId: z.string(), amount: z.number() }),
-  "credit.released": z.object({ taskId: z.string(), amount: z.number() }),
   "notification.created": z.object({ notificationId: z.string() }),
   "dataset.version.ready": z.object({ datasetId: z.string(), versionId: z.string() }),
   "presentation.generated": z.object({ assetId: z.string(), taskId: z.string() }),

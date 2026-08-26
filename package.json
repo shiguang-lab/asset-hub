@@ -14,6 +14,7 @@
     "format": "biome format --write . && gofmt -w apps/compute-worker apps/public-gateway",
     "format:check": "biome format . && test -z \"$(gofmt -l apps/compute-worker apps/public-gateway)\"",
     "lint": "turbo run lint",
+    "presentation:qa": "tsx scripts/presentation-qa.ts",
     "test": "turbo run test",
     "typecheck": "turbo run typecheck",
     "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build"

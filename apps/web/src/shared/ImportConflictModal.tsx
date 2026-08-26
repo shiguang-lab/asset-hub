@@ -1,4 +1,6 @@
+import { Scrollbar } from "@shiguang/ui";
 import { Modal, Radio } from "antd";
+import { createStyles } from "antd-style";
 import { useEffect, useState } from "react";
 
 export type ImportResolutionValue = "skip" | "replace" | "rename";
@@ -7,6 +9,27 @@ export interface ImportConflict {
   title: string;
   existingId: string;
 }
+
+const useImportConflictStyles = createStyles(({ token }) => ({
+  intro: {
+    marginTop: 0,
+    color: token.colorTextSecondary,
+  },
+  list: {
+    display: "flex",
+    flexDirection: "column",
+    gap: 4,
+    maxHeight: 380,
+  },
+  item: {
+    padding: "10px 0",
+    borderBottom: `1px solid ${token.colorBorder}`,
+  },
+  title: {
+    fontWeight: 600,
+    marginBottom: 6,
+  },
+}));
 
 /**
  * 导入前检测到同名文档时，逐项让用户选择：保留原有（跳过）/ 替换原有内容 / 重命名后导入。
@@ -21,6 +44,7 @@ export function ImportConflictModal({
   conflicts: ImportConflict[];
   onResolve: (resolutions: Record<string, ImportResolutionValue> | null) => void;
 }) {
+  const { styles } = useImportConflictStyles();
   const [resolutions, setResolutions] = useState<Record<string, ImportResolutionValue>>({});
 
   useEffect(() => {
@@ -37,24 +61,13 @@ export function ImportConflictModal({
       onOk={() => onResolve(resolutions)}
       onCancel={() => onResolve(null)}
     >
-      <p style={{ marginTop: 0, color: "var(--sg-text-muted, #888)" }}>
+      <p className={styles.intro}>
         以下文档与当前 workspace 已有文档重名，请为每一项选择处理方式：
       </p>
-      <div
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          gap: 4,
-          maxHeight: 380,
-          overflowY: "auto",
-        }}
-      >
+      <Scrollbar className={styles.list}>
         {conflicts.map((conflict) => (
-          <div
-            key={conflict.title}
-            style={{ padding: "10px 0", borderBottom: "1px solid var(--sg-border, #eee)" }}
-          >
-            <div style={{ fontWeight: 600, marginBottom: 6 }}>{conflict.title}</div>
+          <div key={conflict.title} className={styles.item}>
+            <div className={styles.title}>{conflict.title}</div>
             <Radio.Group
               value={resolutions[conflict.title]}
               onChange={(e) =>
@@ -67,7 +80,7 @@ export function ImportConflictModal({
             </Radio.Group>
           </div>
         ))}
-      </div>
+      </Scrollbar>
     </Modal>
   );
 }

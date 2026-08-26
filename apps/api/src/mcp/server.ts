@@ -25,7 +25,7 @@ export function registerMcp(app: FastifyInstance, ctx: AppContext): void {
   const tools: ToolDef[] = [
     {
       name: "search_assets",
-      description: "按名称/标签/类型检索工作区中的数字资产（文档、报告、数据、演示等）。",
+      description: "按名称和类型检索工作区中的数字资产（文档、报告、数据、演示等）。",
       inputSchema: mcpToolInputs.searchAssets,
       handler: async (input, ctx, actor) => {
         const q = input as z.infer<typeof mcpToolInputs.searchAssets>;
@@ -44,7 +44,6 @@ export function registerMcp(app: FastifyInstance, ctx: AppContext): void {
                   id: a.id,
                   type: a.type,
                   title: a.title,
-                  tags: a.tags,
                   visibility: a.visibility,
                   updatedAt: a.updatedAt,
                   uri: `shiguang://assets/${a.id}`,
@@ -99,7 +98,6 @@ export function registerMcp(app: FastifyInstance, ctx: AppContext): void {
                     id: asset.id,
                     type: asset.type,
                     title: asset.title,
-                    tags: asset.tags,
                     visibility: asset.visibility,
                     versionId: asset.currentVersionId,
                     updatedAt: asset.updatedAt,
@@ -160,7 +158,6 @@ export function registerMcp(app: FastifyInstance, ctx: AppContext): void {
           type: q.type as AssetType,
           title: q.title,
           description: q.description,
-          tags: q.tags,
           content: q.content
             ? {
                 kind: q.type === "html" ? "html" : "markdown",

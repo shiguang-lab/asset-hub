@@ -1,11 +1,12 @@
-import { Empty, Field, Loading, useToast } from "@shiguang/ui";
+import { Empty, Field, Loading, Scrollbar, useToast } from "@shiguang/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Button, Dropdown, Input, Modal, Select } from "antd";
+import type { MenuProps } from "antd";
+import { Button, Dropdown, Input, Modal, Segmented, Select } from "antd";
+import { createStyles } from "antd-style";
 import {
   BarChart3,
   Check,
   ChevronDown,
-  ChevronLeft,
   ChevronRight,
   Clock3,
   FileStack,
@@ -41,6 +42,7 @@ import {
 import { useNavigate } from "react-router-dom";
 import { getAuthSession } from "../../auth/session.js";
 import { type Asset, api, publishedShortUrl } from "../../entities/api.js";
+import { AppPagination } from "../../shared/AppPagination.js";
 import { AppTable } from "../../shared/AppTable.js";
 import { OwnerAvatar } from "../../shared/OwnerAvatar.js";
 import { isOwnedBySession, ownerDisplayName } from "../../shared/owner.js";
@@ -51,6 +53,39 @@ import {
   useShellDocumentActions,
 } from "../../shell/layout.js";
 import { PublishDialog } from "../publishing/publish-dialog.js";
+
+const useDocumentsPageStyles = createStyles(() => ({
+  recentHeader: {
+    marginBottom: 12,
+  },
+  allHeader: {
+    marginBottom: 10,
+  },
+  sectionTitle: {
+    margin: 0,
+  },
+  relationBadge: {
+    marginRight: 6,
+  },
+  folderDepth0: { paddingLeft: 8 },
+  folderDepth1: { paddingLeft: 24 },
+  folderDepth2: { paddingLeft: 40 },
+  folderDepth3: { paddingLeft: 56 },
+  folderDepth4: { paddingLeft: 72 },
+  folderDepth5: { paddingLeft: 88 },
+  folderDepth6: { paddingLeft: 104 },
+  folderDepth7: { paddingLeft: 120 },
+  folderDepth8: { paddingLeft: 136 },
+  moveDepth0: { paddingLeft: 14 },
+  moveDepth1: { paddingLeft: 36 },
+  moveDepth2: { paddingLeft: 58 },
+  moveDepth3: { paddingLeft: 80 },
+  moveDepth4: { paddingLeft: 102 },
+  moveDepth5: { paddingLeft: 124 },
+  moveDepth6: { paddingLeft: 146 },
+  moveDepth7: { paddingLeft: 168 },
+  moveDepth8: { paddingLeft: 190 },
+}));
 
 const ME = "dev-user";
 const FAVORITES_STORAGE_KEY = "shiguang.document-favorites";
@@ -80,7 +115,6 @@ const DEMO_DOCUMENTS: Asset[] = [
     description: "深入分析全球新能源汽车市场趋势，竞争格局与技术...",
     visibility: "public",
     status: "ready",
-    tags: ["行业研究", "新能源汽车"],
     sourceType: "manual",
     currentVersionId: "demo-1",
     lockVersion: 1,
@@ -98,7 +132,6 @@ const DEMO_DOCUMENTS: Asset[] = [
     description: "聚焦越南消费金融市场现状与未来机遇，包含市场...",
     visibility: "link",
     status: "ready",
-    tags: ["消费金融", "越南市场"],
     sourceType: "research",
     currentVersionId: "demo-2",
     lockVersion: 1,
@@ -116,7 +149,6 @@ const DEMO_DOCUMENTS: Asset[] = [
     description: "定义 AI Agent 产品的设计原则、功能模块与交互...",
     visibility: "link",
     status: "ready",
-    tags: ["产品设计", "AI Agent"],
     sourceType: "manual",
     currentVersionId: "demo-3",
     lockVersion: 1,
@@ -134,7 +166,6 @@ const DEMO_DOCUMENTS: Asset[] = [
     description: "Shiguang Lab 核心功能需求、用户场景与验收标...",
     visibility: "link",
     status: "ready",
-    tags: ["PRD", "产品需求"],
     sourceType: "manual",
     currentVersionId: "demo-4",
     lockVersion: 1,
@@ -152,7 +183,6 @@ const DEMO_DOCUMENTS: Asset[] = [
     description: "可视化展示行业关键指标与趋势数据，支持多维度...",
     visibility: "public",
     status: "ready",
-    tags: ["数据可视化", "Dashboard"],
     sourceType: "manual",
     currentVersionId: "demo-5",
     lockVersion: 1,
@@ -369,14 +399,10 @@ function inferredFolderId(document: Asset): string {
   ) {
     return "research-industry";
   }
-  if (document.title.includes("Agent") || document.tags.includes("产品设计")) {
+  if (document.title.includes("Agent")) {
     return "product-design";
   }
-  if (
-    document.title.includes("PRD") ||
-    document.tags.includes("PRD") ||
-    document.tags.includes("产品需求")
-  ) {
+  if (document.title.includes("PRD")) {
     return "product-requirements";
   }
   return "root";
@@ -401,6 +427,29 @@ function relationBadges(relations: RelationRow[] | undefined): string[] {
 
 export function DocumentsPage() {
   const navigate = useNavigate();
+  const { styles } = useDocumentsPageStyles();
+  const folderDepthClasses = [
+    styles.folderDepth0,
+    styles.folderDepth1,
+    styles.folderDepth2,
+    styles.folderDepth3,
+    styles.folderDepth4,
+    styles.folderDepth5,
+    styles.folderDepth6,
+    styles.folderDepth7,
+    styles.folderDepth8,
+  ];
+  const moveDepthClasses = [
+    styles.moveDepth0,
+    styles.moveDepth1,
+    styles.moveDepth2,
+    styles.moveDepth3,
+    styles.moveDepth4,
+    styles.moveDepth5,
+    styles.moveDepth6,
+    styles.moveDepth7,
+    styles.moveDepth8,
+  ];
   const documentActions = useShellDocumentActions();
   const toast = useToast();
   const { confirmDelete } = useDeleteConfirm();
@@ -409,7 +458,6 @@ export function DocumentsPage() {
   const [filter, setFilter] = useState<FilterId>("all");
   const [q, setQ] = useState("");
   const [type, setType] = useState("all");
-  const [tagFilter, setTagFilter] = useState("all");
   const [sort, setSort] = useState("updated");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
@@ -420,6 +468,7 @@ export function DocumentsPage() {
   const [activeFolderId, setActiveFolderId] = useState("root");
   const [treePanelOpen, setTreePanelOpen] = useState(false);
   const [expandedFolderIds, setExpandedFolderIds] = useState<string[]>(["product", "research"]);
+  const [openFolderMenuId, setOpenFolderMenuId] = useState<string | null>(null);
   const [folderDialog, setFolderDialog] = useState<{
     mode: "create" | "rename";
     parentId: string | null;
@@ -560,18 +609,13 @@ export function DocumentsPage() {
             ? a.type === "document" || a.type === "report"
             : a.type === type,
       )
-      .filter((a) => (tagFilter === "all" ? true : a.tags.includes(tagFilter)))
       .filter((a) =>
         visibleFolderIds === null
           ? true
           : visibleFolderIds.has(folderAssignments[a.id] ?? inferredFolderId(a)),
       )
       .filter((a) =>
-        q.trim()
-          ? `${a.title} ${a.description} ${a.tags.join(" ")}`
-              .toLowerCase()
-              .includes(q.toLowerCase())
-          : true,
+        q.trim() ? `${a.title} ${a.description}`.toLowerCase().includes(q.toLowerCase()) : true,
       )
       .sort((a, b) =>
         sort === "title"
@@ -587,7 +631,6 @@ export function DocumentsPage() {
     favoriteIds,
     filter,
     type,
-    tagFilter,
     q,
     sort,
     folderAssignments,
@@ -596,7 +639,7 @@ export function DocumentsPage() {
 
   useEffect(() => {
     setPage(1);
-  }, [activeFolderId, filter, q, type, tagFilter, sort, pageSize]);
+  }, [activeFolderId, filter, q, type, sort, pageSize]);
 
   const stats = useMemo(() => {
     if (demoMode) return { total: 128, weekCreated: 12, weekEdited: 23, published: 18 };
@@ -618,15 +661,6 @@ export function DocumentsPage() {
     [all],
   );
 
-  const tags = useMemo(() => {
-    const count = new Map<string, number>();
-    for (const a of all) for (const t of a.tags.slice(0, 4)) count.set(t, (count.get(t) ?? 0) + 1);
-    return [...count.entries()]
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 10)
-      .map(([t]) => t);
-  }, [all]);
-
   const pageCount = Math.max(1, Math.ceil(items.length / pageSize));
   useEffect(() => {
     setPage((current) => Math.min(current, pageCount));
@@ -635,22 +669,6 @@ export function DocumentsPage() {
     () => items.slice((page - 1) * pageSize, page * pageSize),
     [items, page, pageSize],
   );
-
-  const pageButtons = useMemo(() => {
-    const out: Array<number | "…"> = [];
-    if (pageCount <= 7) {
-      for (let i = 1; i <= pageCount; i++) out.push(i);
-      return out;
-    }
-    out.push(1);
-    const start = Math.max(2, page - 1);
-    const end = Math.min(pageCount - 1, page + 1);
-    if (start > 2) out.push("…");
-    for (let i = start; i <= end; i++) out.push(i);
-    if (end < pageCount - 1) out.push("…");
-    out.push(pageCount);
-    return out;
-  }, [page, pageCount]);
 
   // Batch-load relations for the current page so the "关联" column is accurate.
   const { data: relMap } = useQuery<Record<string, RelationRow[]>>({
@@ -705,6 +723,28 @@ export function DocumentsPage() {
       documentTitle: document.title,
       folderId: folderAssignments[document.id] ?? inferredFolderId(document),
     });
+  };
+
+  const documentMenuItems = (document: Asset): MenuProps["items"] => [
+    { key: "open", label: "打开" },
+    { key: "preview", label: "文档预览" },
+    { key: "copy", label: "复制链接" },
+    { key: "favorite", label: favoriteIds.includes(document.id) ? "取消收藏" : "收藏" },
+    { key: "move", label: "移动到目录" },
+    filter !== "trash"
+      ? { key: "delete", label: "删除", danger: true }
+      : { key: "restore", label: "恢复" },
+  ];
+
+  const onDocumentMenuClick = (document: Asset, key: string) => {
+    setOpenDocumentMenuId(null);
+    if (key === "open") navigate(`/documents/${document.id}`);
+    if (key === "preview") navigate(`/documents/${document.id}/preview`);
+    if (key === "copy") void copyLink(document);
+    if (key === "favorite") toggleFavorite(document.id);
+    if (key === "move") openMoveDialog(document);
+    if (key === "delete") confirmDeleteDocument(document);
+    if (key === "restore") batchMutation.mutate({ action: "restore", ids: [document.id] });
   };
 
   const confirmMoveToFolder = () => {
@@ -826,12 +866,11 @@ export function DocumentsPage() {
         return (
           <div key={folder.id} className="sg-docs-tree-branch">
             <div
-              className={`sg-docs-tree-row ${activeFolderId === folder.id ? "active" : ""}`}
+              className={`sg-docs-tree-row ${activeFolderId === folder.id ? "active" : ""} ${folderDepthClasses[Math.min(depth, folderDepthClasses.length - 1)]}`}
               role="treeitem"
               aria-selected={activeFolderId === folder.id}
               aria-expanded={hasChildren ? expanded : undefined}
               tabIndex={-1}
-              style={{ paddingLeft: 8 + depth * 16 }}
               onDragOver={(event) => event.preventDefault()}
               onDrop={(event) => {
                 event.preventDefault();
@@ -860,29 +899,37 @@ export function DocumentsPage() {
                 <span>{folder.name}</span>
               </button>
               <Dropdown
-                trigger={["click"]}
+                trigger={["hover"]}
+                mouseEnterDelay={0}
+                mouseLeaveDelay={0.15}
                 placement="bottomRight"
-                popupRender={() => (
-                  <div className="sg-asset-menu">
-                    <button type="button" onClick={() => openCreateFolder(folder.id)}>
-                      新建子目录
-                    </button>
-                    <button type="button" onClick={() => openRenameFolder(folder)}>
-                      重命名
-                    </button>
-                    <button type="button" className="danger" onClick={() => deleteFolder(folder)}>
-                      删除目录
-                    </button>
-                  </div>
-                )}
+                open={openFolderMenuId === folder.id}
+                onOpenChange={(open) => setOpenFolderMenuId(open ? folder.id : null)}
+                menu={{
+                  items: [
+                    { key: "create", label: "新建子目录" },
+                    { key: "rename", label: "重命名" },
+                    { key: "delete", label: "删除目录", danger: true },
+                  ],
+                  onClick: ({ key }) => {
+                    if (key === "create") openCreateFolder(folder.id);
+                    if (key === "rename") openRenameFolder(folder);
+                    if (key === "delete") deleteFolder(folder);
+                  },
+                }}
               >
-                <button
-                  type="button"
-                  className="sg-docs-tree-more"
+                <Button
+                  size="small"
+                  type="text"
+                  className="sg-list-action-btn sg-docs-tree-more"
+                  onFocus={() => setOpenFolderMenuId(folder.id)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Escape") setOpenFolderMenuId(null);
+                  }}
                   aria-label={`${folder.name}目录操作`}
                 >
                   <MoreHorizontal size={14} />
-                </button>
+                </Button>
               </Dropdown>
             </div>
             {hasChildren && expanded && renderFolderTree(folder.id, depth + 1)}
@@ -901,8 +948,7 @@ export function DocumentsPage() {
               type="button"
               role="radio"
               aria-checked={selected}
-              className={`sg-docs-move-folder ${selected ? "selected" : ""}`}
-              style={{ paddingLeft: 14 + depth * 22 }}
+              className={`sg-docs-move-folder ${selected ? "selected" : ""} ${moveDepthClasses[Math.min(depth, moveDepthClasses.length - 1)]}`}
               onClick={() =>
                 setMoveDialog((current) =>
                   current ? { ...current, folderId: folder.id } : current,
@@ -984,7 +1030,7 @@ export function DocumentsPage() {
               </button>
             </div>
           </div>
-          <div className="sg-docs-tree-content">
+          <Scrollbar className="sg-docs-tree-scroll">
             <nav className="sg-docs-system-views" aria-label="文档系统视图">
               {[
                 { id: "all", label: "全部文档", icon: FileStack },
@@ -1011,7 +1057,7 @@ export function DocumentsPage() {
             <div className="sg-docs-tree" role="tree" aria-label="我的目录">
               {renderFolderTree(null)}
             </div>
-          </div>
+          </Scrollbar>
         </aside>
 
         <div className="sg-docs-main">
@@ -1043,15 +1089,6 @@ export function DocumentsPage() {
               ]}
             />
             <Select
-              value={tagFilter}
-              onChange={setTagFilter}
-              className="sg-assets-select"
-              options={[
-                { value: "all", label: "全部标签" },
-                ...tags.map((t) => ({ value: t, label: t })),
-              ]}
-            />
-            <Select
               value={sort}
               onChange={setSort}
               className="sg-assets-select"
@@ -1061,36 +1098,32 @@ export function DocumentsPage() {
                 { value: "title", label: "名称" },
               ]}
             />
-            <div className="sg-docs-view-toggle">
-              <button
-                type="button"
-                className={viewMode === "list" ? "active" : ""}
-                aria-label="列表视图"
-                aria-pressed={viewMode === "list"}
-                onClick={() => setViewMode("list")}
-              >
-                <List size={18} />
-              </button>
-              <button
-                type="button"
-                className={viewMode === "grid" ? "active" : ""}
-                aria-label="网格视图"
-                aria-pressed={viewMode === "grid"}
-                onClick={() => setViewMode("grid")}
-              >
-                <Grid2X2 size={17} />
-              </button>
-            </div>
+            <Segmented
+              className="sg-docs-view-toggle"
+              aria-label="显示方式"
+              value={viewMode}
+              onChange={(value) => setViewMode(value as typeof viewMode)}
+              options={[
+                {
+                  value: "list",
+                  icon: <List size={17} aria-hidden="true" />,
+                  tooltip: "列表视图",
+                },
+                {
+                  value: "grid",
+                  icon: <Grid2X2 size={17} aria-hidden="true" />,
+                  tooltip: "网格视图",
+                },
+              ]}
+            />
           </div>
 
           {listLoading ? <Loading loading minHeight={360} /> : null}
 
           {!listLoading && filter === "all" && activeFolderId === "root" && (
             <section className="sg-docs-recent-section">
-              <div className="sg-row-between" style={{ marginBottom: 12 }}>
-                <h2 className="sg-h3" style={{ margin: 0 }}>
-                  最近编辑
-                </h2>
+              <div className={`sg-row-between ${styles.recentHeader}`}>
+                <h2 className={`sg-h3 ${styles.sectionTitle}`}>最近编辑</h2>
                 <button
                   type="button"
                   className="sg-side-link"
@@ -1147,10 +1180,8 @@ export function DocumentsPage() {
           )}
 
           <section className="sg-docs-all-section">
-            <div className="sg-row-between" style={{ marginBottom: 10 }}>
-              <h2 className="sg-h3" style={{ margin: 0 }}>
-                {activeFolderPath}
-              </h2>
+            <div className={`sg-row-between ${styles.allHeader}`}>
+              <h2 className={`sg-h3 ${styles.sectionTitle}`}>{activeFolderPath}</h2>
               <span className="sg-subtle">共 {items.length} 项</span>
             </div>
 
@@ -1194,59 +1225,30 @@ export function DocumentsPage() {
                           {d.type === "report" ? "调研报告" : "文档"}
                         </span>
                         <Dropdown
-                          trigger={["click"]}
+                          trigger={["hover"]}
+                          mouseEnterDelay={0}
+                          mouseLeaveDelay={0.15}
                           placement="bottomRight"
                           open={openDocumentMenuId === d.id}
                           onOpenChange={(open) => setOpenDocumentMenuId(open ? d.id : null)}
-                          popupRender={() => (
-                            <div className="sg-asset-menu">
-                              <button type="button" onClick={() => navigate(`/documents/${d.id}`)}>
-                                打开
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => navigate(`/documents/${d.id}/preview`)}
-                              >
-                                文档预览
-                              </button>
-                              <button type="button" onClick={() => copyLink(d)}>
-                                复制链接
-                              </button>
-                              <button type="button" onClick={() => toggleFavorite(d.id)}>
-                                {favoriteIds.includes(d.id) ? "取消收藏" : "收藏"}
-                              </button>
-                              <button type="button" onClick={() => openMoveDialog(d)}>
-                                移动到目录
-                              </button>
-                              {filter !== "trash" ? (
-                                <button
-                                  type="button"
-                                  className="danger"
-                                  onClick={() => confirmDeleteDocument(d)}
-                                >
-                                  删除
-                                </button>
-                              ) : (
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    batchMutation.mutate({ action: "restore", ids: [d.id] })
-                                  }
-                                >
-                                  恢复
-                                </button>
-                              )}
-                            </div>
-                          )}
+                          menu={{
+                            items: documentMenuItems(d),
+                            onClick: ({ key }) => onDocumentMenuClick(d, key),
+                          }}
                         >
-                          <button
-                            type="button"
-                            className="sg-asset-more"
+                          <Button
+                            size="small"
+                            type="text"
+                            className="sg-list-action-btn"
                             onClick={(e) => e.stopPropagation()}
+                            onFocus={() => setOpenDocumentMenuId(d.id)}
+                            onKeyDown={(event) => {
+                              if (event.key === "Escape") setOpenDocumentMenuId(null);
+                            }}
                             aria-label="更多操作"
                           >
                             <MoreHorizontal size={16} />
-                          </button>
+                          </Button>
                         </Dropdown>
                       </div>
                       <div className="sg-doc-card-body">
@@ -1257,17 +1259,7 @@ export function DocumentsPage() {
                         >
                           {d.title}
                         </button>
-                        {d.description ? (
-                          <p className="sg-doc-card-desc">{d.description}</p>
-                        ) : (
-                          <div className="sg-asset-tags">
-                            {d.tags.slice(0, 3).map((t) => (
-                              <span key={t} className="sg-tag sg-asset-tag">
-                                {t}
-                              </span>
-                            ))}
-                          </div>
-                        )}
+                        {d.description ? <p className="sg-doc-card-desc">{d.description}</p> : null}
                       </div>
                       <div className="sg-doc-card-meta">
                         <OwnerAvatar name={ownerDisplayName(d, authSession)} />
@@ -1289,7 +1281,7 @@ export function DocumentsPage() {
                           <Button
                             size="small"
                             type="text"
-                            className="sg-docs-action-btn ai"
+                            className="sg-list-action-btn ai"
                             title="AI 助手"
                             onClick={(e) => {
                               e.stopPropagation();
@@ -1301,7 +1293,7 @@ export function DocumentsPage() {
                           <Button
                             size="small"
                             type="text"
-                            className="sg-docs-action-btn"
+                            className="sg-list-action-btn"
                             title="分享"
                             onClick={(e) => {
                               e.stopPropagation();
@@ -1313,7 +1305,7 @@ export function DocumentsPage() {
                           <Button
                             size="small"
                             type="text"
-                            className="sg-docs-action-btn"
+                            className="sg-list-action-btn"
                             title={d.publishedUrl ? "复制发布链接" : "发布"}
                             aria-label={d.publishedUrl ? "复制发布链接" : "发布"}
                             onClick={(e) => {
@@ -1330,267 +1322,179 @@ export function DocumentsPage() {
                 })}
               </div>
             ) : (
-              <div className="sg-docs-table-wrap">
-              <AppTable<Asset>
-                rowKey="id"
-                dataSource={paged}
-                pagination={false}
-                size="middle"
-                onRow={(d) => ({
-                  draggable: true,
-                  style: { cursor: "pointer" },
-                  onDragStart: (event) => {
-                    event.dataTransfer.setData("application/x-shiguang-document", d.id);
-                    event.dataTransfer.effectAllowed = "move";
-                  },
-                  onClick: (e) => {
-                    if ((e.target as HTMLElement).closest("button, .ant-dropdown")) return;
-                    navigate(`/documents/${d.id}`);
-                  },
-                })}
-                columns={[
-                  {
-                    title: "名称",
-                    dataIndex: "title",
-                    render: (_v, d) => (
-                      <div className="sg-asset-name">
-                        <span className={`sg-asset-icn ${documentTone(d.title)}`}>
-                          {(() => {
-                            const Icon = documentIcon(d.title);
-                            return <Icon size={16} strokeWidth={1.9} />;
-                          })()}
-                        </span>
-                        <span className="sg-asset-name-copy">
-                          <span className="sg-asset-title">{d.title}</span>
-                          {d.description ? (
-                            <span className="sg-docs-desc">{d.description}</span>
-                          ) : (
-                            <span className="sg-asset-tags">
-                              {d.tags.slice(0, 3).map((t) => (
-                                <span key={t} className="sg-tag sg-asset-tag">
-                                  {t}
-                                </span>
-                              ))}
-                            </span>
-                          )}
-                        </span>
-                      </div>
-                    ),
-                  },
-                  {
-                    title: "所有者",
-                    dataIndex: "ownerDisplayName",
-                    width: 120,
-                    render: (_v, d) => (
-                      <OwnerAvatar name={ownerDisplayName(d, authSession)} />
-                    ),
-                  },
-                  {
-                    title: "更新时间",
-                    dataIndex: "updatedAt",
-                    width: 160,
-                    render: (v) => <span className="sg-subtle">{displayDate(v)}</span>,
-                  },
-                  {
-                    title: "可见范围",
-                    dataIndex: "visibility",
-                    width: 140,
-                    render: (_v, d) => {
-                      const vis = visMeta(d);
-                      const VisIcon = vis.icon;
-                      return (
-                        <span className={`sg-vis ${vis.cls}`}>
-                          <VisIcon size={13} />
-                          {vis.label}
-                        </span>
-                      );
+              <Scrollbar className="sg-docs-table-wrap">
+                <AppTable<Asset>
+                  rowKey="id"
+                  dataSource={paged}
+                  pagination={false}
+                  size="middle"
+                  onRow={(d) => ({
+                    draggable: true,
+                    style: { cursor: "pointer" },
+                    onDragStart: (event) => {
+                      event.dataTransfer.setData("application/x-shiguang-document", d.id);
+                      event.dataTransfer.effectAllowed = "move";
                     },
-                  },
-                  {
-                    title: "关联",
-                    dataIndex: "relations",
-                    width: 160,
-                    render: (_v, d) => {
-                      const badges = demoMode
-                        ? (DEMO_RELATIONS[d.id] ?? [])
-                        : relationBadges(relMap?.[d.id]);
-                      return badges.length === 0 ? (
-                        <span className="sg-subtle">—</span>
-                      ) : (
-                        badges.map((b) => (
-                          <span
-                            key={b}
-                            className="sg-badge sg-badge-success"
-                            style={{ marginRight: 6 }}
-                          >
-                            {b}
+                    onClick: (e) => {
+                      if ((e.target as HTMLElement).closest("button, .ant-dropdown")) return;
+                      navigate(`/documents/${d.id}`);
+                    },
+                  })}
+                  columns={[
+                    {
+                      title: "名称",
+                      dataIndex: "title",
+                      render: (_v, d) => (
+                        <div className="sg-asset-name">
+                          <span className={`sg-asset-icn ${documentTone(d.title)}`}>
+                            {(() => {
+                              const Icon = documentIcon(d.title);
+                              return <Icon size={16} strokeWidth={1.9} />;
+                            })()}
                           </span>
-                        ))
-                      );
+                          <span className="sg-asset-name-copy">
+                            <span className="sg-asset-title">{d.title}</span>
+                            {d.description ? (
+                              <span className="sg-docs-desc">{d.description}</span>
+                            ) : null}
+                          </span>
+                        </div>
+                      ),
                     },
-                  },
-                  {
-                    title: "操作",
-                    key: "menu",
-                    width: 180,
-                    render: (_v, d) => (
-                      <div className="sg-docs-actions">
-                        <Button
-                          size="small"
-                          type="text"
-                          className="sg-docs-action-btn ai"
-                          title="AI 助手"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            navigate(`/documents/${d.id}`);
-                          }}
-                        >
-                          <Sparkles size={16} />
-                        </Button>
-                        <Button
-                          size="small"
-                          type="text"
-                          className="sg-docs-action-btn"
-                          title="分享"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            shareDocument(d);
-                          }}
-                        >
-                          <Share2 size={15} />
-                        </Button>
-                        <Button
-                          size="small"
-                          type="text"
-                          className="sg-docs-action-btn"
-                          title={d.publishedUrl ? "复制发布链接" : "发布"}
-                          aria-label={d.publishedUrl ? "复制发布链接" : "发布"}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            shareDocument(d);
-                          }}
-                        >
-                          <Send size={15} />
-                        </Button>
-                        <Dropdown
-                          trigger={["click"]}
-                          placement="bottomRight"
-                          open={openDocumentMenuId === d.id}
-                          onOpenChange={(open) => setOpenDocumentMenuId(open ? d.id : null)}
-                          popupRender={() => (
-                            <div className="sg-asset-menu">
-                              <button
-                                type="button"
-                                onClick={() => navigate(`/documents/${d.id}`)}
-                              >
-                                打开
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => navigate(`/documents/${d.id}/preview`)}
-                              >
-                                文档预览
-                              </button>
-                              <button type="button" onClick={() => copyLink(d)}>
-                                复制链接
-                              </button>
-                              <button type="button" onClick={() => toggleFavorite(d.id)}>
-                                {favoriteIds.includes(d.id) ? "取消收藏" : "收藏"}
-                              </button>
-                              <button type="button" onClick={() => openMoveDialog(d)}>
-                                移动到目录
-                              </button>
-                              {filter !== "trash" ? (
-                                <button
-                                  type="button"
-                                  className="danger"
-                                  onClick={() => confirmDeleteDocument(d)}
-                                >
-                                  删除
-                                </button>
-                              ) : (
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    batchMutation.mutate({ action: "restore", ids: [d.id] })
-                                  }
-                                >
-                                  恢复
-                                </button>
-                              )}
-                            </div>
-                          )}
-                        >
-                          <button
-                            type="button"
-                            className="sg-asset-more"
-                            onClick={(e) => e.stopPropagation()}
-                            aria-label="更多操作"
+                    {
+                      title: "所有者",
+                      dataIndex: "ownerDisplayName",
+                      width: 120,
+                      render: (_v, d) => <OwnerAvatar name={ownerDisplayName(d, authSession)} />,
+                    },
+                    {
+                      title: "更新时间",
+                      dataIndex: "updatedAt",
+                      width: 160,
+                      render: (v) => <span className="sg-subtle">{displayDate(v)}</span>,
+                    },
+                    {
+                      title: "可见范围",
+                      dataIndex: "visibility",
+                      width: 140,
+                      render: (_v, d) => {
+                        const vis = visMeta(d);
+                        const VisIcon = vis.icon;
+                        return (
+                          <span className={`sg-vis ${vis.cls}`}>
+                            <VisIcon size={13} />
+                            {vis.label}
+                          </span>
+                        );
+                      },
+                    },
+                    {
+                      title: "关联",
+                      dataIndex: "relations",
+                      width: 160,
+                      render: (_v, d) => {
+                        const badges = demoMode
+                          ? (DEMO_RELATIONS[d.id] ?? [])
+                          : relationBadges(relMap?.[d.id]);
+                        return badges.length === 0 ? (
+                          <span className="sg-subtle">—</span>
+                        ) : (
+                          badges.map((b) => (
+                            <span
+                              key={b}
+                              className={`sg-badge sg-badge-success ${styles.relationBadge}`}
+                            >
+                              {b}
+                            </span>
+                          ))
+                        );
+                      },
+                    },
+                    {
+                      title: "操作",
+                      key: "menu",
+                      width: 180,
+                      render: (_v, d) => (
+                        <div className="sg-docs-actions">
+                          <Button
+                            size="small"
+                            type="text"
+                            className="sg-list-action-btn ai"
+                            title="AI 助手"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              navigate(`/documents/${d.id}`);
+                            }}
                           >
-                            <MoreHorizontal size={16} />
-                          </button>
-                        </Dropdown>
-                      </div>
-                    ),
-                  },
-                ]}
-              />
-            </div>
+                            <Sparkles size={16} />
+                          </Button>
+                          <Button
+                            size="small"
+                            type="text"
+                            className="sg-list-action-btn"
+                            title="分享"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              shareDocument(d);
+                            }}
+                          >
+                            <Share2 size={15} />
+                          </Button>
+                          <Button
+                            size="small"
+                            type="text"
+                            className="sg-list-action-btn"
+                            title={d.publishedUrl ? "复制发布链接" : "发布"}
+                            aria-label={d.publishedUrl ? "复制发布链接" : "发布"}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              shareDocument(d);
+                            }}
+                          >
+                            <Send size={15} />
+                          </Button>
+                          <Dropdown
+                            trigger={["hover"]}
+                            mouseEnterDelay={0}
+                            mouseLeaveDelay={0.15}
+                            placement="bottomRight"
+                            open={openDocumentMenuId === d.id}
+                            onOpenChange={(open) => setOpenDocumentMenuId(open ? d.id : null)}
+                            menu={{
+                              items: documentMenuItems(d),
+                              onClick: ({ key }) => onDocumentMenuClick(d, key),
+                            }}
+                          >
+                            <Button
+                              size="small"
+                              type="text"
+                              className="sg-list-action-btn"
+                              onClick={(e) => e.stopPropagation()}
+                              onFocus={() => setOpenDocumentMenuId(d.id)}
+                              onKeyDown={(event) => {
+                                if (event.key === "Escape") setOpenDocumentMenuId(null);
+                              }}
+                              aria-label="更多操作"
+                            >
+                              <MoreHorizontal size={16} />
+                            </Button>
+                          </Dropdown>
+                        </div>
+                      ),
+                    },
+                  ]}
+                />
+              </Scrollbar>
             )}
 
             {paged.length > 0 && (
-              <div className="sg-pager">
-                <span className="sg-pager-total">共 {items.length} 项</span>
-                <div className="sg-pager-pages">
-                  <button
-                    type="button"
-                    className="sg-page-btn"
-                    disabled={page <= 1}
-                    onClick={() => setPage((p) => p - 1)}
-                    aria-label="上一页"
-                  >
-                    <ChevronLeft size={15} />
-                  </button>
-                  {pageButtons.map((p, i) =>
-                    p === "…" ? (
-                      <span key={`e-${i}`} className="sg-page-ellipsis">
-                        …
-                      </span>
-                    ) : (
-                      <button
-                        key={p}
-                        type="button"
-                        className={`sg-page-btn ${page === p ? "active" : ""}`}
-                        onClick={() => setPage(p)}
-                      >
-                        {p}
-                      </button>
-                    ),
-                  )}
-                  <button
-                    type="button"
-                    className="sg-page-btn"
-                    disabled={page >= pageCount}
-                    onClick={() => setPage((p) => p + 1)}
-                    aria-label="下一页"
-                  >
-                    <ChevronRight size={15} />
-                  </button>
-                </div>
-                <span className="sg-pager-size">
-                  每页
-                  <Select
-                    value={String(pageSize)}
-                    onChange={(v) => setPageSize(Number(v))}
-                    className="sg-pager-size-select"
-                    options={[
-                      { value: "10", label: "10 项" },
-                      { value: "20", label: "20 项" },
-                      { value: "50", label: "50 项" },
-                    ]}
-                  />
-                </span>
-              </div>
+              <AppPagination
+                total={items.length}
+                current={page}
+                pageSize={pageSize}
+                onChange={setPage}
+                onPageSizeChange={setPageSize}
+              />
             )}
           </section>
         </div>
@@ -1614,7 +1518,7 @@ export function DocumentsPage() {
           <p className="sg-docs-move-hint">
             选择“{moveDialog?.documentTitle ?? "文档"}”要移动到的目录
           </p>
-          <div className="sg-docs-move-tree" role="radiogroup" aria-label="目标目录">
+          <Scrollbar className="sg-docs-move-tree" role="radiogroup" aria-label="目标目录">
             <button
               type="button"
               role="radio"
@@ -1631,7 +1535,7 @@ export function DocumentsPage() {
               ) : null}
             </button>
             {renderMoveFolderOptions(null)}
-          </div>
+          </Scrollbar>
         </div>
       </Modal>
 

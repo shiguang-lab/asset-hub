@@ -2,7 +2,7 @@
 
 ## 1. 定位
 
-`apps/api` 是产品控制面和业务事实唯一写入口。它以模块化单体承载 Asset、Knowledge、Research、Task 读模型、Dataset 元数据、Presentation、Template、Publish、Notification、Credits、Integration 和 MCP 协议入口。
+`apps/api` 是产品控制面和业务事实唯一写入口。它以模块化单体承载 Asset、Knowledge、Research、Task 读模型、Dataset 元数据、Presentation、Template、Publish、Notification、积分余额只读适配、Integration 和 MCP 协议入口。积分账户、扣费、套餐与用量由外部积分系统负责。
 
 | 项 | 设计 |
 | --- | --- |
@@ -17,7 +17,7 @@
 
 ## 2. 为什么是模块化单体
 
-Asset 创建、版本、关系、发布、Credits、通知经常需要同事务或同一权限上下文。MVP 拆成多个网络服务会引入分布式事务、重复鉴权和联调成本。模块化单体保留未来拆分所需的 application/repository/event 边界。
+Asset 创建、版本、关系、发布、通知经常需要同事务或同一权限上下文；积分余额仅通过只读适配读取。MVP 拆成多个网络服务会引入分布式事务、重复鉴权和联调成本。模块化单体保留未来拆分所需的 application/repository/event 边界。
 
 ## 3. 目录
 
@@ -57,7 +57,7 @@ Domain 不依赖 Fastify、Kysely、NATS 或 Hatchet。HTTP handler 只做身份
 | templates | Template/Version | preview/use/save version |
 | publishing | Publish/Release/ShortLink | release/revoke/rotate slug/change policy |
 | notifications | Notification/Preference | mark read/delivery status |
-| billing | CreditAccount/Ledger/Reservation | reserve/settle/release/refund |
+| points balance | read-only balance adapter | read balance |
 | integrations | API/MCP token/config/tool adapter | create/revoke/change scope/call tool |
 
 ## 5. 请求事务
@@ -104,10 +104,10 @@ service、授权策略和审计，不直接访问 repository。为避免 MCP 长
 
 ## 7. 任务提交与投影
 
-- 创建任务事务内写 `tasks`、Credit reservation、Outbox。
+- 创建任务事务内写 `tasks`、Outbox；积分校验与扣费由外部积分系统负责。
 - Hatchet run id 回写是幂等 command；即使启动确认丢失，可由 dispatcher 按业务 key 查询/重试。
 - Worker result 只经 `/internal/v1/task-results:project` 进入，校验 HMAC/mTLS、schema、blob hash、run/attempt。
-- Projector 以 `projection_inbox.event_id` 唯一，并在同事务生成 Asset/Relation/ledger/outbox。
+- Projector 以 `projection_inbox.event_id` 唯一，并在同事务生成 Asset/Relation/outbox。
 
 ## 8. 搜索与 Ask
 
@@ -160,7 +160,7 @@ POST command 使用幂等 key；PATCH 使用 `If-Match`；列表 cursor paginati
 
 ## 12. 测试
 
-- Domain unit/property tests：状态机、ACL、Credits invariant；
+- Domain unit/property tests：状态机、ACL、任务 invariant；
 - Repository integration：真实 PostgreSQL + pgvector、migration；
 - Route contract：OpenAPI snapshot + generated client；
 - Async integration：Outbox/NATS/Hatchet result projection/redelivery；

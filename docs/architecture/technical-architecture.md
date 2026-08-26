@@ -76,7 +76,7 @@ apps/api/src/modules/
 ├── templates/         # Research/Presentation 模板及版本
 ├── publishing/        # Release、Slug、访问策略、二维码
 ├── notifications/     # 站内通知和投递偏好
-├── billing/           # Credit 预留、结算、Storage usage
+├── billing/           # 外部积分余额只读适配
 ├── integrations/      # API Token、MCP 配置、Git P1
 └── audit/             # 高风险操作与安全审计
 ```
@@ -114,20 +114,20 @@ sequenceDiagram
   participant N as NATS
 
   U->>API: POST /research-tasks (Idempotency-Key)
-  API->>DB: Task + Credit reservation + Outbox
+  API->>DB: Task + Outbox
   API-->>U: 202 taskId
   API->>H: start ResearchWorkflow(taskId)
   H->>W: workflow / agent step
   W->>N: progress snapshot events
   W->>API: project task result command
-  API->>DB: Inbox + Assets + Credit settlement + Outbox
+  API->>DB: Inbox + Assets + Outbox
   API->>N: task.completed
   N-->>U: SSE invalidation event
 ```
 
 ## 5. 数据与存储原则
 
-- PostgreSQL 是业务事实、权限、任务读模型和 Credits 账本的唯一事实库。
+- PostgreSQL 是业务事实、权限和任务读模型的唯一事实库；积分余额由外部积分系统提供。
 - pgvector 保存知识分块 embedding；MVP 使用 PostgreSQL FTS/`pg_trgm` + vector RRF 混合检索。
 - SeaweedFS 通过 S3 API 保存原始文件、Asset version 内容、Parquet、演示发布包和导出物。
 - Dataset 行数据转为不可变 Parquet，`compute-worker` 的 data 模块用 DuckDB 查询；PostgreSQL 仅保存 schema、统计和版本元数据。

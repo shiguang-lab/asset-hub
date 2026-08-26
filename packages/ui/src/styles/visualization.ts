@@ -1,6 +1,7 @@
-import { createGlobalStyle, css } from "antd-style";
+import { createStyles } from "antd-style";
 
-export const UiVisualizationGlobalStyles = createGlobalStyle(css`
+export const useUiVisualizationStyles = createStyles(({ css }) => ({
+  root: css`
 /* ---------------- slides ---------------- */
 .sg-slide-editor {
   display: grid;
@@ -9,7 +10,6 @@ export const UiVisualizationGlobalStyles = createGlobalStyle(css`
   height: calc(100vh - 150px);
 }
 .sg-slide-list {
-  overflow: auto;
   border: 1px solid var(--sg-border);
   border-radius: 10px;
   background: var(--sg-bg-2);
@@ -77,7 +77,6 @@ export const UiVisualizationGlobalStyles = createGlobalStyle(css`
   align-items: center;
   justify-content: center;
   padding: 40px;
-  overflow: auto;
 }
 .sg-slide-frame {
   width: min(100%, 880px);
@@ -86,11 +85,9 @@ export const UiVisualizationGlobalStyles = createGlobalStyle(css`
   border-radius: 12px;
   padding: 48px;
   box-shadow: var(--sg-shadow);
-  overflow: auto;
 }
 .sg-editor-right {
   width: 260px;
-  overflow: auto;
   border: 1px solid var(--sg-border);
   border-radius: 10px;
   background: var(--sg-bg-2);
@@ -171,7 +168,6 @@ export const UiVisualizationGlobalStyles = createGlobalStyle(css`
 }
 .sg-palette-list {
   max-height: 340px;
-  overflow: auto;
   padding: 6px;
 }
 .sg-palette-item {
@@ -192,4 +188,5 @@ export const UiVisualizationGlobalStyles = createGlobalStyle(css`
 .sg-palette-item.active {
   background: var(--sg-accent-soft);
 }
-`);
+`,
+}));

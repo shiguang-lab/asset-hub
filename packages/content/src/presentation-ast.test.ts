@@ -46,7 +46,7 @@ describe("presentation AST", () => {
     const tree = parsePresentationHtml(html);
     const out = serializePresentationHtml(tree);
     expect(out).toContain('data-sg-id="b1"');
-    expect(out).toContain("SG.presentation");
+    expect(out).not.toContain("SG.presentation");
   });
 
   it("lists pages", () => {

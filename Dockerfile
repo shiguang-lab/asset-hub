@@ -52,9 +52,12 @@ RUN pnpm --filter @shiguang/worker deploy --prod --legacy /out/worker
 RUN test -f /out/worker/dist/main.js
 
 FROM node:${NODE_VERSION}-alpine AS worker
-RUN apk add --no-cache ca-certificates dumb-init git openssh-client tzdata
+RUN apk add --no-cache ca-certificates chromium dumb-init font-noto-cjk font-noto-emoji freetype git harfbuzz nss openssh-client ttf-freefont tzdata
+ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium-browser
 WORKDIR /app
 COPY --from=worker-build --chown=node:node /out/worker ./
+# Prompt templates are runtime assets kept outside the TypeScript bundle.
+COPY --from=node-source --chown=node:node /app/apps/worker/prompts ./prompts
 RUN mkdir -p /var/lib/shiguang/worker && chown -R node:node /var/lib/shiguang/worker
 USER node
 ENTRYPOINT ["/usr/bin/dumb-init", "--"]

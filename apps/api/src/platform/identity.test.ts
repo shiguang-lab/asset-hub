@@ -30,7 +30,7 @@ describe("IdentityService workspace authorization", () => {
     expect(roleFromOrganizationRoles(["org:admin"])).toBe("admin");
     expect(roleFromOrganizationRoles(["org:member"])).toBe("editor");
     expect(roleFromOrganizationRoles(["org:viewer"])).toBe("viewer");
-    expect(roleFromOrganizationRoles(["opc:system-admin"])).toBeNull();
+    expect(roleFromOrganizationRoles(["system-admin"])).toBeNull();
   });
 
   it("prevents a Group viewer from writing", async () => {

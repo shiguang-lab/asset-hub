@@ -13,7 +13,8 @@ export const platformPalette = {
   borderRadius: 6,
   borderRadiusLG: 10,
   fontSize: 14,
-  controlHeight: 38,
+  // Keep antd's default middle control height.
+  controlHeight: 32,
   fontFamily:
     '"Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif',
 

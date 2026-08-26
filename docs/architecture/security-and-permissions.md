@@ -37,7 +37,7 @@ flowchart LR
   切换上下文；切换后必须整页刷新，使所有 TanStack Query、SSE 和页面状态重新绑定空间。
 - 本地 Broker 的账号和空间由服务端环境变量决定，Web 只读展示，不开放浏览器切换入口。
 - 所有业务表继续以本地 `workspace_id` 作为第一隔离键。个人空间与 Group 空间不能共享
-  数据、缓存 key、SSE channel、Credits 账户或 API Token。
+  数据、缓存 key、SSE channel、积分余额或 API Token。
 
 ### 3.2 空间角色矩阵
 
@@ -132,7 +132,7 @@ API 在路由入口强制上述策略：不能以页面隐藏、请求方法或�
 
 ## 9. 审计与隐私
 
-必须审计：登录上下文变化、ACL、Token、MCP Write、发布/撤销、永久删除、版本恢复、Credit 调账、管理员访问。
+必须审计：登录上下文变化、ACL、Token、MCP Write、发布/撤销、永久删除、版本恢复、管理员访问。
 
 日志要求：
 
@@ -148,7 +148,7 @@ API 在路由入口强制上述策略：不能以页面隐藏、请求方法或�
 - HTML 从 iframe 读取主站 DOM/Cookie/Storage 必须失败；
 - 外部伪造 `X-SG-Identity` 必须在边缘被删除；
 - 撤销 MCP/API token 后下一次请求立即失败；
-- 任务重试不能重复创建 Asset 或重复扣 Credit；
+- 任务重试不能重复创建 Asset；
 - Citation 必须指向当前用户可访问的 source version；
 - 发布撤销后 CDN/cache 在目标窗口内失效；
 - zip bomb、polyglot、超大图片、恶意 PDF 和 SSRF 有自动化用例。

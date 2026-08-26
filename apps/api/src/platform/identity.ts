@@ -168,14 +168,7 @@ export class IdentityService {
       subject: identity.sub,
       role,
     });
-    return this.actor(
-      identity.sub,
-      workspace.id,
-      "team",
-      role,
-      requestId,
-      identity.displayName,
-    );
+    return this.actor(identity.sub, workspace.id, "team", role, requestId, identity.displayName);
   }
 
   private actor(

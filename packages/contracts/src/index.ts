@@ -88,16 +88,6 @@ export const relationTypeSchema = z.enum([
 ]);
 export type RelationType = z.infer<typeof relationTypeSchema>;
 
-export const creditEntryTypeSchema = z.enum([
-  "grant",
-  "reserve",
-  "settle",
-  "release",
-  "refund",
-  "expire",
-]);
-export type CreditEntryType = z.infer<typeof creditEntryTypeSchema>;
-
 export const notifyTypeSchema = z.enum([
   "task_completed",
   "task_partial",
@@ -125,7 +115,6 @@ export const assetSchema = z.object({
   description: z.string().default(""),
   visibility: visibilitySchema.default("private"),
   status: assetStatusSchema.default("normal"),
-  tags: z.array(z.string()).default([]),
   sourceType: z
     .enum(["manual", "upload", "research", "agent", "api", "git", "template"])
     .default("manual"),
@@ -375,6 +364,10 @@ export type SlideBlock = z.infer<typeof slideBlockSchema>;
 
 export const slideSchema = z.object({
   id: z.string(),
+  /** 关联 outline section，便于视觉语义修复和局部重新生成。 */
+  sectionId: z.string().optional(),
+  /** 由 layout registry 选择的稳定页面变体，不由 AI 自由编写 CSS。 */
+  layoutVariant: z.string().optional(),
   layout: presentationLayoutSchema,
   title: z.string(),
   blocks: z.array(slideBlockSchema).default([]),
@@ -400,25 +393,84 @@ export const outlineVisualSchema = z.enum([
   "two-column",
   "quote",
   "timeline",
+  "image",
+  "process",
+  "rising",
+  "quadrant",
+  "dashboard",
 ]);
 export type OutlineVisual = z.infer<typeof outlineVisualSchema>;
 
-export const presentationSectionSchema = z.object({
-  id: z.string(),
-  title: z.string(),
-  summary: z.string().default(""),
-  points: z.array(z.string()).default([]),
-  visual: outlineVisualSchema.default("default"),
+/**
+ * 章节中可复用的结构化证据。文本 points 负责叙事 copy，data 负责让
+ * metrics / chart / comparison / timeline 真正落到视觉 block，而不是退化为列表。
+ */
+export const presentationMetricSchema = z.object({
+  id: z.string().optional(),
+  label: z.string(),
+  value: z.union([z.number(), z.string()]),
+  unit: z.string().default(""),
+  note: z.string().default(""),
+  sourceRef: z.string().default(""),
 });
-export type PresentationSection = z.infer<typeof presentationSectionSchema>;
+export type PresentationMetric = z.infer<typeof presentationMetricSchema>;
 
-export const presentationOutlineSchema = z.object({
-  title: z.string(),
-  theme: presentationThemeSchema.default("light"),
-  aspectRatio: z.enum(["16:9", "4:3", "9:16"]).default("16:9"),
-  sections: z.array(presentationSectionSchema).min(1),
+export const presentationChartSchema = z.object({
+  type: z.enum(["bar", "line", "pie", "radar", "funnel"]).default("bar"),
+  labels: z.array(z.string()).default([]),
+  data: z.array(z.number()).min(1),
+  unit: z.string().default(""),
+  title: z.string().default(""),
+  sourceRef: z.string().default(""),
 });
-export type PresentationOutline = z.infer<typeof presentationOutlineSchema>;
+export type PresentationChart = z.infer<typeof presentationChartSchema>;
+
+export const presentationCompareSideSchema = z.object({
+  title: z.string(),
+  body: z.string(),
+  points: z.array(z.string()).default([]),
+  sourceRef: z.string().default(""),
+});
+export type PresentationCompareSide = z.infer<typeof presentationCompareSideSchema>;
+
+export const presentationCompareSchema = z.object({
+  left: presentationCompareSideSchema,
+  right: presentationCompareSideSchema,
+});
+export type PresentationCompare = z.infer<typeof presentationCompareSchema>;
+
+export const presentationTimelineItemSchema = z.object({
+  period: z.string(),
+  event: z.string(),
+  sourceRef: z.string().default(""),
+});
+export type PresentationTimelineItem = z.infer<typeof presentationTimelineItemSchema>;
+
+export const presentationQuoteSchema = z.object({
+  text: z.string(),
+  author: z.string().default(""),
+  sourceRef: z.string().default(""),
+});
+export type PresentationQuote = z.infer<typeof presentationQuoteSchema>;
+
+export const presentationAssetSchema = z.object({
+  id: z.string().optional(),
+  kind: z.enum(["image", "screenshot", "logo"]).default("image"),
+  src: z.string().default(""),
+  alt: z.string().default(""),
+  caption: z.string().default(""),
+  sourceRef: z.string().default(""),
+  sourcePolicy: z.enum(["provided", "search", "generate"]).default("provided"),
+  focalPoint: z.enum(["left", "center", "right"]).default("center"),
+});
+export type PresentationAsset = z.infer<typeof presentationAssetSchema>;
+
+export const presentationTableSchema = z.object({
+  headers: z.array(z.string()).default([]),
+  rows: z.array(z.array(z.string())).default([]),
+  sourceRef: z.string().default(""),
+});
+export type PresentationTable = z.infer<typeof presentationTableSchema>;
 
 export const templateSchema = z.object({
   id: templateIdSchema,
@@ -489,27 +541,8 @@ export const notificationSchema = z.object({
 });
 export type Notification = z.infer<typeof notificationSchema>;
 
-export const creditAccountSchema = z.object({
-  id: idSchema,
-  workspaceId: workspaceIdSchema,
-  balance: z.number(),
-  totalGranted: z.number(),
-  totalUsed: z.number(),
-  updatedAt: z.string(),
-});
-export type CreditAccount = z.infer<typeof creditAccountSchema>;
-
-export const creditLedgerEntrySchema = z.object({
-  id: idSchema,
-  workspaceId: workspaceIdSchema,
-  entryType: creditEntryTypeSchema,
-  amount: z.number(),
-  operationId: z.string(),
-  taskId: z.string().nullable().default(null),
-  description: z.string().default(""),
-  createdAt: z.string(),
-});
-export type CreditLedgerEntry = z.infer<typeof creditLedgerEntrySchema>;
+export const creditBalanceSchema = z.object({ balance: z.number() });
+export type CreditBalance = z.infer<typeof creditBalanceSchema>;
 
 export const apiTokenSchema = z.object({
   id: tokenIdSchema,
@@ -670,6 +703,7 @@ export const sseEventSchema = z.object({
   id: z.string(),
   event: z.enum([
     "task.updated",
+    "task.stream",
     "task.completed",
     "notification.created",
     "knowledge.updated",
@@ -725,7 +759,6 @@ export const mcpToolInputs = {
     title: z.string(),
     description: z.string().optional(),
     content: z.record(z.string(), z.unknown()).optional(),
-    tags: z.array(z.string()).optional(),
   }),
   updateAsset: z.object({
     assetId: assetIdSchema,
@@ -798,7 +831,6 @@ export const workflowResultSchema = z.object({
       inputTokens: z.number().default(0),
       outputTokens: z.number().default(0),
       providerCostMicros: z.number().default(0),
-      creditUnits: z.number().default(0),
     })
     .partial()
     .default({}),
@@ -842,8 +874,36 @@ export const progressEventSchema = z.object({
   stepStatus: z.enum(["pending", "running", "completed", "failed", "skipped"]).optional(),
   detail: z.string().optional(),
   message: z.string().optional(),
+  checkpoint: z.record(z.string(), z.unknown()).optional(),
+  stream: z
+    .object({
+      phase: z.string().min(1),
+      activity: z.enum(["content", "reasoning", "heartbeat", "finished", "failed"]),
+      delta: z.string().default(""),
+      receivedChars: z.number().int().nonnegative().optional(),
+      finishReason: z.string().nullable().optional(),
+      usage: z
+        .object({ inputTokens: z.number().int().nonnegative(), outputTokens: z.number().int().nonnegative() })
+        .optional(),
+    })
+    .optional(),
 });
 export type ProgressEvent = z.infer<typeof progressEventSchema>;
+
+export const taskStreamEventSchema = z.object({
+  id: z.string(),
+  taskId: taskIdSchema,
+  runId: z.string(),
+  sequence: z.number().int().nonnegative(),
+  phase: z.string(),
+  activity: z.enum(["content", "reasoning", "heartbeat", "finished", "failed"]),
+  delta: z.string().default(""),
+  receivedChars: z.number().int().nonnegative().nullable(),
+  finishReason: z.string().nullable(),
+  usage: z.object({ inputTokens: z.number().int().nonnegative(), outputTokens: z.number().int().nonnegative() }).nullable(),
+  createdAt: z.string(),
+});
+export type TaskStreamEvent = z.infer<typeof taskStreamEventSchema>;
 
 /* ------------------------------------------------------------------ */
 /* API request/response DTOs                                            */
@@ -866,7 +926,6 @@ const queryBooleanSchema = z.preprocess((value) => {
 export const listAssetsQuerySchema = z.object({
   type: assetTypeSchema.optional(),
   q: z.string().optional(),
-  tag: z.string().optional(),
   status: assetStatusSchema.optional(),
   visibility: visibilitySchema.optional(),
   sort: z.enum(["updated_at", "created_at", "title"]).optional(),
@@ -879,7 +938,6 @@ export const createAssetInputSchema = z.object({
   type: assetTypeSchema,
   title: z.string().min(1),
   description: z.string().optional(),
-  tags: z.array(z.string()).optional(),
   visibility: visibilitySchema.optional(),
   content: z.record(z.string(), z.unknown()).optional(),
 });
@@ -994,7 +1052,6 @@ export const assetSummarySchema = assetSchema.pick({
   title: true,
   status: true,
   visibility: true,
-  tags: true,
   updatedAt: true,
   createdAt: true,
 });

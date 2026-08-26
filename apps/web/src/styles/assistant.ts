@@ -1,6 +1,7 @@
-import { createGlobalStyle, css } from "antd-style";
+import { createStyles } from "antd-style";
 
-export const AssistantGlobalStyles = createGlobalStyle(css`
+export const useAssistantStyles = createStyles(({ css }) => ({
+  root: css`
 /* AI assistant */
 .sg-assistant {
   display: grid;
@@ -92,8 +93,7 @@ export const AssistantGlobalStyles = createGlobalStyle(css`
 }
 
 @media (max-width: 1050px) {
-  :root,
-  [data-theme="dark"] {
+  & {
     --sg-sidebar-w: 68px;
   }
   .sg-sidebar-logo span:last-of-type,
@@ -144,8 +144,7 @@ export const AssistantGlobalStyles = createGlobalStyle(css`
 }
 
 @media (max-width: 760px) {
-  :root,
-  [data-theme="dark"] {
+  & {
     --sg-sidebar-w: 0px;
   }
   .sg-sidebar {
@@ -193,4 +192,5 @@ export const AssistantGlobalStyles = createGlobalStyle(css`
     margin-left: 0;
   }
 }
-`);
+  `,
+}));

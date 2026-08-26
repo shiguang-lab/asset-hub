@@ -1,6 +1,7 @@
-import { createGlobalStyle, css } from "antd-style";
+import { createStyles } from "antd-style";
 
-export const KnowledgeGlobalStyles = createGlobalStyle(css`
+export const useKnowledgeStyles = createStyles(({ css }) => ({
+  root: css`
 /* Knowledge workspace: reference layout 2026-08-13. */
 .sg-knowledge-page {
   min-width: 0;
@@ -12,7 +13,6 @@ export const KnowledgeGlobalStyles = createGlobalStyle(css`
 .sg-knowledge-stat-copy,
 .sg-knowledge-toolbar,
 .sg-knowledge-toolbar-tail,
-.sg-knowledge-view-toggle,
 .sg-knowledge-search,
 .sg-knowledge-row,
 .sg-knowledge-row-primary,
@@ -26,7 +26,6 @@ export const KnowledgeGlobalStyles = createGlobalStyle(css`
 .sg-knowledge-recent > div,
 .sg-knowledge-recent > button,
 .sg-knowledge-panel-list > button,
-.sg-knowledge-pagination,
 .sg-knowledge-detail-actions {
   display: flex;
   align-items: center;
@@ -177,42 +176,17 @@ export const KnowledgeGlobalStyles = createGlobalStyle(css`
 }
 .sg-knowledge-select .ant-select-selector,
 .sg-knowledge-sort .ant-select-selector {
-  height: 34px;
   border-color: var(--sg-border);
   border-radius: 6px;
   background: var(--sg-bg-2);
 }
 .sg-knowledge-select .ant-select-selection-item,
 .sg-knowledge-sort .ant-select-selection-item {
-  line-height: 32px !important;
   color: var(--sg-fg-2);
-  font-size: 12px;
 }
-.sg-knowledge-search {
+.sg-knowledge-search.ant-input-affix-wrapper {
   min-width: 150px;
   width: 220px;
-  height: 34px;
-  gap: 8px;
-  padding: 0 11px;
-  border: 1px solid var(--sg-border);
-  border-radius: 6px;
-  color: var(--sg-muted);
-  background: var(--sg-bg-2);
-}
-.sg-knowledge-search:focus-within {
-  border-color: var(--sg-accent);
-}
-.sg-knowledge-search input {
-  min-width: 0;
-  width: 100%;
-  border: 0;
-  outline: 0;
-  color: var(--sg-fg);
-  background: transparent;
-  font-size: 12px;
-}
-.sg-knowledge-search input::placeholder {
-  color: var(--sg-muted);
 }
 .sg-knowledge-toolbar-tail {
   min-width: 0;
@@ -220,35 +194,7 @@ export const KnowledgeGlobalStyles = createGlobalStyle(css`
   margin-left: auto;
 }
 .sg-knowledge-view-toggle {
-  height: 34px;
-  margin: 0;
-  padding: 0;
-  overflow: hidden;
-  border: 1px solid var(--sg-border);
-  border-radius: 6px;
-  background: var(--sg-bg-2);
-}
-.sg-knowledge-view-toggle button {
-  display: inline-flex;
-  width: 32px;
-  height: 32px;
-  align-items: center;
-  justify-content: center;
-  border: 0;
-  border-right: 1px solid var(--sg-border);
-  color: var(--sg-muted);
-  background: transparent;
-  cursor: pointer;
-}
-.sg-knowledge-view-toggle button:last-of-type {
-  border-right: 0;
-}
-.sg-knowledge-view-toggle button:hover {
-  color: var(--sg-fg);
-}
-.sg-knowledge-view-toggle button.active {
-  color: #c8b2ff;
-  background: rgba(124, 60, 255, 0.2);
+  flex: none;
 }
 
 .sg-knowledge-list {
@@ -321,7 +267,7 @@ export const KnowledgeGlobalStyles = createGlobalStyle(css`
   flex: none;
   color: #ffb94b;
 }
-.sg-knowledge-row-copy > span:not(.sg-knowledge-tags) {
+.sg-knowledge-row-copy > span {
   display: block;
   max-width: 100%;
   margin-top: 3px;
@@ -331,25 +277,6 @@ export const KnowledgeGlobalStyles = createGlobalStyle(css`
   line-height: 16px;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-.sg-knowledge-tags {
-  display: flex;
-  max-width: 100%;
-  gap: 5px;
-  margin-top: 6px;
-  overflow: hidden;
-}
-.sg-knowledge-tags i,
-.sg-knowledge-tags > span,
-.sg-knowledge-detail-tags span {
-  flex: none;
-  padding: 2px 7px;
-  border-radius: 4px;
-  color: #aaa6ba;
-  background: #1c1a22;
-  font-size: 9.5px;
-  font-style: normal;
-  line-height: 16px;
 }
 .sg-knowledge-owner,
 .sg-knowledge-updated,
@@ -423,7 +350,6 @@ export const KnowledgeGlobalStyles = createGlobalStyle(css`
 .sg-knowledge-availability.restricted i {
   background: var(--sg-warning);
 }
-.sg-knowledge-more,
 .sg-knowledge-card-more,
 .sg-knowledge-detail-head > button {
   display: inline-flex;
@@ -436,10 +362,8 @@ export const KnowledgeGlobalStyles = createGlobalStyle(css`
   cursor: pointer;
 }
 .sg-knowledge-more {
-  width: 26px;
-  height: 32px;
+  flex: none;
 }
-.sg-knowledge-more:hover,
 .sg-knowledge-detail-head > button:hover {
   color: var(--sg-fg);
 }
@@ -550,38 +474,6 @@ export const KnowledgeGlobalStyles = createGlobalStyle(css`
   margin: 0;
   font-size: 11px;
 }
-.sg-knowledge-pagination {
-  justify-content: center;
-  gap: 6px;
-  margin-top: 13px;
-}
-.sg-knowledge-pagination button {
-  display: inline-flex;
-  width: 30px;
-  height: 30px;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid var(--sg-border);
-  border-radius: 5px;
-  color: var(--sg-fg-2);
-  background: var(--sg-bg-2);
-  font-size: 11px;
-  cursor: pointer;
-}
-.sg-knowledge-pagination button:hover:not(:disabled) {
-  border-color: var(--sg-accent);
-  color: var(--sg-fg);
-}
-.sg-knowledge-pagination button.active {
-  border-color: var(--sg-accent);
-  color: #fff;
-  background: var(--sg-accent);
-}
-.sg-knowledge-pagination button:disabled {
-  opacity: 0.35;
-  cursor: default;
-}
-
 .sg-knowledge-detail {
   position: sticky;
   top: 0;
@@ -668,12 +560,10 @@ export const KnowledgeGlobalStyles = createGlobalStyle(css`
   flex: none;
   color: #8d6fe7;
 }
-.sg-knowledge-detail-tags,
 .sg-knowledge-distribution,
 .sg-knowledge-recent {
   padding-top: 12px;
 }
-.sg-knowledge-detail-tags h3,
 .sg-knowledge-distribution h3,
 .sg-knowledge-recent h3,
 .sg-knowledge-panel-list h3,
@@ -682,11 +572,6 @@ export const KnowledgeGlobalStyles = createGlobalStyle(css`
   color: var(--sg-fg);
   font-size: 11px;
   font-weight: 650;
-}
-.sg-knowledge-detail-tags > div {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
 }
 .sg-knowledge-chart {
   gap: 18px;
@@ -903,7 +788,7 @@ export const KnowledgeGlobalStyles = createGlobalStyle(css`
   .sg-knowledge-select.ant-select {
     width: 108px;
   }
-  .sg-knowledge-search {
+  .sg-knowledge-search.ant-input-affix-wrapper {
     min-width: 90px;
     width: auto;
     flex: 1;
@@ -959,7 +844,7 @@ export const KnowledgeGlobalStyles = createGlobalStyle(css`
   .sg-knowledge-select.ant-select {
     width: calc(50% - 4px);
   }
-  .sg-knowledge-search {
+  .sg-knowledge-search.ant-input-affix-wrapper {
     width: 100%;
     order: 3;
   }
@@ -996,4 +881,5 @@ export const KnowledgeGlobalStyles = createGlobalStyle(css`
     align-items: flex-start;
   }
 }
-`);
+  `,
+}));

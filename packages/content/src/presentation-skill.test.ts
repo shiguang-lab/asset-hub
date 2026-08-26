@@ -12,8 +12,9 @@ describe("presentation skill", () => {
     expect(prompt).toContain("data-sg-page");
     expect(prompt).toContain("SG.chart");
     expect(prompt).toContain("data-sg-id");
-    expect(prompt).toContain("<!doctype html>");
-    expect(prompt).toContain("禁止");
+    expect(prompt).toContain("16:9");
+    expect(prompt).toContain("1920×1080");
+    expect(prompt).toContain("不要使用 vw");
   });
 
   it("user prompt carries goal and source", () => {
@@ -28,7 +29,7 @@ describe("presentation skill", () => {
   });
 
   it("exposes profiles", () => {
-    expect(SG_PROFILES.research).toContain("图表多");
+    expect(SG_PROFILES.research).toContain("reading-first");
     expect(SG_CAPABILITY_REGISTRY).toContain("data-sg-hover");
   });
 });

@@ -1,15 +1,9 @@
-import {
-  Avatar as AntAvatar,
-  Empty as AntEmpty,
-  Tag as AntTag,
-  App,
-  theme as antdTheme,
-} from "antd";
+import { Avatar as AntAvatar, Empty as AntEmpty, Tag as AntTag, App } from "antd";
 import { createStyles } from "antd-style";
 import type { CSSProperties, HTMLAttributes, ReactNode } from "react";
 import { useId } from "react";
 
-export { UiGlobalStyles } from "./global-styles.js";
+export { UiGlobalStyles, UiStylesBoundary } from "./global-styles.js";
 export { MARKDOWN_SURFACE_STYLES, MarkdownSurfaceStyles } from "./markdown-surface.js";
 
 export function cx(...parts: Array<string | false | null | undefined>): string {
@@ -41,12 +35,48 @@ const useScrollbarStyles = createStyles(({ token }) => ({
   },
 }));
 
-export function Scrollbar({ children, className, ...props }: HTMLAttributes<HTMLDivElement>) {
+const useBrandLoadingStyles = createStyles(
+  (_utils, props: { minHeight: CSSProperties["minHeight"] }) => ({
+    root: {
+      minHeight: props.minHeight,
+    },
+  }),
+);
+
+const useEmptyStyles = createStyles(() => ({
+  title: {
+    fontWeight: 600,
+    marginBottom: 2,
+  },
+  hint: {
+    color: "var(--sg-muted)",
+    fontSize: 13,
+  },
+}));
+
+const useAvatarStyles = createStyles(({ token }) => ({
+  root: {
+    backgroundColor: token.colorPrimary,
+    color: "#fff",
+    fontWeight: 600,
+  },
+}));
+
+type ScrollbarProps = HTMLAttributes<HTMLElement> & {
+  as?: "aside" | "div" | "nav" | "pre" | "section";
+};
+
+export function Scrollbar({
+  as: Component = "div",
+  children,
+  className,
+  ...props
+}: ScrollbarProps) {
   const { styles } = useScrollbarStyles();
   return (
-    <div {...props} className={cx(styles.root, className)}>
+    <Component {...props} className={cx(styles.root, className)}>
       {children}
-    </div>
+    </Component>
   );
 }
 
@@ -157,11 +187,11 @@ function BrandLoading({
   className?: string;
 }) {
   const instanceId = useId().replace(/[^a-zA-Z0-9_-]/g, "");
+  const { styles } = useBrandLoadingStyles({ minHeight });
   const maskId = `sg-loading-mask-${instanceId}`;
   return (
     <output
-      className={cx("sg-brand-loading", className)}
-      style={{ minHeight }}
+      className={cx("sg-brand-loading", styles.root, className)}
       aria-live="polite"
       aria-label="加载中"
     >
@@ -274,13 +304,14 @@ export function Empty({
   hint?: string;
   action?: ReactNode;
 }) {
+  const { styles } = useEmptyStyles();
   return (
     <AntEmpty
       image={AntEmpty.PRESENTED_IMAGE_SIMPLE}
       description={
         <div>
-          <div style={{ fontWeight: 600, marginBottom: 2 }}>{title}</div>
-          {hint && <div style={{ color: "var(--sg-muted)", fontSize: 13 }}>{hint}</div>}
+          <div className={styles.title}>{title}</div>
+          {hint && <div className={styles.hint}>{hint}</div>}
         </div>
       }
     >
@@ -290,12 +321,9 @@ export function Empty({
 }
 
 export function Avatar({ name, size = 30 }: { name: string; size?: number }) {
-  const { token } = antdTheme.useToken();
+  const { styles } = useAvatarStyles();
   return (
-    <AntAvatar
-      size={size}
-      style={{ backgroundColor: token.colorPrimary, color: "#fff", fontWeight: 600 }}
-    >
+    <AntAvatar size={size} className={styles.root}>
       {name.slice(0, 1).toUpperCase()}
     </AntAvatar>
   );

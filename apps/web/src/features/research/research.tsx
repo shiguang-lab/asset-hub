@@ -1,11 +1,23 @@
 import { Empty, Field, useToast } from "@shiguang/ui";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Button, Card, Input, Select, Spin } from "antd";
+import { Button, Card, Checkbox, Input, Select, Spin } from "antd";
+import { createStyles } from "antd-style";
 import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { api, type Task, type Template } from "../../entities/api.js";
 
+const useResearchStyles = createStyles(() => ({
+  taskMeta: { margin: "6px 0 0" },
+  twoColumns: {
+    gridTemplateColumns: "1fr 1fr",
+    "@media (max-width: 760px)": { gridTemplateColumns: "1fr" },
+  },
+  previewActions: { marginBottom: 16 },
+  scopeItem: { cursor: "pointer" },
+}));
+
 export function ResearchPage() {
+  const { styles } = useResearchStyles();
   const navigate = useNavigate();
   const { data } = useQuery<{ items: Task[]; total: number }>({
     queryKey: ["tasks", "research"],
@@ -45,9 +57,7 @@ export function ResearchPage() {
                   {task.status}
                 </span>
               </div>
-              <p className="sg-subtle" style={{ margin: "6px 0 0" }}>
-                {task.currentStep || "排队中"} · 已用 {task.creditsUsed} Credits
-              </p>
+              <p className={`sg-subtle ${styles.taskMeta}`}>{task.currentStep || "排队中"}</p>
             </Card>
           ))}
         </div>
@@ -63,6 +73,7 @@ interface ScopeItem {
 }
 
 export function ResearchNewPage() {
+  const { styles } = useResearchStyles();
   const [params] = useSearchParams();
   const navigate = useNavigate();
   const toast = useToast();
@@ -97,12 +108,12 @@ export function ResearchNewPage() {
 
   const createMutation = useMutation({
     mutationFn: () =>
-      api<{ task: Task; estimate: { min: number; max: number } }>("/research/tasks", {
+      api<{ task: Task }>("/research/tasks", {
         method: "POST",
         body: { goal, region, timeRange, depth, quality, outputs, scope },
       }),
     onSuccess: (data) => {
-      toast("success", `任务已创建，预估消耗 ${data.estimate.min}–${data.estimate.max} Credits`);
+      toast("success", "任务已创建");
       navigate(`/tasks/${data.task.id}`);
     },
     onError: (e: Error) => toast("error", e.message),
@@ -145,7 +156,7 @@ export function ResearchNewPage() {
           />
         </Field>
 
-        <div className="sg-grid" style={{ gridTemplateColumns: "1fr 1fr" }}>
+        <div className={`sg-grid ${styles.twoColumns}`}>
           <Field label="地区">
             <Input value={region} onChange={(e) => setRegion(e.target.value)} />
           </Field>
@@ -154,15 +165,15 @@ export function ResearchNewPage() {
           </Field>
         </div>
 
-        <div className="sg-grid" style={{ gridTemplateColumns: "1fr 1fr" }}>
+        <div className={`sg-grid ${styles.twoColumns}`}>
           <Field label="研究深度">
             <Select
               value={depth}
               onChange={setDepth}
               options={[
-                { value: "quick", label: "快速（~150 Credits）" },
-                { value: "standard", label: "标准（~400 Credits）" },
-                { value: "deep", label: "深度（~1200 Credits）" },
+                { value: "quick", label: "快速" },
+                { value: "standard", label: "标准" },
+                { value: "deep", label: "深度" },
               ]}
             />
           </Field>
@@ -200,7 +211,7 @@ export function ResearchNewPage() {
           </div>
         </Field>
 
-        <div className="sg-row" style={{ marginBottom: 16 }}>
+        <div className={`sg-row ${styles.previewActions}`}>
           <Button
             onClick={() => previewMutation.mutate()}
             disabled={!goal.trim() || previewMutation.isPending}
@@ -214,14 +225,14 @@ export function ResearchNewPage() {
           <Field label="研究范围（可增删改）">
             <div className="sg-col">
               {scope.map((item) => (
-                <label key={item.id} className="sg-row" style={{ cursor: "pointer" }}>
-                  <input
-                    type="checkbox"
-                    checked={item.enabled}
-                    onChange={() => toggleScope(item.id)}
-                  />
-                  <span>{item.label}</span>
-                </label>
+                <Checkbox
+                  key={item.id}
+                  className={`sg-row ${styles.scopeItem}`}
+                  checked={item.enabled}
+                  onChange={() => toggleScope(item.id)}
+                >
+                  {item.label}
+                </Checkbox>
               ))}
             </div>
           </Field>

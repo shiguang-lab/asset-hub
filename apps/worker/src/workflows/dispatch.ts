@@ -38,7 +38,6 @@ export async function runTaskWorkflow(
         runId: ctx.runId,
         attempt: 1,
         outputs: [],
-        usage: { creditUnits: 0 },
         failures: [],
       });
       break;

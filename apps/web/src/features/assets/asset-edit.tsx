@@ -1,6 +1,7 @@
 import { Empty, useToast } from "@shiguang/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Button, Input, Segmented, Select, Tag } from "antd";
+import { Button, Input, Segmented, Tag } from "antd";
+import { createStyles } from "antd-style";
 import { ArrowLeft, FilePenLine, Save } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
@@ -16,6 +17,18 @@ const VISIBILITY_OPTIONS = [
   { label: "公开", value: "public" },
 ];
 
+const useAssetEditStyles = createStyles(() => ({
+  headerRow: {
+    minWidth: 0,
+  },
+  titleWrap: {
+    minWidth: 0,
+  },
+  title: {
+    margin: 0,
+  },
+}));
+
 export function AssetEditPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -23,8 +36,8 @@ export function AssetEditPage() {
   const queryClient = useQueryClient();
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
-  const [tags, setTags] = useState<string[]>([]);
   const [visibility, setVisibility] = useState<AssetVisibility>("private");
+  const { styles } = useAssetEditStyles();
 
   const { data: asset, isLoading } = useQuery<Asset>({
     queryKey: ["asset", id],
@@ -38,7 +51,6 @@ export function AssetEditPage() {
     if (!asset) return;
     setTitle(asset.title);
     setDescription(asset.description ?? "");
-    setTags(asset.tags ?? []);
     if (
       asset.visibility === "private" ||
       asset.visibility === "link" ||
@@ -55,7 +67,6 @@ export function AssetEditPage() {
         body: {
           title: title.trim(),
           description: description.trim(),
-          tags: tags.map((tag) => tag.trim()).filter(Boolean),
           visibility,
         },
       }),
@@ -87,17 +98,15 @@ export function AssetEditPage() {
   return (
     <div className="sg-asset-edit-page">
       <div className="sg-row-between sg-asset-edit-header">
-        <div className="sg-row" style={{ minWidth: 0 }}>
+        <div className={`sg-row ${styles.headerRow}`}>
           <Button
             type="text"
             icon={<ArrowLeft size={16} />}
             aria-label="返回资产详情"
             onClick={() => navigate(`/assets/${asset.id}`)}
           />
-          <div style={{ minWidth: 0 }}>
-            <h1 className="sg-h1" style={{ margin: 0 }}>
-              编辑资产
-            </h1>
+          <div className={styles.titleWrap}>
+            <h1 className={`sg-h1 ${styles.title}`}>编辑资产</h1>
             <div className="sg-row sg-mt-sm">
               <Tag>{asset.type}</Tag>
               <span className="sg-subtle">{asset.id}</span>
@@ -146,20 +155,6 @@ export function AssetEditPage() {
             maxLength={2000}
             showCount
             onChange={(event) => setDescription(event.target.value)}
-          />
-        </div>
-
-        <div className="sg-field">
-          <label className="sg-label" htmlFor="asset-edit-tags">
-            标签
-          </label>
-          <Select
-            id="asset-edit-tags"
-            mode="tags"
-            value={tags}
-            tokenSeparators={[",", "，"]}
-            options={tags.map((tag) => ({ label: tag, value: tag }))}
-            onChange={setTags}
           />
         </div>
 

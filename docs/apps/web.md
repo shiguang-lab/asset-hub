@@ -29,7 +29,7 @@ Node 进程内保存 opaque Broker，并定期刷新 `asset-hub-api` audience �
 
 ## 1. 定位
 
-`apps/web` 是 Web ToC 主应用和移动 Web 适配层，负责 UI、编辑体验、本地草稿和实时状态呈现。它不是安全边界：所有权限、状态转换、Credits 和发布裁决必须由服务端完成。
+`apps/web` 是 Web ToC 主应用和移动 Web 适配层，负责 UI、编辑体验、本地草稿和实时状态呈现。它不是安全边界：所有权限、状态转换和发布裁决必须由服务端完成；积分只显示外部系统返回的余额。
 
 | 项 | 设计 |
 | --- | --- |
@@ -80,7 +80,7 @@ feature 之间不得直接 import 内部组件；跨 feature 只通过 `entities
 - Dataset：概览、图表、质量、交互查询；
 - Presentation：大纲确认、结构化编辑、Theme/Layout、播放；
 - Publish：可见性、密码、有效期、短链、二维码、分析；
-- Settings：MCP/API/Git/通知/Credits。
+- Settings：MCP/API/Git/通知；积分余额单独只读展示。
 
 ## 3.1 主题颜色规范（锁定）
 
@@ -162,7 +162,7 @@ Mutation 成功只更新明确返回的实体并 invalidate 关联 key；禁止�
 - 409/412 转为领域冲突，不作为普通 toast；
 - 401 交给统一登录回流，403 显示资源权限恢复动作；
 - 登录与 OPC Web 保持一致：启动先请求同源 `/api/auth/session`，无会话或业务请求返回 401 时跳转统一 `/login?return_to=...`；退出先 POST `/api/auth/logout`。浏览器只携带 HttpOnly session Cookie，禁止构造或持久化 `X-SG-Identity`。
-- 登录用户入口固定在 Header 最右侧；侧栏底部只放设置入口和真实 Credits 消耗进度，不再展示硬编码用户信息。
+- 登录用户入口固定在 Header 最右侧；侧栏底部只放设置入口和外部积分系统返回的余额，不展示本地扣费进度或硬编码用户信息。
 - 空间切换器固定在 Header 用户头像左侧，显示“个人空间”或当前 Group 名称；下拉内容来自
   `/api/account/orgs`，切换调用 `/api/auth/context` 并整页刷新。搜索模式不得移动或隐藏空间切换器。
 - 本地 Broker 模式只读显示由环境配置决定的当前空间，不提供下拉切换；Group 成员管理只在

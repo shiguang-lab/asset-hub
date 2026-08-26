@@ -63,7 +63,19 @@ export class HatchetRuntime {
         labels: this.config.workerLabels,
       });
       await worker.registerWorkflows([this.taskWorkflow(client), this.knowledgeWorkflow(client)]);
-      await worker.start();
+
+      // Hatchet's worker.start() is a long-lived run loop: it only resolves
+      // when the worker stops. Awaiting it here prevents the relay/local
+      // executor from ever starting, leaving outbox-backed tasks in `created`
+      // with 0% progress even though the Hatchet connection is healthy.
+      const startPromise = worker.start();
+      startPromise.catch((err) => {
+        this.logger.warn(
+          { err: err instanceof Error ? err.message : String(err) },
+          "hatchet worker stopped unexpectedly",
+        );
+      });
+      await worker.waitUntilReady(15_000);
 
       this.logger.info(
         {
@@ -101,6 +113,10 @@ export class HatchetRuntime {
 
     return client.task({
       name: this.taskWorkflowName,
+      // Presentation generation contains several independently bounded model
+      // streams. Keep orchestration above the 30m per-stream ceiling so Hatchet
+      // never abandons a healthy run while the provider is still reasoning.
+      executionTimeout: "90m",
       fn: async (input: JsonObject) => {
         const payload = input as unknown as TaskEnqueue;
         const ctx: StepContext = {
@@ -122,7 +138,6 @@ export class HatchetRuntime {
               runId: ctx.runId,
               attempt: 1,
               outputs: [],
-              usage: { creditUnits: 0 },
               failures: [{ item: "workflow", reason: message, retryable: true }],
             })
             .catch(() => undefined);
@@ -140,6 +155,7 @@ export class HatchetRuntime {
 
     return client.task({
       name: this.knowledgeWorkflowName,
+      executionTimeout: "3m",
       fn: async (input: JsonObject) => {
         const payload = input as unknown as KnowledgeEnqueue;
         const ctx: StepContext = {
@@ -165,7 +181,6 @@ export class HatchetRuntime {
               runId: ctx.runId,
               attempt: 1,
               outputs: [],
-              usage: { creditUnits: 0 },
               failures: [{ item: "knowledge", reason: message, retryable: true }],
             })
             .catch(() => undefined);
@@ -258,7 +273,6 @@ export class HatchetRelay {
           runId: `run_${event.id}`,
           attempt: 1,
           outputs: [],
-          usage: { creditUnits: 0 },
           failures: [{ item: "dispatch", reason: message, retryable: true }],
         })
         .catch(() => undefined);

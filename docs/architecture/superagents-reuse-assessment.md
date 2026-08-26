@@ -10,7 +10,7 @@
 | --- | --- | --- | --- |
 | `access-gateway` | 直接复用 | 新增 host/path policy | 已负责 TLS、forward-auth、header 清理；增加 Asset Hub 和 user-content 域名 |
 | `auth-service` | 直接复用 | 校验 `X-SG-Identity` | 产品只做资源级授权，不接触共享 Cookie/ZITADEL token |
-| `model-gateway` | 直接复用 | 独立 `asset-hub` scope/client | Provider secret 和协议路由不进入本仓库；绑定 quality/task policy |
+| `model-gateway` | 直接复用 | 独立 `resolve` client `asset-hub-runtime`，不分 scope | Provider secret 和协议路由不进入本仓库；绑定由全局目录维护 |
 | PostgreSQL 集群 | 可共享集群 | 独立 database/user | 备份与监控可复用，不允许跨产品表 join |
 | NATS 集群 | 可共享 | 独立 account/credentials/subject prefix | 避免 subject 和 consumer 冲突 |
 | Hatchet 集群 | 谨慎共享 | 独立 tenant/namespace/worker labels | 如果隔离能力或容量不足，部署独立 engine |
@@ -21,7 +21,7 @@
 
 ### 3.1 Result Projection Boundary
 
-复用 `superagents` 的“计算完成与业务可见是两件事”：Agent/Worker 只产出带 schema version 的 result reference；`api` projector 在一个事务中完成 Inbox、业务表、Outbox。这样可防止 Worker 重试造成重复 Asset 或 Credits 结算。
+复用 `superagents` 的“计算完成与业务可见是两件事”：Agent/Worker 只产出带 schema version 的 result reference；`api` projector 在一个事务中完成 Inbox、业务表、Outbox。积分结算由外部积分系统负责，不在 Asset Hub projector 中实现。
 
 ### 3.2 Outbox / Inbox
 
@@ -74,7 +74,7 @@
 
 ### 5.3 model-gateway
 
-适配度高。新增 `asset-hub` scope，并定义：
+适配度高。使用全局模型目录，并定义：
 
 - `ai-function.economy/balanced/best`；
 - `research.planner`、`research.extractor`、`research.writer`、`research.verifier`；

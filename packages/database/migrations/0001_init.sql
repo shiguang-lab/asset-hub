@@ -53,7 +53,6 @@ CREATE TABLE IF NOT EXISTS assets (
   description TEXT NOT NULL DEFAULT '',
   visibility TEXT NOT NULL DEFAULT 'private',
   status TEXT NOT NULL DEFAULT 'normal',
-  tags_json TEXT NOT NULL DEFAULT '[]',
   source_type TEXT NOT NULL DEFAULT 'manual',
   current_version_id TEXT,
   lock_version INTEGER NOT NULL DEFAULT 1,
@@ -152,6 +151,24 @@ CREATE TABLE IF NOT EXISTS task_steps (
   completed_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_task_steps_task ON task_steps(task_id, type);
+
+-- Append-only model output stream. Content deltas are persisted in batches so a
+-- task can be replayed after completion or resumed after a worker restart.
+CREATE TABLE IF NOT EXISTS task_stream_events (
+  id TEXT PRIMARY KEY,
+  task_id TEXT NOT NULL REFERENCES tasks(id),
+  run_id TEXT NOT NULL,
+  sequence INTEGER NOT NULL,
+  phase TEXT NOT NULL,
+  activity TEXT NOT NULL,
+  delta TEXT NOT NULL DEFAULT '',
+  received_chars INTEGER,
+  finish_reason TEXT,
+  usage_json TEXT,
+  created_at TEXT NOT NULL,
+  UNIQUE (task_id, run_id, sequence)
+);
+CREATE INDEX IF NOT EXISTS idx_task_stream_events_task ON task_stream_events(task_id, run_id, sequence);
 
 CREATE TABLE IF NOT EXISTS evidence_items (
   id TEXT PRIMARY KEY,

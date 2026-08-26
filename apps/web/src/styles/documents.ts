@@ -1,6 +1,7 @@
-import { createGlobalStyle, css } from "antd-style";
+import { createStyles } from "antd-style";
 
-export const DocumentsGlobalStyles = createGlobalStyle(css`
+export const useDocumentsStyles = createStyles(({ css }) => ({
+  root: css`
 /* Documents list page: per design 15_33_19 — stat cards, pill filter tabs, toolbar, recent cards, borderless table */
 .sg-docs {
   width: 100%;
@@ -140,7 +141,7 @@ export const DocumentsGlobalStyles = createGlobalStyle(css`
 
 /* Borderless document table */
 .sg-docs-table-wrap {
-  overflow-x: auto;
+  min-width: 0;
 }
 .sg-docs-table {
   width: 100%;
@@ -234,7 +235,7 @@ export const DocumentsGlobalStyles = createGlobalStyle(css`
 }
 .sg-docs-move-tree {
   max-height: min(420px, 55vh);
-  overflow-y: auto;
+  min-height: 0;
   padding: 6px;
   border: 1px solid var(--sg-border);
   border-radius: 8px;
@@ -277,4 +278,5 @@ export const DocumentsGlobalStyles = createGlobalStyle(css`
   justify-content: flex-end;
   gap: 8px;
 }
-`);
+  `,
+}));

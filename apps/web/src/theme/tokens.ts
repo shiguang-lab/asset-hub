@@ -16,12 +16,28 @@ const sharedToken = {
   wireframe: false,
 } as const;
 
+/** Stable visual aliases consumed by scoped feature styles. Keeping these as
+ * ThemeConfig tokens preserves the existing palette while allowing every
+ * feature stylesheet to read values through antd-style's token object. */
+const visualToken = {
+  colorTextPrimary: "#f4f3fb",
+  colorTextSecondary: "#b8b5c9",
+  colorTextMuted: "#777489",
+  colorSurface: "#0b0a0f",
+  colorSurfaceSecondary: "#121116",
+  colorSurfaceTertiary: "#1a181f",
+  colorStroke: "#2a2731",
+  colorAccent: "#7c3cff",
+  colorAccentHover: "#965eff",
+  colorAccentSoft: "rgba(124, 60, 255, 0.14)",
+} as const;
+
 const buildComponents = (mode: ThemeMode): ThemeConfig["components"] => {
   const surface = platformPalette.scheme[mode];
   return {
     Button: {
-      controlHeight: 36,
-      controlHeightLG: 44,
+      controlHeight: 32,
+      controlHeightLG: 40,
       borderRadius: platformPalette.borderRadius,
       fontWeight: 500,
       primaryShadow: "none",
@@ -39,12 +55,17 @@ const buildComponents = (mode: ThemeMode): ThemeConfig["components"] => {
       activeBarBorderWidth: 0,
     },
     Input: {
-      controlHeight: 36,
+      controlHeight: 32,
       borderRadius: platformPalette.borderRadius,
     },
     Select: {
-      controlHeight: 36,
+      controlHeight: 32,
       borderRadius: platformPalette.borderRadius,
+    },
+    Segmented: {
+      // colorBgLayout is the page background in dark mode; use the container
+      // surface for the track so the antd control remains visually distinct.
+      trackBg: mode === "dark" ? surface.colorBgContainer : surface.colorBgLayout,
     },
     Tabs: {
       titleFontSize: 13,
@@ -95,12 +116,12 @@ const buildComponents = (mode: ThemeMode): ThemeConfig["components"] => {
 export const themeConfig: Record<ThemeMode, ThemeConfig> = {
   light: {
     algorithm: theme.defaultAlgorithm,
-    token: { ...sharedToken, ...platformPalette.scheme.light },
+    token: { ...sharedToken, ...visualToken, ...platformPalette.scheme.light },
     components: buildComponents("light"),
   },
   dark: {
     algorithm: theme.darkAlgorithm,
-    token: { ...sharedToken, ...platformPalette.scheme.dark },
+    token: { ...sharedToken, ...visualToken, ...platformPalette.scheme.dark },
     components: buildComponents("dark"),
   },
 };

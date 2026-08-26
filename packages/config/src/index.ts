@@ -108,7 +108,11 @@ export interface ModelGatewayConfig {
   baseUrl: string | null;
   apiKey: string | null;
   timeoutMs: number;
+  streamFirstByteTimeoutMs: number;
+  streamIdleTimeoutMs: number;
+  streamTotalTimeoutMs: number;
   model: string;
+  maxOutputTokens?: number;
 }
 
 export function loadModelGatewayConfig(): ModelGatewayConfig {
@@ -116,7 +120,13 @@ export function loadModelGatewayConfig(): ModelGatewayConfig {
     baseUrl: process.env.MODEL_GATEWAY_URL ?? null,
     apiKey: process.env.MODEL_GATEWAY_API_KEY ?? null,
     timeoutMs: Number(process.env.MODEL_GATEWAY_TIMEOUT_MS ?? 120_000),
-    model: process.env.MODEL_GATEWAY_MODEL ?? "deepseek-v4-flash",
+    streamFirstByteTimeoutMs: Number(
+      process.env.MODEL_GATEWAY_STREAM_FIRST_BYTE_TIMEOUT_MS ?? 600_000,
+    ),
+    streamIdleTimeoutMs: Number(process.env.MODEL_GATEWAY_STREAM_IDLE_TIMEOUT_MS ?? 600_000),
+    streamTotalTimeoutMs: Number(process.env.MODEL_GATEWAY_STREAM_TOTAL_TIMEOUT_MS ?? 3_600_000),
+    model: process.env.MODEL_GATEWAY_MODEL ?? "doubao-seed-2.0-lite",
+    maxOutputTokens: Number(process.env.MODEL_GATEWAY_MAX_OUTPUT_TOKENS ?? 32_768),
   };
 }
 

@@ -488,6 +488,14 @@ async function buildAndAttachRelease(
     }
   }
   bundle.manifest.references = referenceSnapshot;
+  if (asset.type === "presentation") {
+    bundle.manifest.presentation = {
+      source: "asset-version",
+      assetId: asset.id,
+      assetVersionId: asset.currentVersionId ?? "",
+      mediaType: "text/html",
+    };
+  }
 
   for (const file of binaryFiles) {
     manifestFiles.push({ path: file.path, mediaType: file.mediaType, size: file.data.byteLength });
@@ -513,7 +521,11 @@ async function buildAndAttachRelease(
         href: `/s/${publish.shortSlug}/attachments/${attachment.id}`,
       })),
     ];
-    if (index) index.content = injectPublishDownloadActions(index.content, actions);
+    if (index) {
+      index.content = injectPublishDownloadActions(index.content, actions, {
+        presentation: asset.type === "presentation",
+      });
+    }
   }
   if (index) {
     index.content = injectPublishAccessPolicy(index.content, {

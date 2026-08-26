@@ -75,7 +75,7 @@ JetStream 的基础保证是 at-least-once；即使启用 message deduplication 
 
 MVP 采用一套 PostgreSQL 业务库：
 
-- SQL 事务管理 Asset、权限、Credits 与 Outbox；
+- SQL 事务管理 Asset、权限与 Outbox；积分扣费由外部积分系统负责；
 - `tsvector`/`pg_trgm` 做标题、标签和内容关键词召回；
 - pgvector HNSW 做语义召回；
 - API 用 Reciprocal Rank Fusion 合并，必要时由 reranker 重排；

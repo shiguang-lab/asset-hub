@@ -102,11 +102,29 @@ export function registerInternalRoutes(app: FastifyInstance): void {
       status?: typeof task.status;
       progress?: number;
       currentStep?: string;
+      checkpoint?: Record<string, unknown>;
     } = {};
     if (event.status) patch.status = event.status;
-    if (event.progress !== undefined) patch.progress = event.progress;
+    // Progress events can arrive out of order after retries or concurrent
+    // workflow steps. Never let an older, smaller value rewind the task.
+    if (event.progress !== undefined) patch.progress = Math.max(task.progress, event.progress);
     if (event.detail) patch.currentStep = event.detail;
+    if (event.checkpoint) patch.checkpoint = event.checkpoint;
     const updated = await ctx.store.updateTask(task.workspaceId, task.id, patch);
+    let streamEvent;
+    if (event.stream) {
+      streamEvent = await ctx.store.appendTaskStreamEvent({
+        taskId: task.id,
+        runId: event.runId,
+        sequence: event.sequence,
+        phase: event.stream.phase,
+        activity: event.stream.activity,
+        delta: event.stream.delta,
+        receivedChars: event.stream.receivedChars,
+        finishReason: event.stream.finishReason,
+        usage: event.stream.usage,
+      });
+    }
     if (event.stepId) {
       const step = (await ctx.store
         .getDb()
@@ -144,9 +162,30 @@ export function registerInternalRoutes(app: FastifyInstance): void {
         status: updated?.status,
         progress: updated?.progress,
         detail: event.detail,
+        checkpoint: event.checkpoint,
       },
     });
+    if (streamEvent) {
+      ctx.sse.broadcast(task.workspaceId, {
+        id: nextId("evt"),
+        event: "task.stream",
+        data: streamEvent,
+      });
+    }
     return { ok: true };
+  });
+
+  app.get("/internal/v1/tasks/:id/state", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const task = await ctx.store.getTaskAny(id);
+    if (!task) return reply.status(404).send({ code: "NOT_FOUND" });
+    return {
+      id: task.id,
+      status: task.status,
+      cancelRequested: task.cancelRequested,
+      progress: task.progress,
+      checkpoint: task.checkpoint,
+    };
   });
 
   /* ---------------- task result projection ---------------- */
@@ -359,29 +398,25 @@ export function registerInternalRoutes(app: FastifyInstance): void {
       });
     }
 
-    const status =
-      failures.length > 0 && outputAssetIds.length > 0
+    const status = task.cancelRequested
+      ? "cancelled"
+      : failures.length > 0 && outputAssetIds.length > 0
         ? "partial_completed"
         : failures.length > 0
           ? "failed"
           : "completed";
-    const creditsUsed = result.usage?.creditUnits ?? 0;
-    await ctx.store.updateTask(task.workspaceId, task.id, {
-      status,
-      progress: status === "completed" ? 100 : 85,
-      currentStep: status === "failed" ? "任务失败" : "任务完成",
-      error: status === "failed" ? failures.map((f) => f.reason).join("; ") : null,
-      creditsUsed,
-    });
+    // Persist output relations before publishing the terminal task status so a
+    // client polling a just-completed task can immediately resolve its assets.
     for (const assetId of outputAssetIds) {
       await ctx.store.addOutput(task.workspaceId, task.id, assetId);
     }
-    await ctx.store.settleCredits(
-      task.workspaceId,
-      task.id,
-      creditsUsed,
-      `op_settle_${task.id}_${result.runId}`,
-    );
+    await ctx.store.updateTask(task.workspaceId, task.id, {
+      status,
+      progress: status === "completed" ? 100 : task.progress,
+      currentStep:
+        status === "cancelled" ? "任务已取消" : status === "failed" ? "任务失败" : "任务完成",
+      error: status === "failed" ? failures.map((f) => f.reason).join("; ") : null,
+    });
     await ctx.store.insertInbox(inboxKey, "task-results");
     await ctx.store.audit(
       task.workspaceId,
@@ -401,9 +436,11 @@ export function registerInternalRoutes(app: FastifyInstance): void {
       eventType:
         status === "completed"
           ? "task.completed"
-          : status === "partial_completed"
-            ? "task.partial"
-            : "task.failed",
+          : status === "cancelled"
+            ? "task.cancelled"
+            : status === "partial_completed"
+              ? "task.partial"
+              : "task.failed",
       schemaVersion: 1,
       occurredAt: nowIso(),
       producer: "worker",
@@ -413,7 +450,6 @@ export function registerInternalRoutes(app: FastifyInstance): void {
       data: {
         taskId: task.id,
         outputAssetIds,
-        creditsUsed,
         error: status === "failed" ? failures.map((f) => f.reason).join("; ") : undefined,
       },
     });
@@ -427,10 +463,13 @@ export function registerInternalRoutes(app: FastifyInstance): void {
       title:
         status === "completed"
           ? `任务“${task.goal}”已完成`
-          : status === "partial_completed"
-            ? `任务“${task.goal}”部分完成`
-            : `任务“${task.goal}”失败`,
-      body: `已生成 ${outputAssetIds.length} 个结果，消耗 ${creditsUsed} Credits。`,
+          : status === "cancelled"
+            ? `任务“${task.goal}”已取消`
+            : status === "partial_completed"
+              ? `任务“${task.goal}”部分完成`
+              : `任务“${task.goal}”失败`,
+      body:
+        status === "cancelled" ? "任务已按请求停止。" : `已生成 ${outputAssetIds.length} 个结果。`,
       link: `/tasks/${task.id}`,
     });
     ctx.sse.broadcast(task.workspaceId, {
@@ -642,7 +681,6 @@ export function registerInternalRoutes(app: FastifyInstance): void {
       goal: body.goal,
       spec: body.spec,
     });
-    await ctx.store.reserveCredits(body.workspaceId, task.id, 400, `op_reserve_${task.id}`);
     await ctx.bus.emit({
       eventId: nextId("evt"),
       eventType: "task.created",
@@ -705,9 +743,10 @@ export function registerInternalRoutes(app: FastifyInstance): void {
         status: publish.status,
       },
       release: release
-        ? {
+      ? {
             id: release.id,
             etag: release.etag,
+            assetVersionId: release.assetVersionId,
             manifest: release.manifest,
             createdAt: release.createdAt,
           }
@@ -753,6 +792,48 @@ export function registerInternalRoutes(app: FastifyInstance): void {
       .type(releaseMediaType(relativePath))
       .header("content-length", String(data.byteLength))
       .send(data);
+  });
+
+  app.get("/internal/v1/presentation-content", async (req, reply) => {
+    const query = z.object({ publishId: z.string(), releaseId: z.string() }).parse(req.query);
+    const release = (await ctx.store
+      .getDb()
+      .prepare("SELECT id, asset_version_id FROM publish_releases WHERE id = ? AND publish_id = ?")
+      .get(query.releaseId, query.publishId)) as
+      | { id: string; asset_version_id: string | null }
+      | undefined;
+    if (!release) return reply.status(404).send({ code: "RELEASE_NOT_FOUND" });
+    const publish = await ctx.store.getPublishById(query.publishId);
+    if (!publish) return reply.status(404).send({ code: "PUBLISH_NOT_FOUND" });
+    const asset = await ctx.store.getAssetAny(publish.assetId);
+    if (!asset || asset.type !== "presentation") {
+      return reply.status(404).send({ code: "PRESENTATION_NOT_FOUND" });
+    }
+    const versionId = release.asset_version_id ?? asset.currentVersionId ?? "";
+    const content = await ctx.store.readContent(asset.id, versionId || undefined);
+    if (content?.text) {
+      return reply.type("application/json").send({
+        publishId: publish.id,
+        releaseId: release.id,
+        assetId: asset.id,
+        assetVersionId: versionId,
+        title: asset.title,
+        html: content.text,
+      });
+    }
+    // Legacy releases may point at a manifest-only version; return the old
+    // bundled page so the public reader can migrate it through the same shell.
+    const objectKey = `publishes/${query.publishId}/releases/${query.releaseId}/index.html`;
+    const legacy = await ctx.storage.get(objectKey);
+    if (!legacy) return reply.status(404).send({ code: "PRESENTATION_CONTENT_NOT_FOUND" });
+    return reply.type("application/json").send({
+      publishId: publish.id,
+      releaseId: release.id,
+      assetId: asset.id,
+      assetVersionId: versionId,
+      title: asset.title,
+      html: legacy.toString("utf8"),
+    });
   });
 
   app.post("/internal/v1/publishes/:slug/unlock", async (req, reply) => {

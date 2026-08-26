@@ -22,13 +22,11 @@ export function registerHome(app: FastifyInstance): void {
       req.actor.workspaceId,
       req.actor.subject,
     );
-    const creditAccount = await ctx.store.getCreditAccount(req.actor.workspaceId);
     const templates = (await ctx.store.listTemplates(req.actor.workspaceId)).slice(0, 2);
     return {
       recentAssets,
       runningTasks,
       unreadNotifications,
-      credits: creditAccount?.balance ?? 0,
       templates,
     };
   });
@@ -38,8 +36,7 @@ export function registerHome(app: FastifyInstance): void {
       subject: req.actor.subject,
       workspaceId: req.actor.workspaceId,
     });
-    const creditAccount = await ctx.store.getCreditAccount(req.actor.workspaceId);
-    return { profile, workspaceId: req.actor.workspaceId, credits: creditAccount?.balance ?? 0 };
+    return { profile, workspaceId: req.actor.workspaceId };
   });
 
   app.patch("/api/v1/me", async (req) => {

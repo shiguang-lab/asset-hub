@@ -1,6 +1,7 @@
-import { createGlobalStyle, css } from "antd-style";
+import { createStyles } from "antd-style";
 
-export const SearchGlobalStyles = createGlobalStyle(css`
+export const useSearchStyles = createStyles(({ css }) => ({
+  root: css`
 /* Global search workspace: reference layout 2026-08-13. */
 .sg-header .sg-header-tools {
   position: relative;
@@ -75,7 +76,7 @@ export const SearchGlobalStyles = createGlobalStyle(css`
 }
 .sg-search-content {
   min-height: calc(100vh - 60px);
-  padding-top: 0;
+  padding: var(--sg-page-gutter);
 }
 .sg-global-search {
   position: relative;
@@ -87,7 +88,6 @@ export const SearchGlobalStyles = createGlobalStyle(css`
   height: 62px;
   align-items: end;
   gap: 28px;
-  overflow-x: auto;
   border-bottom: 1px solid var(--sg-border);
 }
 .sg-global-search-tabs button {
@@ -137,52 +137,19 @@ export const SearchGlobalStyles = createGlobalStyle(css`
   flex: none;
 }
 .sg-global-search-filters .ant-select-selector {
-  min-height: 38px;
   padding-inline: 11px !important;
 }
 .sg-global-search-filters .ant-select-selection-item,
 .sg-global-search-filters .ant-select-selection-placeholder {
   font-size: 13px;
 }
-.sg-global-search-filters > label {
+.sg-global-search-mine.ant-checkbox-wrapper {
   display: inline-flex;
   flex: none;
   align-items: center;
-  gap: 7px;
   margin-left: 2px;
   color: var(--sg-fg-2);
   font-size: 13px;
-  cursor: pointer;
-}
-.sg-global-search-filters > label input {
-  position: absolute;
-  opacity: 0;
-}
-.sg-global-search-filters > label i {
-  position: relative;
-  display: inline-block;
-  width: 31px;
-  height: 18px;
-  border-radius: 10px;
-  background: #292631;
-}
-.sg-global-search-filters > label i::after {
-  position: absolute;
-  top: 3px;
-  left: 3px;
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  background: #9b97a8;
-  content: "";
-  transition: transform 160ms ease;
-}
-.sg-global-search-filters > label input:checked + i {
-  background: var(--sg-accent);
-}
-.sg-global-search-filters > label input:checked + i::after {
-  background: #fff;
-  transform: translateX(13px);
 }
 .sg-global-search-sort {
   display: flex;
@@ -615,19 +582,18 @@ button.sg-global-search-icon {
     display: none;
   }
   .sg-search-content {
-    padding-inline: 12px;
+    padding-inline: var(--sg-page-gutter);
   }
   .sg-global-search-tabs {
     gap: 18px;
   }
   .sg-global-search-filters {
     flex-wrap: nowrap;
-    overflow-x: auto;
   }
   .sg-global-search-filters > .ant-select {
     width: 112px;
   }
-  .sg-global-search-filters > label,
+  .sg-global-search-mine.ant-checkbox-wrapper,
   .sg-global-search-sort {
     flex: none;
   }
@@ -654,4 +620,5 @@ button.sg-global-search-icon {
     justify-content: center;
   }
 }
-`);
+  `,
+}));

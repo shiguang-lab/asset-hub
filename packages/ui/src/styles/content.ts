@@ -1,6 +1,7 @@
-import { createGlobalStyle, css } from "antd-style";
+import { createStyles } from "antd-style";
 
-export const UiContentGlobalStyles = createGlobalStyle(css`
+export const useUiContentStyles = createStyles(({ css }) => ({
+  root: css`
 /* ---------------- markdown preview ---------------- */
 .sg-md {
   line-height: 1.75;
@@ -32,6 +33,7 @@ export const UiContentGlobalStyles = createGlobalStyle(css`
   color: #e6e9f2;
   padding: 14px;
   border-radius: 10px;
+  /* Renderer-owned code block: keep horizontal scrolling inside long snippets. */
   overflow: auto;
 }
 .sg-md pre code {
@@ -113,7 +115,6 @@ export const UiContentGlobalStyles = createGlobalStyle(css`
 }
 .sg-preview {
   padding: 20px 28px;
-  overflow: auto;
   border-left: 1px solid var(--sg-border);
   min-height: 480px;
 }
@@ -216,4 +217,5 @@ export const UiContentGlobalStyles = createGlobalStyle(css`
   color: #fff;
   border-color: var(--sg-success);
 }
-`);
+`,
+}));

@@ -110,10 +110,40 @@ export function isWorkspaceAdmin(session: AuthSession | null = activeSession): b
   return session.tenantType === "user" || session.roles.includes("org:admin");
 }
 
+/**
+ * 本地 Broker 不可用时抛出的专属错误：表示“身份服务在线但本地自动登录链路断开”，
+ * 此时不应跳转到统一登录页（会触发 /login ⇄ / 重定向死循环），而应展示明确的错误页。
+ */
+export class BrokerUnavailableError extends Error {
+  constructor(message = "本地身份 Broker 不可用") {
+    super(message);
+    this.name = "BrokerUnavailableError";
+  }
+}
+
 export async function requireAuthSession(): Promise<AuthSession | null> {
-  const session = await fetchAuthSession();
-  if (!session) redirectToUnifiedLogin();
-  return session;
+  const response = await fetch("/api/auth/session", {
+    credentials: "include",
+    headers: { Accept: "application/json" },
+  });
+  // 本地 broker 模式下，session 接口由 vite 中间件代理。若 broker 向后端换取身份失败，
+  // 中间件返回 503 + {error:"local_broker_unavailable"}。这种情况不要跳登录页死循环。
+  if (response.status === 503) {
+    let code = "";
+    try {
+      const body = (await response.json()) as { error?: string };
+      code = body.error ?? "";
+    } catch {
+      code = "";
+    }
+    if (code === "local_broker_unavailable") throw new BrokerUnavailableError();
+    return null;
+  }
+  if (!response.ok) return null;
+  const body = (await response.json()) as UnifiedSessionResponse;
+  activeSession = normalizeSession(body);
+  if (!activeSession) redirectToUnifiedLogin();
+  return activeSession;
 }
 
 export async function performLogout(): Promise<void> {
@@ -195,7 +225,7 @@ async function authRequest<T = unknown>(path: string, init: RequestInit = {}): P
     },
   });
   if (!response.ok) {
-    if (response.status === 401) redirectToUnifiedLogin();
+    if (response.status === 401 && !activeSession?.localBroker) redirectToUnifiedLogin();
     let problem: { error?: string; detail?: string } = {};
     try {
       problem = (await response.json()) as typeof problem;

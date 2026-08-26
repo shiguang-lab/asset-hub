@@ -58,6 +58,7 @@ export const router = createBrowserRouter([
       { path: "datasets/:id", element: <DatasetDetailPage /> },
       { path: "presentations", element: <PresentationsPage /> },
       { path: "presentations/new", element: <PresentationNewPage /> },
+      { path: "presentations/generate/:taskId", element: <PresentationNewPage /> },
       { path: "presentations/:id", element: <PresentationEditorPage /> },
       { path: "presentations/:id/play", element: <PresentationPlayerPage /> },
       { path: "templates", element: <TemplatesPage /> },

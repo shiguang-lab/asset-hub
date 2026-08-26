@@ -45,13 +45,6 @@ export function registerDatasets(app: FastifyInstance): void {
       },
       inputAssetIds: [],
     });
-    const estimate = { min: 50, max: 100 };
-    await ctx.store.reserveCredits(
-      req.actor.workspaceId,
-      task.id,
-      estimate.max,
-      `op_reserve_${task.id}`,
-    );
     await ctx.bus.emit({
       eventId: nextId("evt"),
       eventType: "task.created",

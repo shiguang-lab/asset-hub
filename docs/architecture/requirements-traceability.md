@@ -20,7 +20,7 @@
 | Template | web | api/templates | worker 按模板启动 | TemplateVersion、usage |
 | Publish/Share/Short link | web | api/publishing | compute-worker、public-gateway | Publish、Release、Slug、Policy、Stats |
 | Notification | web | api/notifications | worker、NATS | Notification、DeliveryReceipt、Preference |
-| Credits/Usage | web | api/billing | all workers report usage | append-only Ledger、Reservation、UsageRecord |
+| Points balance | web | read-only points adapter | external points service | balance snapshot only |
 | MCP/API | web settings | api/integrations + `/mcp` | api 独立路由配额 | Token hash、Scope、Audit |
 | Git/外部 Source P1 | web settings | api/integrations | worker；按需 Connector | Connection、SyncCursor、SourceVersion |
 
@@ -33,7 +33,7 @@
 | Task Created/Planning/Queued/Running/... | api 产品读模型 | Hatchet run 是执行状态 | REST + SSE；刷新可恢复 |
 | Draft Saving/Saved/Failed | web + api draft version | IndexedDB local draft | 本地即时 + server ack |
 | Publish Active/Expired/Revoked | api | public cache projection | public-gateway 每次按 policy version 判断 |
-| Credit Reserved/Settled/Released | api ledger | Worker usage report | REST query，不信任前端估算 |
+| Points balance | external points service | web balance adapter | read-only REST query |
 
 ## 4. 核心验收链路
 
@@ -47,7 +47,7 @@
 
 ### 4.3 无人值守 Research
 
-`api Task/Credit reserve → Hatchet → worker/agents/tools → checkpoints/artifacts → api projector → Asset outputs/Credit settle → Notification/SSE`。浏览器仅观察，不持有任务执行状态。
+`api Task → Hatchet → worker/agents/tools → checkpoints/artifacts → api projector → Asset outputs → Notification/SSE`。浏览器仅观察，不持有任务执行状态；积分由外部系统负责。
 
 ### 4.4 Dataset Code First
 

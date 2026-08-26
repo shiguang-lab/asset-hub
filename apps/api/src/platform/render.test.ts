@@ -18,6 +18,17 @@ describe("buildReleaseBundle", () => {
       { path: "index.md", content: "# 标题\n\n正文", mediaType: "text/markdown" },
     ]);
   });
+
+  it("keeps presentation source out of the release bundle for request-time SSR", () => {
+    const bundle = buildReleaseBundle({
+      assetType: "presentation",
+      title: "产品演示",
+      html: '<section data-sg-page="content" data-sg-id="p1"><h2>场景</h2><img data-sg-kind="image" src="asset:img_12345678" alt="产品" /></section>',
+      resolveAssetLink: ({ assetId }) => `/published/${assetId}.png`,
+    });
+    expect(bundle.manifest.entrypoint).toBe("presentation-source");
+    expect(bundle.files).toEqual([]);
+  });
 });
 
 describe("injectPublishDownloadActions", () => {
@@ -32,6 +43,15 @@ describe("injectPublishDownloadActions", () => {
 
   it("does not modify releases without download actions", () => {
     expect(injectPublishDownloadActions("<body>正文</body>", [])).toBe("<body>正文</body>");
+  });
+
+  it("keeps presentation download links hidden for the embedded player", () => {
+    const html = injectPublishDownloadActions("<html><body>演示</body></html>", [
+      { label: "下载演示", href: "/s/demo/download" },
+    ], { presentation: true });
+    expect(html).toContain('data-sg-player-downloads hidden');
+    expect(html).toContain('class="sg-publish-download"');
+    expect(html).not.toContain("position:fixed; right:20px; top:20px");
   });
 });
 

@@ -1,10 +1,25 @@
 import { Empty, formatRelative, useToast } from "@shiguang/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button, Card } from "antd";
+import { createStyles } from "antd-style";
 import { Link } from "react-router-dom";
 import { api, type Notification } from "../../entities/api.js";
 
+const useNotificationStyles = createStyles(({ token }) => ({
+  unreadDot: {
+    width: 8,
+    height: 8,
+    flex: "0 0 auto",
+    borderRadius: "50%",
+    background: token.colorPrimary,
+  },
+  time: { marginLeft: "auto" },
+  body: { margin: "6px 0 0" },
+  link: { fontSize: 13 },
+}));
+
 export function NotificationsPage() {
+  const { styles } = useNotificationStyles();
   const toast = useToast();
   const queryClient = useQueryClient();
   const { data } = useQuery<Notification[]>({
@@ -43,28 +58,13 @@ export function NotificationsPage() {
               onClick={() => !n.readAt && markRead.mutate(n.id)}
             >
               <div className="sg-row">
-                {!n.readAt && (
-                  <span
-                    style={{
-                      width: 8,
-                      height: 8,
-                      borderRadius: "50%",
-                      background: "var(--sg-accent)",
-                    }}
-                  />
-                )}
+                {!n.readAt && <span className={styles.unreadDot} />}
                 <strong>{n.title}</strong>
-                <span className="sg-subtle" style={{ marginLeft: "auto" }}>
-                  {formatRelative(n.createdAt)}
-                </span>
+                <span className={`sg-subtle ${styles.time}`}>{formatRelative(n.createdAt)}</span>
               </div>
-              {n.body && (
-                <p className="sg-subtle" style={{ margin: "6px 0 0" }}>
-                  {n.body}
-                </p>
-              )}
+              {n.body && <p className={`sg-subtle ${styles.body}`}>{n.body}</p>}
               {n.link && (
-                <Link to={n.link} style={{ fontSize: 13 }} onClick={(e) => e.stopPropagation()}>
+                <Link to={n.link} className={styles.link} onClick={(e) => e.stopPropagation()}>
                   查看 →
                 </Link>
               )}

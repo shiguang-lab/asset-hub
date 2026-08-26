@@ -1,6 +1,7 @@
-import { createGlobalStyle, css } from "antd-style";
+import { createStyles } from "antd-style";
 
-export const UiUtilitiesGlobalStyles = createGlobalStyle(css`
+export const useUiUtilitiesStyles = createStyles(({ css }) => ({
+  root: css`
 /* ---------------- markdown read ---------------- */
 .sg-reader {
   max-width: 860px;
@@ -98,4 +99,5 @@ export const UiUtilitiesGlobalStyles = createGlobalStyle(css`
   color: var(--sg-muted);
   margin-right: 8px;
 }
-`);
+`,
+}));

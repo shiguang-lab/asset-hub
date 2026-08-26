@@ -1,10 +1,11 @@
 import { Avatar, Empty, Field, formatRelative, StatusBadge, useToast } from "@shiguang/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Button, Card, Input, Select, Tabs } from "antd";
+import type { MenuProps } from "antd";
+import { Button, Card, Dropdown, Input, Segmented, Select, Tabs } from "antd";
+import { createStyles } from "antd-style";
 import {
   BarChart3,
   BookOpen,
-  ChevronLeft,
   ChevronRight,
   Code2,
   Database,
@@ -31,16 +32,49 @@ import {
   type KnowledgeSource,
   uploadFile,
 } from "../../entities/api.js";
+import { AppPagination } from "../../shared/AppPagination.js";
 import { AppTabs } from "../../shared/AppTabs.js";
 import { Markdown } from "../../shared/markdown.js";
 
 type KnowledgeScope = "mine" | "team" | "public";
 type KnowledgeView = "list" | "compact" | "grid";
 
+const useKnowledgeStyles = createStyles(({ token }) => ({
+  newDescription: {
+    minHeight: 90,
+  },
+  askLayout: {
+    gridTemplateColumns: "2fr 1fr",
+    "@media (max-width: 760px)": { gridTemplateColumns: "1fr" },
+  },
+  citation: {
+    marginTop: 8,
+    padding: 12,
+  },
+  citationExcerpt: {
+    margin: "6px 0 0",
+  },
+  resultHeading: {
+    margin: "6px 0 0",
+  },
+  resultText: {
+    margin: "8px 0 0",
+  },
+  sourceType: {
+    width: 140,
+  },
+  sourceGrow: {
+    flex: 1,
+  },
+  sourceError: {
+    color: token.colorError,
+    margin: "6px 0 0",
+  },
+}));
+
 type KnowledgeListItem = KnowledgeBase & {
   accent: "violet" | "blue" | "green" | "orange" | "rose";
   category: "document" | "technical" | "analysis" | "feedback" | "internal";
-  tags: string[];
   ownerNames: string[];
   visibility: "available" | "restricted";
   storageLabel: string;
@@ -63,7 +97,6 @@ const DEMO_KNOWLEDGE_BASES: KnowledgeListItem[] = [
     updatedAt: "2024-05-20T14:30:00+08:00",
     accent: "violet",
     category: "document",
-    tags: ["调研报告", "越南市场", "消费金融", "+2"],
     ownerNames: ["张伟", "李然", "+2"],
     visibility: "available",
     storageLabel: "2.34 GB",
@@ -84,7 +117,6 @@ const DEMO_KNOWLEDGE_BASES: KnowledgeListItem[] = [
     updatedAt: "2024-05-19T16:20:00+08:00",
     accent: "blue",
     category: "document",
-    tags: ["产品", "文档", "说明书", "+1"],
     ownerNames: ["张伟", "周宁", "+5"],
     visibility: "available",
     storageLabel: "1.86 GB",
@@ -105,7 +137,6 @@ const DEMO_KNOWLEDGE_BASES: KnowledgeListItem[] = [
     updatedAt: "2024-05-18T10:15:00+08:00",
     accent: "green",
     category: "technical",
-    tags: ["技术", "开发", "API", "+3"],
     ownerNames: ["张伟", "陈敏", "+3"],
     visibility: "available",
     storageLabel: "1.42 GB",
@@ -126,7 +157,6 @@ const DEMO_KNOWLEDGE_BASES: KnowledgeListItem[] = [
     updatedAt: "2024-05-17T09:40:00+08:00",
     accent: "orange",
     category: "analysis",
-    tags: ["竞品", "分析", "对比", "+1"],
     ownerNames: ["张伟", "李然", "+1"],
     visibility: "available",
     storageLabel: "1.18 GB",
@@ -147,7 +177,6 @@ const DEMO_KNOWLEDGE_BASES: KnowledgeListItem[] = [
     updatedAt: "2024-05-16T18:30:00+08:00",
     accent: "rose",
     category: "feedback",
-    tags: ["用户研究", "反馈", "需求", "+1"],
     ownerNames: ["张伟"],
     visibility: "available",
     storageLabel: "820 MB",
@@ -168,7 +197,6 @@ const DEMO_KNOWLEDGE_BASES: KnowledgeListItem[] = [
     updatedAt: "2024-05-15T11:20:00+08:00",
     accent: "violet",
     category: "internal",
-    tags: ["内部", "管理", "培训"],
     ownerNames: ["张伟"],
     visibility: "restricted",
     storageLabel: "960 MB",
@@ -204,7 +232,6 @@ function toKnowledgeListItem(kb: KnowledgeBase, index: number): KnowledgeListIte
     ...kb,
     accent: accents[index % accents.length],
     category: "document",
-    tags: [],
     ownerNames: ["张伟"],
     visibility: ["failed", "error", "disabled", "restricted"].includes(kb.status)
       ? "restricted"
@@ -214,6 +241,65 @@ function toKnowledgeListItem(kb: KnowledgeBase, index: number): KnowledgeListIte
     teamName: "当前工作区",
     scope: "mine",
   };
+}
+
+function KnowledgeMoreMenu({
+  item,
+  onAction,
+}: {
+  item: KnowledgeListItem;
+  onAction: (
+    item: KnowledgeListItem,
+    action: "open" | "documents" | "new-document" | "copy",
+  ) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const menu: MenuProps = {
+    items: [
+      { key: "open", label: "打开知识库" },
+      { key: "documents", label: "查看文档" },
+      { key: "new-document", label: "新建文档" },
+      { key: "copy", label: "复制链接" },
+    ],
+    onClick: ({ key }) => {
+      if (key === "open" || key === "documents" || key === "new-document" || key === "copy") {
+        onAction(item, key);
+      }
+    },
+  };
+
+  return (
+    <Dropdown
+      trigger={["hover"]}
+      mouseEnterDelay={0}
+      mouseLeaveDelay={0.15}
+      placement="bottomRight"
+      open={open}
+      onOpenChange={setOpen}
+      menu={menu}
+    >
+      <Button
+        size="small"
+        type="text"
+        className="sg-list-action-btn sg-knowledge-more"
+        aria-label="更多操作"
+        title="更多操作"
+        onClick={(event) => event.stopPropagation()}
+        onFocus={() => setOpen(true)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            event.stopPropagation();
+            setOpen(true);
+          } else if (event.key === "Escape") {
+            setOpen(false);
+          }
+        }}
+      >
+        <MoreHorizontal size={16} />
+      </Button>
+    </Dropdown>
+  );
 }
 
 export function KnowledgePage() {
@@ -251,9 +337,7 @@ export function KnowledgePage() {
         )
         .filter((item) =>
           query.trim()
-            ? `${item.name} ${item.description} ${item.tags.join(" ")}`
-                .toLowerCase()
-                .includes(query.trim().toLowerCase())
+            ? `${item.name} ${item.description}`.toLowerCase().includes(query.trim().toLowerCase())
             : true,
         )
         .sort((a, b) =>
@@ -354,6 +438,37 @@ export function KnowledgePage() {
     navigate(`/knowledge/${selected.id}`);
   };
 
+  const handleKnowledgeMenuAction = async (
+    item: KnowledgeListItem,
+    action: "open" | "documents" | "new-document" | "copy",
+  ) => {
+    if (action === "open") {
+      setSelectedId(item.id);
+      if (item.demo) {
+        toast("info", "这是开发环境演示数据，创建知识库后即可管理真实资料");
+      } else {
+        navigate(`/knowledge/${item.id}`);
+      }
+      return;
+    }
+    if (action === "documents") {
+      setSelectedId(item.id);
+      setDetailTab("documents");
+      return;
+    }
+    if (action === "new-document") {
+      navigate(`/documents/new?knowledgeBaseId=${item.id}`);
+      return;
+    }
+    const link = `${window.location.origin}/knowledge/${item.id}`;
+    try {
+      await navigator.clipboard?.writeText(link);
+      toast("success", "知识库链接已复制");
+    } catch {
+      toast("error", "复制链接失败");
+    }
+  };
+
   return (
     <div className="sg-knowledge-page">
       <div className="sg-knowledge-head">
@@ -426,45 +541,39 @@ export function KnowledgePage() {
               ]}
               className="sg-knowledge-select"
             />
-            <label className="sg-knowledge-search">
-              <Search size={16} />
-              <input
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder="搜索知识库"
-                aria-label="搜索知识库"
-              />
-            </label>
+            <Input
+              className="sg-knowledge-search"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="搜索知识库"
+              aria-label="搜索知识库"
+              prefix={<Search size={16} />}
+              allowClear
+            />
             <div className="sg-knowledge-toolbar-tail">
-              <fieldset className="sg-knowledge-view-toggle" aria-label="显示方式">
-                <button
-                  type="button"
-                  className={view === "grid" ? "active" : ""}
-                  onClick={() => setView("grid")}
-                  title="卡片视图"
-                  aria-label="卡片视图"
-                >
-                  <Grid2X2 size={15} />
-                </button>
-                <button
-                  type="button"
-                  className={view === "list" ? "active" : ""}
-                  onClick={() => setView("list")}
-                  title="列表视图"
-                  aria-label="列表视图"
-                >
-                  <List size={16} />
-                </button>
-                <button
-                  type="button"
-                  className={view === "compact" ? "active" : ""}
-                  onClick={() => setView("compact")}
-                  title="紧凑视图"
-                  aria-label="紧凑视图"
-                >
-                  <SlidersHorizontal size={15} />
-                </button>
-              </fieldset>
+              <Segmented
+                className="sg-knowledge-view-toggle"
+                aria-label="显示方式"
+                value={view}
+                onChange={(value) => setView(value as KnowledgeView)}
+                options={[
+                  {
+                    value: "grid",
+                    icon: <Grid2X2 size={15} aria-hidden="true" />,
+                    tooltip: "卡片视图",
+                  },
+                  {
+                    value: "list",
+                    icon: <List size={16} aria-hidden="true" />,
+                    tooltip: "列表视图",
+                  },
+                  {
+                    value: "compact",
+                    icon: <SlidersHorizontal size={15} aria-hidden="true" />,
+                    tooltip: "紧凑视图",
+                  },
+                ]}
+              />
               <Select
                 value={sort}
                 onChange={setSort}
@@ -499,17 +608,10 @@ export function KnowledgePage() {
                       <span className={`sg-knowledge-item-icon ${item.accent}`}>
                         <Icon size={21} />
                       </span>
-                      <span className="sg-knowledge-card-more" aria-hidden="true">
-                        <MoreHorizontal size={17} />
-                      </span>
+                      <KnowledgeMoreMenu item={item} onAction={handleKnowledgeMenuAction} />
                     </div>
                     <strong>{item.name}</strong>
                     <p>{item.description || "暂无描述"}</p>
-                    <div className="sg-knowledge-tags">
-                      {item.tags.slice(0, 3).map((tag) => (
-                        <span key={tag}>{tag}</span>
-                      ))}
-                    </div>
                     <div className="sg-knowledge-grid-meta">
                       <span>{item.sourceCount} 个文档</span>
                       <span>{formatRelative(item.updatedAt)}</span>
@@ -540,13 +642,6 @@ export function KnowledgePage() {
                           {item.visibility === "restricted" && <Lock size={13} />}
                         </strong>
                         <span>{item.description || "暂无描述"}</span>
-                        {view !== "compact" && (
-                          <span className="sg-knowledge-tags">
-                            {item.tags.map((tag) => (
-                              <i key={tag}>{tag}</i>
-                            ))}
-                          </span>
-                        )}
                       </span>
                     </div>
                     <div className="sg-knowledge-owner">
@@ -572,9 +667,7 @@ export function KnowledgePage() {
                         {item.visibility === "available" ? "可用" : "仅团队可见"}
                       </b>
                     </div>
-                    <span className="sg-knowledge-more" aria-hidden="true">
-                      <MoreHorizontal size={18} />
-                    </span>
+                    <KnowledgeMoreMenu item={item} onAction={handleKnowledgeMenuAction} />
                   </button>
                 );
               })}
@@ -582,34 +675,12 @@ export function KnowledgePage() {
           )}
 
           {filtered.length > 0 && (
-            <nav className="sg-knowledge-pagination" aria-label="知识库分页">
-              <button
-                type="button"
-                disabled={page === 1}
-                onClick={() => setPage((current) => current - 1)}
-                aria-label="上一页"
-              >
-                <ChevronLeft size={16} />
-              </button>
-              {Array.from({ length: pageCount }, (_, index) => index + 1).map((value) => (
-                <button
-                  key={value}
-                  type="button"
-                  className={page === value ? "active" : ""}
-                  onClick={() => setPage(value)}
-                >
-                  {value}
-                </button>
-              ))}
-              <button
-                type="button"
-                disabled={page === pageCount}
-                onClick={() => setPage((current) => current + 1)}
-                aria-label="下一页"
-              >
-                <ChevronRight size={16} />
-              </button>
-            </nav>
+            <AppPagination
+              total={filtered.length}
+              current={page}
+              pageSize={pageSize}
+              onChange={setPage}
+            />
           )}
         </section>
 
@@ -706,14 +777,6 @@ export function KnowledgePage() {
                         </dd>
                       </div>
                     </dl>
-                    <div className="sg-knowledge-detail-tags">
-                      <h3>标签</h3>
-                      <div>
-                        {selected.tags.map((tag) => (
-                          <span key={tag}>{tag}</span>
-                        ))}
-                      </div>
-                    </div>
                     <div className="sg-knowledge-distribution">
                       <h3>文档类型分布</h3>
                       <div className="sg-knowledge-chart">
@@ -853,6 +916,7 @@ export function KnowledgeNewPage() {
   const toast = useToast();
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
+  const { styles } = useKnowledgeStyles();
   const mutation = useMutation({
     mutationFn: () =>
       api<KnowledgeBase>("/knowledge-bases", { method: "POST", body: { name, description } }),
@@ -873,7 +937,7 @@ export function KnowledgeNewPage() {
             value={description}
             onChange={(e) => setDescription(e.target.value)}
             placeholder="这个知识库用来做什么？"
-            style={{ minHeight: 90 }}
+            className={styles.newDescription}
           />
         </Field>
         <Button type="primary" disabled={!name.trim()} onClick={() => mutation.mutate()}>
@@ -895,6 +959,7 @@ export function KnowledgeDetailPage() {
   const [file, setFile] = useState<File | null>(null);
   const [askQuery, setAskQuery] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
+  const { styles } = useKnowledgeStyles();
 
   const { data: kb } = useQuery<KnowledgeBase & { sources: KnowledgeSource[] }>({
     queryKey: ["knowledge", id],
@@ -999,7 +1064,7 @@ export function KnowledgeDetailPage() {
       />
 
       {tab === "ask" && (
-        <div className="sg-grid" style={{ gridTemplateColumns: "2fr 1fr" }}>
+        <div className={`sg-grid ${styles.askLayout}`}>
           <Card>
             <div className="sg-row">
               <Input
@@ -1025,12 +1090,12 @@ export function KnowledgeDetailPage() {
                   <div className="sg-mt">
                     <strong className="sg-h3">引用来源</strong>
                     {askResult.citations.map((c) => (
-                      <div key={c.index} className="sg-card" style={{ marginTop: 8, padding: 12 }}>
+                      <div key={c.index} className={`sg-card ${styles.citation}`}>
                         <div className="sg-row">
                           <span className="sg-badge sg-badge-accent">[{c.index}]</span>
                           <strong>{c.sourceTitle}</strong>
                         </div>
-                        <p className="sg-subtle" style={{ margin: "6px 0 0" }}>
+                        <p className={`sg-subtle ${styles.citationExcerpt}`}>
                           {c.headingPath || "正文"} · {c.excerpt.slice(0, 120)}…
                         </p>
                       </div>
@@ -1066,10 +1131,8 @@ export function KnowledgeDetailPage() {
                     <strong>{r.source.title}</strong>
                     <span className="sg-subtle">相关度 {(1 - r.score).toFixed(2)}</span>
                   </div>
-                  <p className="sg-subtle" style={{ margin: "6px 0 0" }}>
-                    {r.chunk.headingPath}
-                  </p>
-                  <p style={{ margin: "8px 0 0" }}>{r.chunk.text.slice(0, 300)}…</p>
+                  <p className={`sg-subtle ${styles.resultHeading}`}>{r.chunk.headingPath}</p>
+                  <p className={styles.resultText}>{r.chunk.text.slice(0, 300)}…</p>
                 </div>
               ))}
             </div>
@@ -1089,8 +1152,7 @@ export function KnowledgeDetailPage() {
                   { value: "upload", label: "上传文件" },
                   { value: "url", label: "URL 抓取" },
                 ]}
-                className=""
-                style={{ width: 140 }}
+                className={styles.sourceType}
               />
               {sourceType === "asset" && (
                 <Select
@@ -1103,7 +1165,7 @@ export function KnowledgeDetailPage() {
                       label: `${a.title} (${a.type})`,
                     })),
                   ]}
-                  style={{ flex: 1 }}
+                  className={styles.sourceGrow}
                 />
               )}
               {sourceType === "url" && (
@@ -1111,14 +1173,14 @@ export function KnowledgeDetailPage() {
                   value={url}
                   onChange={(e) => setUrl(e.target.value)}
                   placeholder="https://…"
-                  style={{ flex: 1 }}
+                  className={styles.sourceGrow}
                 />
               )}
               {sourceType === "upload" && (
                 <input
                   type="file"
                   onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-                  style={{ flex: 1 }}
+                  className={styles.sourceGrow}
                 />
               )}
               <Button
@@ -1146,14 +1208,7 @@ export function KnowledgeDetailPage() {
                         <span className="sg-badge sg-badge-accent">{s.chunkCount} 分块</span>
                       )}
                     </div>
-                    {s.error && (
-                      <p
-                        className="sg-subtle"
-                        style={{ color: "var(--sg-danger)", margin: "6px 0 0" }}
-                      >
-                        {s.error}
-                      </p>
-                    )}
+                    {s.error && <p className={`sg-subtle ${styles.sourceError}`}>{s.error}</p>}
                   </div>
                   <div className="sg-row">
                     {s.status === "failed" && (

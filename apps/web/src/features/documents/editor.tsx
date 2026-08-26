@@ -11,7 +11,9 @@ import { Compartment, EditorState } from "@codemirror/state";
 import { EditorView, highlightActiveLine, keymap, lineNumbers } from "@codemirror/view";
 import { Empty, Scrollbar, useToast } from "@shiguang/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import type { MenuProps } from "antd";
 import { Button, Card, Dropdown, Input, Modal, Select, Switch, Tabs } from "antd";
+import { createStyles } from "antd-style";
 import {
   Download,
   FileDiff,
@@ -93,6 +95,124 @@ interface AssetRelationRow {
   direction: "in" | "out";
 }
 
+const useDocumentEditorStyles = createStyles(({ token }) => ({
+  header: {
+    marginBottom: 10,
+  },
+  titleRow: {
+    flex: 1,
+    minWidth: 0,
+  },
+  titleInput: {
+    border: "none",
+    background: "transparent",
+    fontSize: 18,
+    fontWeight: 700,
+    color: token.colorText,
+    outline: "none",
+    width: "100%",
+  },
+  sectionTitle: {
+    margin: 0,
+  },
+  chartMeta: {
+    marginLeft: 8,
+  },
+  attachmentRow: {
+    minWidth: 0,
+  },
+  attachmentName: {
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
+  versionItem: {
+    padding: "10px 0",
+    borderBottom: `1px solid ${token.colorBorder}`,
+  },
+  versionMeta: {
+    marginLeft: 8,
+  },
+  versionActions: {
+    gap: 6,
+  },
+  diffTitle: {
+    fontSize: 14,
+  },
+  diffStats: {
+    fontSize: 12,
+  },
+  diffBlocks: {
+    gap: 4,
+  },
+  diffBlock: {
+    padding: "6px 10px",
+    borderRadius: 6,
+    fontSize: 13,
+  },
+  diffOld: {
+    opacity: 0.7,
+  },
+  diffNew: {
+    textDecoration: "none",
+    fontWeight: 600,
+  },
+  aiLabel: {
+    marginLeft: 8,
+  },
+  editorFooter: {
+    padding: "8px 4px 0",
+    fontSize: 12,
+    color: token.colorTextSecondary,
+  },
+  picker: {
+    gap: 12,
+  },
+  pickerResults: {
+    gap: 6,
+    maxHeight: 360,
+  },
+  pickerItem: {
+    textAlign: "left",
+    cursor: "pointer",
+  },
+  aiPreview: {
+    minHeight: 260,
+  },
+}));
+
+const useOutlineItemStyles = createStyles(({ token }, props: { paddingLeft: number }) => ({
+  item: {
+    paddingLeft: props.paddingLeft,
+    fontSize: 12.5,
+    paddingTop: 3,
+    paddingBottom: 3,
+    color: token.colorTextSecondary,
+  },
+}));
+
+function OutlineItem({
+  paddingLeft,
+  children,
+}: {
+  paddingLeft: number;
+  children: React.ReactNode;
+}) {
+  const { styles } = useOutlineItemStyles({ paddingLeft });
+  return <div className={styles.item}>{children}</div>;
+}
+
+const useSaveBadgeStyles = createStyles(({ token }, props: { state: SaveState }) => ({
+  badge: {
+    color:
+      props.state === "saved"
+        ? token.colorSuccess
+        : props.state === "saving"
+          ? token.colorTextSecondary
+          : token.colorError,
+  },
+}));
+
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
@@ -118,6 +238,7 @@ export function DocumentEditorPage() {
   const [aiModal, setAiModal] = useState(false);
   const [aiResult, setAiResult] = useState<{ patchId: string; proposed: string } | null>(null);
   const [publishOpen, setPublishOpen] = useState(false);
+  const { styles } = useDocumentEditorStyles();
   const [attachmentPublishAsset, setAttachmentPublishAsset] = useState<Asset | null>(null);
   const [chartModal, setChartModal] = useState(false);
   const [chartName, setChartName] = useState("");
@@ -613,22 +734,14 @@ export function DocumentEditorPage() {
 
   return (
     <div className={`sg-document-editor-page ${tab === "内容编辑" ? "is-content-editing" : ""}`}>
-      <div className="sg-row-between" style={{ marginBottom: 10 }}>
-        <div className="sg-row" style={{ flex: 1, minWidth: 0 }}>
+      <div className={`sg-row-between ${styles.header}`}>
+        <div className={`sg-row ${styles.titleRow}`}>
           <input
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             onBlur={() => void saveTitle()}
             placeholder="文档标题"
-            style={{
-              border: "none",
-              background: "transparent",
-              fontSize: 18,
-              fontWeight: 700,
-              color: "var(--sg-fg)",
-              outline: "none",
-              width: "100%",
-            }}
+            className={styles.titleInput}
           />
         </div>
         <div className="sg-row">
@@ -656,44 +769,36 @@ export function DocumentEditorPage() {
             mouseEnterDelay={0}
             mouseLeaveDelay={0.15}
             placement="bottomRight"
-            popupRender={() => (
-              <div className="sg-asset-menu">
-                <button type="button" onClick={() => void copyPublishedLink()}>
-                  复制发布链接
-                </button>
-                <button type="button" onClick={exportMarkdown}>
-                  导出 Markdown
-                </button>
-                <button type="button" onClick={() => navigate(`/presentations/new?asset=${id}`)}>
-                  生成演示
-                </button>
-                <button type="button" onClick={() => navigate(`/assets/${id}`)}>
-                  查看资产详情
-                </button>
-                <button
-                  type="button"
-                  className="danger"
-                  onClick={() => {
-                    if (!id) return;
-                    confirmDelete({
-                      title: `删除文档「${title || id}」？`,
-                      content: "删除后可在回收站恢复。",
-                      onConfirm: async () => {
-                        try {
-                          await api(`/assets/${id}`, { method: "DELETE" });
-                          toast("success", "文档已移入回收站");
-                          navigate("/documents");
-                        } catch (error) {
-                          toast("error", error instanceof Error ? error.message : "删除失败");
-                        }
-                      },
-                    });
-                  }}
-                >
-                  删除文档
-                </button>
-              </div>
-            )}
+            menu={{
+              items: [
+                { key: "copy", label: "复制发布链接" },
+                { key: "export", label: "导出 Markdown" },
+                { key: "presentation", label: "生成演示" },
+                { key: "asset", label: "查看资产详情" },
+                { key: "delete", label: "删除文档", danger: true },
+              ] satisfies MenuProps["items"],
+              onClick: ({ key }) => {
+                if (key === "copy") void copyPublishedLink();
+                if (key === "export") exportMarkdown();
+                if (key === "presentation") navigate(`/presentations/new?asset=${id}`);
+                if (key === "asset") navigate(`/assets/${id}`);
+                if (key === "delete" && id) {
+                  confirmDelete({
+                    title: `删除文档「${title || id}」？`,
+                    content: "删除后可在回收站恢复。",
+                    onConfirm: async () => {
+                      try {
+                        await api(`/assets/${id}`, { method: "DELETE" });
+                        toast("success", "文档已移入回收站");
+                        navigate("/documents");
+                      } catch (error) {
+                        toast("error", error instanceof Error ? error.message : "删除失败");
+                      }
+                    },
+                  });
+                }
+              },
+            }}
           >
             <button type="button" className="sg-asset-more" aria-label="更多操作" title="更多操作">
               <MoreHorizontal size={16} />
@@ -711,9 +816,7 @@ export function DocumentEditorPage() {
       {tab === "图表管理" && (
         <Card className="sg-mb">
           <div className="sg-row-between sg-mb-sm">
-            <h3 className="sg-h3" style={{ margin: 0 }}>
-              全部图表（{charts.length}）
-            </h3>
+            <h3 className={`sg-h3 ${styles.sectionTitle}`}>全部图表（{charts.length}）</h3>
             <div className="sg-row">
               <Button size="small" type="primary" onClick={() => setChartModal(true)}>
                 + 新建图表
@@ -728,7 +831,7 @@ export function DocumentEditorPage() {
                 <div key={chart.id} className="sg-row-between sg-card">
                   <div>
                     <strong>{chart.name}</strong>
-                    <span className="sg-subtle" style={{ marginLeft: 8 }}>
+                    <span className={`sg-subtle ${styles.chartMeta}`}>
                       {chart.type} ·{" "}
                       {new Date(chart.createdAt).toLocaleString("zh-CN", { hour12: false })}
                     </span>
@@ -753,9 +856,7 @@ export function DocumentEditorPage() {
       {tab === "附件管理" && (
         <Card className="sg-mb">
           <div className="sg-row-between sg-mb-sm">
-            <h3 className="sg-h3" style={{ margin: 0 }}>
-              附件管理（{attachments.length}）
-            </h3>
+            <h3 className={`sg-h3 ${styles.sectionTitle}`}>附件管理（{attachments.length}）</h3>
             <Button
               size="small"
               type="primary"
@@ -783,13 +884,9 @@ export function DocumentEditorPage() {
             <div className="sg-col">
               {attachments.map((attachment) => (
                 <div key={attachment.id} className="sg-row-between sg-card">
-                  <div className="sg-row" style={{ minWidth: 0 }}>
+                  <div className={`sg-row ${styles.attachmentRow}`}>
                     <Paperclip size={16} />
-                    <span
-                      style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
-                    >
-                      {attachment.name}
-                    </span>
+                    <span className={styles.attachmentName}>{attachment.name}</span>
                     <span className="sg-subtle">{formatBytes(attachment.size)}</span>
                   </div>
                   <div className="sg-row">
@@ -836,19 +933,15 @@ export function DocumentEditorPage() {
           ) : (
             <div className="sg-col sg-mt-sm">
               {versions.map((version) => (
-                <div
-                  key={version.id}
-                  className="sg-row-between"
-                  style={{ padding: "10px 0", borderBottom: "1px solid var(--sg-border)" }}
-                >
+                <div key={version.id} className={`sg-row-between ${styles.versionItem}`}>
                   <div>
                     <strong>v{version.sequence}.0</strong>
-                    <span className="sg-subtle" style={{ marginLeft: 8 }}>
+                    <span className={`sg-subtle ${styles.versionMeta}`}>
                       {version.changeKind} ·{" "}
                       {new Date(version.createdAt).toLocaleString("zh-CN", { hour12: false })}
                     </span>
                   </div>
-                  <div className="sg-row" style={{ gap: 6 }}>
+                  <div className={`sg-row ${styles.versionActions}`}>
                     {version.id !== asset?.currentVersionId && (
                       <Button
                         size="small"
@@ -881,7 +974,7 @@ export function DocumentEditorPage() {
           {diffData?.diff && (
             <div className="sg-col sg-mt-sm">
               <div className="sg-row-between">
-                <strong style={{ fontSize: 14 }}>
+                <strong className={styles.diffTitle}>
                   结构化 Diff
                   {(() => {
                     const baseSeq = versions.find((v) => v.id === diffData.baseVersionId)?.sequence;
@@ -893,27 +986,24 @@ export function DocumentEditorPage() {
                       : "";
                   })()}
                 </strong>
-                <span className="sg-subtle" style={{ fontSize: 12 }}>
+                <span className={`sg-subtle ${styles.diffStats}`}>
                   +{diffData.diff.added} −{diffData.diff.removed} ~{diffData.diff.modified}
                 </span>
               </div>
-              <div className="sg-col sg-mt-sm" style={{ gap: 4 }}>
+              <div className={`sg-col sg-mt-sm ${styles.diffBlocks}`}>
                 {diffData.diff.blocks
                   .filter((block) => block.kind !== "unchanged")
                   .map((block) => (
                     <div
                       key={block.id}
-                      className="sg-diff-block"
                       data-kind={block.kind}
-                      style={{ padding: "6px 10px", borderRadius: 6, fontSize: 13 }}
+                      className={`sg-diff-block ${styles.diffBlock}`}
                     >
                       <span className="sg-diff-label">{block.label || block.id}</span>
                       {block.kind === "modify" ? (
                         <span>
-                          <del style={{ opacity: 0.7 }}>{block.oldText}</del> →{" "}
-                          <ins style={{ textDecoration: "none", fontWeight: 600 }}>
-                            {block.text}
-                          </ins>
+                          <del className={styles.diffOld}>{block.oldText}</del> →{" "}
+                          <ins className={styles.diffNew}>{block.text}</ins>
                         </span>
                       ) : (
                         <span>{block.text || "（新增块）"}</span>
@@ -931,18 +1021,9 @@ export function DocumentEditorPage() {
           <Scrollbar className="sg-document-editor-outline sg-editor-right">
             <h4>文档结构</h4>
             {headings.map((h, i) => (
-              <div
-                key={i}
-                style={{
-                  paddingLeft: (h.level - 1) * 10,
-                  fontSize: 12.5,
-                  paddingTop: 3,
-                  paddingBottom: 3,
-                  color: "var(--sg-fg-2)",
-                }}
-              >
+              <OutlineItem key={i} paddingLeft={(h.level - 1) * 10}>
                 {h.text}
-              </div>
+              </OutlineItem>
             ))}
           </Scrollbar>
 
@@ -954,9 +1035,7 @@ export function DocumentEditorPage() {
               <Button size="small" type="text" onClick={() => openLinkPicker("image")}>
                 <ImagePlus size={14} /> 插入图片
               </Button>
-              <span className="sg-subtle" style={{ marginLeft: 8 }}>
-                AI 选区处理：
-              </span>
+              <span className={`sg-subtle ${styles.aiLabel}`}>AI 选区处理：</span>
               {["rewrite", "summarize", "expand", "translate", "explain"].map((action) => (
                 <Button
                   key={action}
@@ -1013,10 +1092,7 @@ export function DocumentEditorPage() {
               )}
             </div>
 
-            <div
-              className="sg-row-between"
-              style={{ padding: "8px 4px 0", fontSize: 12, color: "var(--sg-muted)" }}
-            >
+            <div className={`sg-row-between ${styles.editorFooter}`}>
               <span>共 {content.length} 字 · 自动保存已开启</span>
               <span>Markdown · 行 1 列 1</span>
             </div>
@@ -1035,14 +1111,14 @@ export function DocumentEditorPage() {
         }
         destroyOnHidden
       >
-        <div className="sg-col" style={{ gap: 12 }}>
+        <div className={`sg-col ${styles.picker}`}>
           <input
             className="sg-input"
             value={linkQuery}
             onChange={(event) => setLinkQuery(event.target.value)}
             placeholder="搜索资产名称…"
           />
-          <div className="sg-col" style={{ gap: 6, maxHeight: 360, overflow: "auto" }}>
+          <Scrollbar className={`sg-col ${styles.pickerResults}`}>
             {(linkPickerData?.items?.length ?? 0) === 0 ? (
               <Empty title="没有找到资产" hint="换个关键词试试，或先在资产中心创建。" />
             ) : (
@@ -1050,8 +1126,7 @@ export function DocumentEditorPage() {
                 <button
                   key={item.id}
                   type="button"
-                  className="sg-card"
-                  style={{ textAlign: "left", cursor: "pointer" }}
+                  className={`sg-card ${styles.pickerItem}`}
                   onClick={() => insertReference(item)}
                 >
                   <strong>{item.title || "未命名"}</strong>
@@ -1059,7 +1134,7 @@ export function DocumentEditorPage() {
                 </button>
               ))
             )}
-          </div>
+          </Scrollbar>
         </div>
       </Modal>
 
@@ -1077,7 +1152,7 @@ export function DocumentEditorPage() {
         }
         destroyOnHidden
       >
-        <div className="sg-col" style={{ gap: 12 }}>
+        <div className={`sg-col ${styles.picker}`}>
           <label className="sg-label" htmlFor="document-chart-name">
             图表名称
           </label>
@@ -1124,7 +1199,7 @@ export function DocumentEditorPage() {
         destroyOnHidden
       >
         <p className="sg-hint">AI 输出先预览，应用后才会写入文档（不会静默覆盖）。</p>
-        <Input.TextArea readOnly value={aiResult?.proposed ?? ""} style={{ minHeight: 260 }} />
+        <Input.TextArea readOnly value={aiResult?.proposed ?? ""} className={styles.aiPreview} />
       </Modal>
 
       {publishOpen && asset && (
@@ -1143,14 +1218,9 @@ export function DocumentEditorPage() {
 
 function SaveBadge({ state }: { state: SaveState }) {
   const label = state === "saved" ? "已保存" : state === "saving" ? "保存中…" : "保存失败";
-  const color =
-    state === "saved"
-      ? "var(--sg-success)"
-      : state === "saving"
-        ? "var(--sg-muted)"
-        : "var(--sg-danger)";
+  const { styles } = useSaveBadgeStyles({ state });
   return (
-    <span className="sg-subtle" style={{ color }} aria-live="polite">
+    <span className={`sg-subtle ${styles.badge}`} aria-live="polite">
       {label}
     </span>
   );

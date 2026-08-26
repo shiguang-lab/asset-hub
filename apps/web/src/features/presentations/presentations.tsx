@@ -6,6 +6,8 @@ import {
   removeElement as astRemoveElement,
   removePage as astRemovePage,
   setTheme as astSetTheme,
+  ensurePresentationRuntimeHtml,
+  SG_STATICIZE_CSS,
   listEditableElements,
   listPages,
   parsePresentationHtml,
@@ -18,7 +20,18 @@ import {
 } from "@shiguang/content";
 import { Empty, Scrollbar, useToast } from "@shiguang/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Button, Collapse, ColorPicker, Dropdown, Input, Modal, Select } from "antd";
+import {
+  Button,
+  Checkbox,
+  Collapse,
+  ColorPicker,
+  Dropdown,
+  Input,
+  Modal,
+  Segmented,
+  Select,
+} from "antd";
+import { createStyles } from "antd-style";
 import {
   ArrowDown,
   ArrowUp,
@@ -30,7 +43,8 @@ import {
   Grid2X2,
   Import,
   LayoutList,
-  MoreHorizontal,
+  List,
+  Maximize2,
   Play,
   Plus,
   Search,
@@ -40,11 +54,13 @@ import {
   ThumbsUp,
   Trash2,
   TrendingUp,
+  X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { getAuthSession } from "../../auth/session.js";
 import { type Asset, api, type Publish, type PublishStatsSummary } from "../../entities/api.js";
+import { AppPagination } from "../../shared/AppPagination.js";
 import { AppTable } from "../../shared/AppTable.js";
 import { AppTabs } from "../../shared/AppTabs.js";
 import { OwnerAvatar } from "../../shared/OwnerAvatar.js";
@@ -109,6 +125,7 @@ const KIND_LABEL: Record<string, string> = {
   image: "图片",
   link: "链接",
   chart: "图表",
+  table: "表格",
   counter: "数字",
   "code-island": "代码",
 };
@@ -158,14 +175,6 @@ function splitNumbers(raw: string): number[] {
     .filter(Boolean)
     .map((s) => Number(s) || 0);
 }
-
-const ENTER_OPTIONS = [
-  { value: "none", label: "无动画" },
-  { value: "fade", label: "淡入" },
-  { value: "fade-up", label: "上浮" },
-  { value: "slide", label: "滑入" },
-  { value: "scale", label: "缩放" },
-];
 
 const HOVER_OPTIONS = [
   { value: "none", label: "无 Hover" },
@@ -276,6 +285,266 @@ function isSamePalette(
   );
 }
 
+const useColorSwatchStyles = createStyles((_utils, props: { color: string }) => ({
+  swatch: {
+    background: props.color,
+  },
+}));
+
+function ColorSwatchButton({
+  color,
+  label,
+  active,
+  onClick,
+}: {
+  color: string;
+  label: string;
+  active: boolean;
+  onClick: () => void;
+}) {
+  const { styles } = useColorSwatchStyles({ color });
+  return (
+    <button
+      type="button"
+      title={label}
+      className={`sg-el-swatch ${active ? "active" : ""} ${styles.swatch}`}
+      onClick={onClick}
+    />
+  );
+}
+
+function PaletteColorSwatch({ color }: { color: string }) {
+  const { styles } = useColorSwatchStyles({ color });
+  return <span className={styles.swatch} />;
+}
+
+const useElementInspectorStyles = createStyles(() => ({
+  linkText: {
+    minHeight: 44,
+  },
+  chartRaw: {
+    minHeight: 84,
+    fontFamily: "monospace",
+    fontSize: 12,
+  },
+  codeSource: {
+    minHeight: 96,
+    fontFamily: "monospace",
+    fontSize: 12,
+  },
+  textSource: {
+    minHeight: 72,
+  },
+  collapse: {
+    marginLeft: -10,
+  },
+}));
+
+const usePresentationEditorStyles = createStyles(() => ({
+  paletteField: {
+    marginTop: 12,
+  },
+  aiBody: {
+    gap: 12,
+  },
+  aiInstruction: {
+    minHeight: 70,
+  },
+  aiProposal: {
+    gap: 6,
+  },
+  aiProposalTitle: {
+    fontSize: 12,
+  },
+  aiProposalCode: {
+    fontSize: 12,
+    maxHeight: 240,
+    whiteSpace: "pre-wrap",
+    background: "var(--sg-surface)",
+    padding: 12,
+    borderRadius: 8,
+  },
+  aiInsertInstruction: {
+    minHeight: 72,
+  },
+}));
+
+const usePlayerStyles = createStyles(() => ({
+  root: {
+    position: "fixed",
+    inset: 0,
+    zIndex: 400,
+    background: "#08090d",
+    color: "#f4f5f7",
+    overflow: "hidden",
+    fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+  },
+  frameArea: {
+    position: "absolute",
+    inset: 0,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    background: "#08090d",
+  },
+  frameLoading: {
+    position: "absolute",
+    inset: 0,
+    display: "grid",
+    placeItems: "center",
+    color: "rgba(255,255,255,0.5)",
+    fontSize: 13,
+    pointerEvents: "none",
+  },
+  frame: {
+    width: "100%",
+    height: "100%",
+    border: "none",
+    display: "block",
+    background: "#0a0c0f",
+  },
+  progressBar: {
+    position: "absolute",
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 404,
+    height: 4,
+    background: "rgba(255,255,255,0.16)",
+    cursor: "pointer",
+    outline: "none",
+  },
+  progressBarFill: {
+    display: "block",
+    height: "100%",
+    background: "#7cf08a",
+    transition: "width 180ms ease",
+  },
+  dock: {
+    position: "absolute",
+    right: 16,
+    bottom: 18,
+    zIndex: 401,
+  },
+  dockActions: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 8,
+  },
+  pagerButton: {
+    display: "inline-flex",
+    width: 38,
+    height: 38,
+    alignItems: "center",
+    justifyContent: "center",
+    border: "1px solid rgba(190,220,208,0.22)",
+    borderRadius: 0,
+    color: "rgba(232,244,238,0.86)",
+    background: "rgba(9,16,14,0.86)",
+    cursor: "pointer",
+  },
+  pagerButtonDisabled: {
+    opacity: 0.3,
+    cursor: "default",
+  },
+  pagerLabel: {
+    minWidth: 48,
+    color: "rgba(240,248,244,0.9)",
+    fontSize: 12,
+    textAlign: "center",
+    fontVariantNumeric: "tabular-nums",
+  },
+  drawer: {
+    // Anchor the directory to the list button in the bottom-right dock. The
+    // previous top-left drawer covered the slide title and looked detached
+    // from the control that opened it.
+    position: "fixed",
+    right: "max(16px, env(safe-area-inset-right))",
+    bottom: "calc(72px + env(safe-area-inset-bottom))",
+    zIndex: 405,
+    width: "min(420px, calc(100vw - 32px))",
+    maxHeight: "calc(100vh - 104px)",
+    padding: 20,
+    overflow: "auto",
+    border: "1px solid rgba(184,220,206,0.2)",
+    borderRadius: 0,
+    background: "#07100d",
+    boxShadow: "0 20px 60px rgba(0,0,0,0.52)",
+  },
+  drawerHead: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+    paddingBottom: 14,
+  },
+  drawerTitle: {
+    fontSize: 18,
+    fontWeight: 650,
+  },
+  drawerClose: {
+    display: "grid",
+    placeItems: "center",
+    width: 38,
+    height: 38,
+    border: "1px solid rgba(184,220,206,0.24)",
+    borderRadius: 0,
+    background: "transparent",
+    color: "rgba(232,244,238,0.86)",
+    cursor: "pointer",
+  },
+  drawerList: {
+    display: "grid",
+    gap: 7,
+    marginTop: 14,
+  },
+  drawerItem: {
+    display: "grid",
+    gridTemplateColumns: "1fr",
+    alignItems: "center",
+    gap: 2,
+    width: "100%",
+    minHeight: 66,
+    padding: "10px 12px",
+    border: "1px solid rgba(184,220,206,0.18)",
+    borderRadius: 0,
+    background: "transparent",
+    color: "rgba(255,255,255,0.68)",
+    textAlign: "left",
+    cursor: "pointer",
+  },
+  drawerItemActive: {
+    borderColor: "#32e89b",
+    background: "rgba(50,232,155,0.04)",
+    color: "#fff",
+  },
+  drawerNo: {
+    display: "none",
+    fontVariantNumeric: "tabular-nums",
+  },
+  drawerItemActiveNo: { color: "#32e89b" },
+  drawerItemTitle: {
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+    fontSize: 16,
+    fontWeight: 550,
+  },
+  drawerItemLayout: {
+    display: "block",
+    marginTop: 3,
+    color: "rgba(255,255,255,0.36)",
+    fontSize: 13,
+  },
+  emptyNav: {
+    padding: "24px 8px",
+    color: "rgba(255,255,255,0.48)",
+    fontSize: 12,
+    textAlign: "center",
+  },
+}));
+
 /**
  * 元素检视器：右侧属性面板的核心。严格跟随当前选中的元素，只渲染该元素类型支持的配置，
  * 并按「内容 / 动画 / 交互」分组折叠（对齐 Google Slides / Canva / Figma 的 inspector 范式）。
@@ -322,6 +591,7 @@ function ElementInspector({
   onAttr: (id: string, name: string, v: string) => void;
 }) {
   const kind = (el.kind ?? "text") as EditableElementKind;
+  const { styles } = useElementInspectorStyles();
 
   const contentItem = (() => {
     let body: React.ReactNode;
@@ -329,8 +599,7 @@ function ElementInspector({
       body = (
         <div className="sg-el-field">
           <span className="sg-el-label">图片地址</span>
-          <input
-            className="sg-input"
+          <Input
             value={el.src ?? ""}
             onChange={(e) => onImage(el.id, e.target.value)}
             placeholder="https://…"
@@ -342,8 +611,7 @@ function ElementInspector({
         <>
           <div className="sg-el-field">
             <span className="sg-el-label">链接地址</span>
-            <input
-              className="sg-input"
+            <Input
               value={el.href ?? ""}
               onChange={(e) => onLink(el.id, e.target.value)}
               placeholder="https://…"
@@ -355,34 +623,31 @@ function ElementInspector({
               value={el.text}
               onChange={(e) => onText(el.id, e.target.value)}
               placeholder="链接文字"
-              style={{ minHeight: 44 }}
+              className={styles.linkText}
             />
           </div>
           <div className="sg-el-field">
             <span className="sg-el-label">颜色</span>
             <div className="sg-el-color-row">
               {TEXT_COLOR_SWATCHES.map((c) => (
-                <button
-                  type="button"
+                <ColorSwatchButton
                   key={c.value}
-                  title={c.label}
-                  className={`sg-el-swatch ${el.color === c.value ? "active" : ""}`}
-                  style={{ background: c.value }}
+                  color={c.value}
+                  label={c.label}
+                  active={el.color === c.value}
                   onClick={() => onAttr(el.id, "data-sg-color", c.value)}
                 />
               ))}
-              <input
-                type="color"
-                className="sg-el-color-input"
-                value={el.color && el.color.startsWith("#") ? el.color : "#000000"}
-                onChange={(e) => onAttr(el.id, "data-sg-color", e.target.value)}
+              <ColorPicker
+                value={el.color?.startsWith("#") ? el.color : "#000000"}
+                onChange={(color) => onAttr(el.id, "data-sg-color", color.toHexString())}
               />
             </div>
           </div>
         </>
       );
     } else if (kind === "chart") {
-      const parsed = el.chart && el.chart.trim() ? safeParseChart(el.chart) : null;
+      const parsed = el.chart?.trim() ? safeParseChart(el.chart) : null;
       body = (
         <>
           <div className="sg-el-field">
@@ -438,7 +703,7 @@ function ElementInspector({
               value={el.chart ?? ""}
               onChange={(e) => onAttr(el.id, "data-sg-chart", e.target.value)}
               placeholder='{"type":"bar","labels":[],"data":[]}'
-              style={{ minHeight: 84, fontFamily: "monospace", fontSize: 12 }}
+              className={styles.chartRaw}
             />
           </details>
         </>
@@ -465,7 +730,7 @@ function ElementInspector({
               value={el.text}
               onChange={(e) => onText(el.id, e.target.value)}
               placeholder="代码内容"
-              style={{ minHeight: 96, fontFamily: "monospace", fontSize: 12 }}
+              className={styles.codeSource}
             />
           </div>
         </>
@@ -483,7 +748,7 @@ function ElementInspector({
               value={el.text}
               onChange={(e) => onText(el.id, e.target.value)}
               placeholder="文本内容"
-              style={{ minHeight: 72 }}
+              className={styles.textSource}
             />
           </details>
         </div>
@@ -497,19 +762,10 @@ function ElementInspector({
   })();
 
   const motionItem = {
-    key: "motion",
-    label: "动画",
+    key: "interaction",
+    label: "交互",
     children: (
       <div className="sg-el-group">
-        <div className="sg-el-field">
-          <span className="sg-el-label">入场动画</span>
-          <Select
-            value={el.enter ?? "none"}
-            onChange={(v) => onAttr(el.id, "data-sg-enter", v === "none" ? "" : v)}
-            options={ENTER_OPTIONS}
-            className="sg-el-full"
-          />
-        </div>
         <div className="sg-el-field">
           <span className="sg-el-label">悬停效果</span>
           <Select
@@ -535,20 +791,17 @@ function ElementInspector({
                 <span className="sg-el-label">颜色</span>
                 <div className="sg-el-color-row">
                   {TEXT_COLOR_SWATCHES.map((c) => (
-                    <button
-                      type="button"
+                    <ColorSwatchButton
                       key={c.value}
-                      title={c.label}
-                      className={`sg-el-swatch ${el.color === c.value ? "active" : ""}`}
-                      style={{ background: c.value }}
+                      color={c.value}
+                      label={c.label}
+                      active={el.color === c.value}
                       onClick={() => onAttr(el.id, "data-sg-color", c.value)}
                     />
                   ))}
-                  <input
-                    type="color"
-                    className="sg-el-color-input"
-                    value={el.color && el.color.startsWith("#") ? el.color : "#000000"}
-                    onChange={(e) => onAttr(el.id, "data-sg-color", e.target.value)}
+                  <ColorPicker
+                    value={el.color?.startsWith("#") ? el.color : "#000000"}
+                    onChange={(color) => onAttr(el.id, "data-sg-color", color.toHexString())}
                   />
                 </div>
               </div>
@@ -611,22 +864,20 @@ function ElementInspector({
                 />
               </div>
               <div className="sg-el-field sg-el-switch-row">
-                <label className="sg-el-switch">
-                  <input
-                    type="checkbox"
-                    checked={el.border === "on"}
-                    onChange={(e) => onAttr(el.id, "data-sg-border", e.target.checked ? "on" : "")}
-                  />
-                  <span>显示边框</span>
-                </label>
-                <label className="sg-el-switch">
-                  <input
-                    type="checkbox"
-                    checked={el.shadow === "on"}
-                    onChange={(e) => onAttr(el.id, "data-sg-shadow", e.target.checked ? "on" : "")}
-                  />
-                  <span>投影</span>
-                </label>
+                <Checkbox
+                  className="sg-el-switch"
+                  checked={el.border === "on"}
+                  onChange={(e) => onAttr(el.id, "data-sg-border", e.target.checked ? "on" : "")}
+                >
+                  显示边框
+                </Checkbox>
+                <Checkbox
+                  className="sg-el-switch"
+                  checked={el.shadow === "on"}
+                  onChange={(e) => onAttr(el.id, "data-sg-shadow", e.target.checked ? "on" : "")}
+                >
+                  投影
+                </Checkbox>
               </div>
               <div className="sg-el-field">
                 <span className="sg-el-label">填充方式</span>
@@ -754,22 +1005,20 @@ function ElementInspector({
     children: (
       <div className="sg-el-group">
         <div className="sg-el-field sg-el-switch-row">
-          <label className="sg-el-switch">
-            <input
-              type="checkbox"
-              checked={el.lock === "on"}
-              onChange={(e) => onAttr(el.id, "data-sg-lock", e.target.checked ? "on" : "")}
-            />
-            <span>锁定</span>
-          </label>
-          <label className="sg-el-switch">
-            <input
-              type="checkbox"
-              checked={el.hidden === "on"}
-              onChange={(e) => onAttr(el.id, "data-sg-hidden", e.target.checked ? "on" : "")}
-            />
-            <span>隐藏</span>
-          </label>
+          <Checkbox
+            className="sg-el-switch"
+            checked={el.lock === "on"}
+            onChange={(e) => onAttr(el.id, "data-sg-lock", e.target.checked ? "on" : "")}
+          >
+            锁定
+          </Checkbox>
+          <Checkbox
+            className="sg-el-switch"
+            checked={el.hidden === "on"}
+            onChange={(e) => onAttr(el.id, "data-sg-hidden", e.target.checked ? "on" : "")}
+          >
+            隐藏
+          </Checkbox>
         </div>
         <p className="sg-el-hint-sm">
           锁定的元素在画布中不可拖拽 / 缩放 / 旋转 / 删除；隐藏的元素在预览与播放中均不显示。
@@ -789,7 +1038,7 @@ function ElementInspector({
         <span className="sg-subtle sg-el-id">{el.id}</span>
       </div>
       <Collapse
-        style={{ marginLeft: -10 }}
+        className={styles.collapse}
         items={items}
         defaultActiveKey={["content", "style", "motion"]}
         size="small"
@@ -824,17 +1073,14 @@ const SG_EDIT_BRIDGE = `<script>
     ".sg-rotate{position:absolute;width:14px;height:14px;border-radius:50%;background:#fff;border:1.5px solid var(--sg-primary,#7c5cff);z-index:99997;cursor:grab;box-shadow:0 1px 4px rgba(0,0,0,0.2)}",
     ".sg-rotate::before{content:'';position:absolute;left:50%;top:14px;width:1.5px;height:18px;background:var(--sg-primary,#7c5cff);transform:translateX(-50%)}",
     ".sg-nav,.sg-progress,.sg-page-no{display:none !important}",
-    "[data-sg-enter]{opacity:1 !important;transform:none !important;animation:none !important}",
+    "html[data-sg-static='1'] [data-sg-page],html[data-sg-static='1'] [data-sg-page] *,html[data-sg-static='1'] [data-sg-page] *::before,html[data-sg-static='1'] [data-sg-page] *::after{animation-delay:-999999s!important;animation-duration:1ms!important;animation-iteration-count:1!important;animation-fill-mode:forwards!important;animation-play-state:paused!important;transition:none!important}",
+    "html[data-sg-static='1'] [data-sg-page] [data-sg-enter]{opacity:1!important;visibility:visible!important;transform:none!important}",
     "[data-sg-page]{display:flex}",
     "[data-sg-page] ~ [data-sg-page]{display:none}"
   ].join("\\n");
   var st = document.createElement("style"); st.textContent = CSS; document.head.appendChild(st);
 
-  function triggerEnters() {
-    document.querySelectorAll("[data-sg-enter]:not(.sg-enter)").forEach(function (el) { el.classList.add("sg-enter"); });
-  }
-  triggerEnters();
-  setTimeout(triggerEnters, 200);
+  document.documentElement.setAttribute("data-sg-static", "1");
 
   function showPage(pageId) {
     var pages = Array.prototype.slice.call(document.querySelectorAll("[data-sg-page]"));
@@ -852,7 +1098,6 @@ const SG_EDIT_BRIDGE = `<script>
       p.setAttribute("aria-hidden", show ? "false" : "true");
       p.style.setProperty("display", show ? "flex" : "none", "important");
     });
-    triggerEnters();
   }
 
   var currentPage = function () {
@@ -1240,42 +1485,69 @@ const SG_EDIT_BRIDGE = `<script>
       if (editingEl) { editingEl.textContent = editingEl.getAttribute("data-sg-text-origin") || ""; commitEdit(); }
     }
   });
-  showPage(null);
+  // Initialize after the platform Runtime as well. Runtime starts on
+  // DOMContentLoaded and otherwise resets the editor back to page 1.
+  var initialPage = window.__sgEditorInitialPage || null;
+  function applyInitialPage() { showPage(initialPage); }
+  applyInitialPage();
+  document.addEventListener("DOMContentLoaded", applyInitialPage);
+  setTimeout(applyInitialPage, 0);
+  var initialSyncTimer = setInterval(applyInitialPage, 100);
+  setTimeout(function () { clearInterval(initialSyncTimer); }, 2000);
 })();
 </script>`;
 
-/** 预览 srcDoc：在原 HTML 末尾注入编辑桥接脚本（含进场动画兜底 + 翻页控制）。 */
-function buildPreviewSrcDoc(html: string): string {
+/** 预览 srcDoc：在原 HTML 末尾注入编辑桥接脚本（静态结束态 + 翻页控制）。 */
+function buildPreviewSrcDoc(html: string, initialPageId: string | null = null): string {
   if (!html)
-    return "<!doctype html><html><body><div style='padding:20px;color:#999'>加载中...</div></body></html>";
-  return html.includes("</body>")
-    ? html.replace("</body>", `${SG_EDIT_BRIDGE}</body>`)
-    : `${html}${SG_EDIT_BRIDGE}`;
+    return "<!doctype html><html><head><style>body{padding:20px;color:#999}</style></head><body>加载中...</body></html>";
+  const source = ensurePresentationRuntimeHtml(html);
+  const initialPageScript = `<script>window.__sgEditorInitialPage=${JSON.stringify(initialPageId)};</script>`;
+  return source.includes("</body>")
+    ? source.replace("</body>", `${initialPageScript}${SG_EDIT_BRIDGE}</body>`)
+    : `${source}${initialPageScript}${SG_EDIT_BRIDGE}`;
 }
 
-/** 单页缩略图 srcDoc：截取第 pageIndex 页，按 16:9 缩放到 240×135 的小窗口。 */
+/** 缩略图 srcDoc：保留完整 HTML、Runtime 和脚本，只切换当前页，保证与主画布共享渲染链。 */
 function buildThumbnailSrcDoc(html: string, pageIndex: number): string {
-  try {
-    const doc = new DOMParser().parseFromString(html, "text/html");
-    const sections = Array.from(doc.querySelectorAll("[data-sg-page]"));
-    const styles = Array.from(doc.querySelectorAll("style"))
-      .map((s) => s.textContent ?? "")
-      .join("\n");
-    const section = sections[pageIndex];
-    if (!section) return "<!doctype html><html><body></body></html>";
-    return `<!doctype html>
-<html data-sg-mode="scroll">
-<head><meta charset="utf-8"><style>
-${styles}
-html,body{margin:0;padding:0;overflow:hidden;width:240px;height:135px}
-.page-scaler{width:960px;height:540px;transform:scale(0.25);transform-origin:top left}
-.page-scaler [data-sg-page]{display:flex !important;height:540px !important;min-height:540px !important;overflow:hidden;padding:32px !important}
-[data-sg-enter]{opacity:1 !important;transform:none !important;animation:none !important}
-</style></head>
-<body><div class="page-scaler">${section.outerHTML}</div></body></html>`;
-  } catch {
-    return "<!doctype html><html><body></body></html>";
+  const source = ensurePresentationRuntimeHtml(html);
+  const thumbStyle = `<style data-sg-thumbnail-style>${SG_STATICIZE_CSS}
+html,body{width:960px!important;height:540px!important;margin:0!important;padding:0!important;overflow:hidden!important}
+[data-sg-page]{transform-origin:0 0!important}
+</style>`;
+  const thumbScript = `<script data-sg-thumbnail-script>(function(){
+  var target=${Math.max(0, pageIndex)};
+  function sync(){
+    document.documentElement.setAttribute("data-sg-static","1");
+    var pages=Array.prototype.slice.call(document.querySelectorAll("[data-sg-page]"));
+    pages.forEach(function(p,i){
+      var active=i===target;
+      p.classList.toggle("sg-active",active);
+      p.setAttribute("aria-hidden",active?"false":"true");
+      p.style.setProperty("display",active?"flex":"none","important");
+    });
   }
+  if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",sync);else sync();
+  setTimeout(sync,80);
+})();</script>`;
+  const withStyle = source.includes("</head>")
+    ? source.replace("</head>", `${thumbStyle}</head>`)
+    : `${thumbStyle}${source}`;
+  return withStyle.includes("</body>")
+    ? withStyle.replace("</body>", `${thumbScript}</body>`)
+    : `${withStyle}${thumbScript}`;
+}
+
+function buildPlaybackSrcDoc(html: string): string {
+  const source = ensurePresentationRuntimeHtml(html, { player: "engine" });
+  // Hide only the platform's embedded controls. Animation CSS belongs to the
+  // AI-authored HTML and remains untouched in playback.
+  const playerStyle = `<style data-sg-player-style>
+#sg-progress,#sg-page-no,body > .sg-nav{display:none!important}
+</style>`;
+  return source.includes("</head>")
+    ? source.replace("</head>", `${playerStyle}</head>`)
+    : `${playerStyle}${source}`;
 }
 
 /** 定位元素所属页面 id（用于点击预览选中时同步左侧高亮）。 */
@@ -1319,11 +1591,9 @@ async function loadPresentations(): Promise<Asset[]> {
 
 export function PresentationsPage() {
   const navigate = useNavigate();
-  const toast = useToast();
   const authSession = getAuthSession();
   const [tab, setTab] = useState<"all" | "mine" | "shared" | "favorites" | "trash">("all");
   const [query, setQuery] = useState("");
-  const [tag, setTag] = useState("all");
   const [status, setStatus] = useState("all");
   const [sort, setSort] = useState("updated");
   const [onlyMine, setOnlyMine] = useState(false);
@@ -1391,12 +1661,8 @@ export function PresentationsPage() {
     window.localStorage.setItem("shiguang.presentation-favorites", JSON.stringify(favoriteIds));
   }, [favoriteIds]);
 
-  useEffect(() => setPage(1), [tab, query, tag, status, sort, onlyMine, pageSize]);
+  useEffect(() => setPage(1), [tab, query, status, sort, onlyMine, pageSize]);
 
-  const tags = useMemo(
-    () => [...new Set(presentations.flatMap((item) => item.tags ?? []))].sort(),
-    [presentations],
-  );
   const filtered = useMemo(() => {
     const normalized = query.trim().toLowerCase();
     return presentations
@@ -1407,13 +1673,10 @@ export function PresentationsPage() {
         if (tab === "trash" && !item.deletedAt) return false;
         if (tab !== "trash" && item.deletedAt) return false;
         if (onlyMine && !isOwnedBySession(item, authSession)) return false;
-        if (tag !== "all" && !item.tags?.includes(tag)) return false;
         if (status !== "all" && item.status !== status) return false;
         if (
           normalized &&
-          !`${item.title} ${item.description ?? ""} ${(item.tags ?? []).join(" ")}`
-            .toLowerCase()
-            .includes(normalized)
+          !`${item.title} ${item.description ?? ""}`.toLowerCase().includes(normalized)
         )
           return false;
         return true;
@@ -1423,8 +1686,7 @@ export function PresentationsPage() {
         if (sort === "views") return viewCount(b) - viewCount(a);
         return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
       });
-  }, [authSession, favoriteIds, onlyMine, presentations, query, sort, status, tab, tag, viewCount]);
-  const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
+  }, [authSession, favoriteIds, onlyMine, presentations, query, sort, status, tab, viewCount]);
   const pageItems = filtered.slice((page - 1) * pageSize, page * pageSize);
   const topPresentations = [...activePresentations]
     .filter((item) => viewCount(item) > 0)
@@ -1531,22 +1793,13 @@ export function PresentationsPage() {
           />
 
           <section className="sg-presentation-toolbar">
-            <label className="sg-presentation-search">
-              <Search size={14} />
-              <input
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder="搜索演示标题或描述..."
-              />
-            </label>
-            <Select
-              value={tag}
-              onChange={setTag}
-              options={[
-                { value: "all", label: "全部标签" },
-                ...tags.map((item) => ({ value: item, label: item })),
-              ]}
-              className="sg-presentation-select"
+            <Input
+              className="sg-presentation-search"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="搜索演示标题或描述..."
+              prefix={<Search size={14} />}
+              allowClear
             />
             <Select
               value={status}
@@ -1569,35 +1822,31 @@ export function PresentationsPage() {
               ]}
               className="sg-presentation-select"
             />
-            <label className="sg-presentation-own">
-              <input
-                type="checkbox"
-                checked={onlyMine}
-                onChange={(event) => setOnlyMine(event.target.checked)}
-              />
+            <Checkbox
+              className="sg-presentation-own"
+              checked={onlyMine}
+              onChange={(event) => setOnlyMine(event.target.checked)}
+            >
               仅看我创建
-            </label>
-            <fieldset className="sg-presentation-view-switch">
-              <legend>视图模式</legend>
-              <button
-                type="button"
-                className={view === "grid" ? "active" : ""}
-                aria-label="卡片视图"
-                title="卡片视图"
-                onClick={() => setView("grid")}
-              >
-                <Grid2X2 size={14} />
-              </button>
-              <button
-                type="button"
-                className={view === "list" ? "active" : ""}
-                aria-label="列表视图"
-                title="列表视图"
-                onClick={() => setView("list")}
-              >
-                <LayoutList size={14} />
-              </button>
-            </fieldset>
+            </Checkbox>
+            <Segmented
+              className="sg-presentation-view-switch"
+              aria-label="视图模式"
+              value={view}
+              onChange={(value) => setView(value as typeof view)}
+              options={[
+                {
+                  value: "grid",
+                  icon: <Grid2X2 size={14} aria-hidden="true" />,
+                  tooltip: "卡片视图",
+                },
+                {
+                  value: "list",
+                  icon: <LayoutList size={14} aria-hidden="true" />,
+                  tooltip: "列表视图",
+                },
+              ]}
+            />
           </section>
 
           {pageItems.length === 0 ? (
@@ -1638,11 +1887,6 @@ export function PresentationsPage() {
                           >
                             {item.title}
                           </button>
-                          <span>
-                            {(item.tags ?? []).slice(0, 2).map((itemTag) => (
-                              <small key={itemTag}>{itemTag}</small>
-                            ))}
-                          </span>
                         </div>
                         <button
                           type="button"
@@ -1692,30 +1936,24 @@ export function PresentationsPage() {
                     width: 120,
                     render: (_v, item) => (
                       <div className="sg-presentation-row-actions">
-                        <button
-                          type="button"
+                        <Button
+                          size="small"
+                          type="text"
+                          className="sg-list-action-btn"
+                          icon={<Play size={13} />}
                           aria-label={`播放 ${item.title}`}
                           title="播放"
                           onClick={() => navigate(`/presentations/${item.id}/play`)}
-                        >
-                          <Play size={13} />
-                        </button>
-                        <button
-                          type="button"
+                        />
+                        <Button
+                          size="small"
+                          type="text"
+                          className="sg-list-action-btn"
+                          icon={<Share2 size={13} />}
                           aria-label={`分享 ${item.title}`}
                           title="分享"
                           onClick={() => void sharePresentation(item)}
-                        >
-                          <Share2 size={13} />
-                        </button>
-                        <button
-                          type="button"
-                          aria-label={`${item.title} 更多操作`}
-                          title="更多操作"
-                          onClick={() => toast("info", "可在演示编辑器中管理更多设置")}
-                        >
-                          <MoreHorizontal size={14} />
-                        </button>
+                        />
                       </div>
                     ),
                   },
@@ -1741,49 +1979,16 @@ export function PresentationsPage() {
             </div>
           )}
 
-          <div className="sg-presentation-pagination">
-            <span>共 {filtered.length} 条</span>
-            <div>
-              <button
-                type="button"
-                aria-label="上一页"
-                disabled={page === 1}
-                onClick={() => setPage(page - 1)}
-              >
-                <ChevronLeft size={14} />
-              </button>
-              {Array.from({ length: Math.min(5, pageCount) }, (_, index) => index + 1).map(
-                (value) => (
-                  <button
-                    type="button"
-                    className={page === value ? "active" : ""}
-                    key={value}
-                    onClick={() => setPage(value)}
-                  >
-                    {value}
-                  </button>
-                ),
-              )}
-              <button
-                type="button"
-                aria-label="下一页"
-                disabled={page === pageCount}
-                onClick={() => setPage(page + 1)}
-              >
-                <ChevronRight size={14} />
-              </button>
-            </div>
-            <Select
-              value={String(pageSize)}
-              onChange={(value) => setPageSize(Number(value))}
-              options={[
-                { value: "10", label: "10 条/页" },
-                { value: "20", label: "20 条/页" },
-                { value: "50", label: "50 条/页" },
-              ]}
-              className="sg-presentation-page-size"
+          {filtered.length > 0 && (
+            <AppPagination
+              total={filtered.length}
+              current={page}
+              pageSize={pageSize}
+              onChange={setPage}
+              onPageSizeChange={setPageSize}
+              itemLabel="条"
             />
-          </div>
+          )}
 
           <section className="sg-presentation-quickstart">
             <div>
@@ -1993,6 +2198,13 @@ export function PresentationEditorPage() {
   const [aiInsertKind, setAiInsertKind] = useState<string>("text");
   const [aiInsertInstruction, setAiInsertInstruction] = useState("");
   const previewRef = useRef<HTMLIFrameElement>(null);
+  const postPreviewNavigation = useCallback((pageId: string | null) => {
+    previewRef.current?.contentWindow?.postMessage(
+      { source: "sg-editor", type: "navigate", pageId },
+      "*",
+    );
+  }, []);
+  const { styles } = usePresentationEditorStyles();
 
   const { data } = useQuery<{ asset: Asset; html: string }>({
     queryKey: ["presentation", id],
@@ -2041,8 +2253,8 @@ export function PresentationEditorPage() {
         const pageId = locateElementPage(html, data.id);
         if (pageId) setActivePageId(pageId);
       } else if (data.type === "select-multiple") {
-        setSelectedIds(data.ids && data.ids.length ? data.ids : []);
-        if (data.ids && data.ids[0]) {
+        setSelectedIds(data.ids?.length ? data.ids : []);
+        if (data.ids?.[0]) {
           const pageId = locateElementPage(html, data.ids[0]);
           if (pageId) setActivePageId(pageId);
         }
@@ -2088,12 +2300,8 @@ export function PresentationEditorPage() {
 
   // 左侧缩略图点击 → 通知预览 iframe 翻到对应页
   useEffect(() => {
-    if (!activePageId) return;
-    previewRef.current?.contentWindow?.postMessage(
-      { source: "sg-editor", type: "navigate", pageId: activePageId },
-      "*",
-    );
-  }, [activePageId, html]);
+    postPreviewNavigation(activePageId);
+  }, [activePageId, html, postPreviewNavigation]);
 
   const pages = useMemo(() => {
     try {
@@ -2475,13 +2683,17 @@ export function PresentationEditorPage() {
                   onClick={() => {
                     setActivePageId(p.id);
                     setSelectedIds([]);
+                    // Send immediately as well as from the effect above. This
+                    // keeps thumbnail navigation responsive when React batches
+                    // the state update or the iframe has just finished loading.
+                    postPreviewNavigation(p.id);
                   }}
                 >
                   <span className="sg-slide-thumb-no">{String(i + 1).padStart(2, "0")}</span>
                   <iframe
                     title={p.title || `第 ${i + 1} 页`}
                     className="sg-slide-thumb-frame"
-                    sandbox=""
+                    sandbox="allow-scripts allow-forms allow-popups allow-modals"
                     srcDoc={buildThumbnailSrcDoc(html, i)}
                     tabIndex={-1}
                   />
@@ -2498,7 +2710,7 @@ export function PresentationEditorPage() {
           </button>
         </Scrollbar>
 
-        <div className="sg-slide-workarea">
+        <Scrollbar className="sg-slide-workarea">
           {pages.length === 0 ? (
             <div className="sg-slide-empty">
               <div className="sg-slide-empty-card">
@@ -2516,15 +2728,16 @@ export function PresentationEditorPage() {
                 ref={previewRef}
                 title="演示预览"
                 sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals"
-                srcDoc={buildPreviewSrcDoc(html)}
+                srcDoc={buildPreviewSrcDoc(html, activePageId)}
                 className="sg-slide-frame"
+                onLoad={() => postPreviewNavigation(activePageId)}
               />
             </div>
           )}
           <div className="sg-editor-hint">
             <span>点击预览中的元素可选中，右侧面板实时编辑文字/图片/链接/动画。</span>
           </div>
-        </div>
+        </Scrollbar>
 
         <Scrollbar className="sg-editor-right">
           <div className="sg-el-section">
@@ -2541,7 +2754,7 @@ export function PresentationEditorPage() {
               ]}
               className="sg-el-full"
             />
-            <div className="sg-el-field" style={{ marginTop: 12 }}>
+            <div className={`sg-el-field ${styles.paletteField}`}>
               <div className="sg-el-palette-head">
                 <span className="sg-el-label">配色</span>
                 {themePalette && (
@@ -2565,19 +2778,15 @@ export function PresentationEditorPage() {
                     onClick={() => applyThemePreset(p.key)}
                   >
                     <span className="sg-el-palette-swatch">
-                      <span style={{ background: p.palette.background }} />
-                      <span style={{ background: p.palette.surface }} />
-                      <span style={{ background: p.palette.primary }} />
+                      <PaletteColorSwatch color={p.palette.background} />
+                      <PaletteColorSwatch color={p.palette.surface} />
+                      <PaletteColorSwatch color={p.palette.primary} />
                     </span>
                     <span className="sg-el-palette-name">{p.label}</span>
                   </button>
                 ))}
                 <ColorPicker
-                  value={
-                    themePalette?.primary && themePalette.primary.startsWith("#")
-                      ? themePalette.primary
-                      : "#7c5cff"
-                  }
+                  value={themePalette?.primary?.startsWith("#") ? themePalette.primary : "#7c5cff"}
                   onChange={(c) => applyCustomPrimary(c.toHexString())}
                 >
                   <span
@@ -2590,9 +2799,9 @@ export function PresentationEditorPage() {
                     title="自定义主色"
                   >
                     <span className="sg-el-palette-swatch">
-                      <span style={{ background: themePalette?.background ?? "#ffffff" }} />
-                      <span style={{ background: themePalette?.surface ?? "#f7f8fb" }} />
-                      <span style={{ background: themePalette?.primary ?? "#7c5cff" }} />
+                      <PaletteColorSwatch color={themePalette?.background ?? "#ffffff"} />
+                      <PaletteColorSwatch color={themePalette?.surface ?? "#f7f8fb"} />
+                      <PaletteColorSwatch color={themePalette?.primary ?? "#7c5cff"} />
                     </span>
                     <span className="sg-el-palette-name">自定义</span>
                   </span>
@@ -2666,7 +2875,7 @@ export function PresentationEditorPage() {
         }
         destroyOnHidden
       >
-        <div className="sg-col" style={{ gap: 12 }}>
+        <div className={`sg-col ${styles.aiBody}`}>
           <div className="sg-option-row">
             <span>作用范围</span>
             <span>{aiScope === "page" ? "当前页" : "整个演示"}</span>
@@ -2675,24 +2884,14 @@ export function PresentationEditorPage() {
             value={aiInstruction}
             onChange={(e) => setAiInstruction(e.target.value)}
             placeholder="例如：让内容更精炼、更有冲击力"
-            style={{ minHeight: 70 }}
+            className={styles.aiInstruction}
           />
           {aiProposal != null && (
-            <div className="sg-col" style={{ gap: 6 }}>
-              <strong style={{ fontSize: 12 }}>AI 建议（应用后可用撤销回退）</strong>
-              <pre
-                style={{
-                  fontSize: 12,
-                  maxHeight: 240,
-                  overflow: "auto",
-                  whiteSpace: "pre-wrap",
-                  background: "var(--sg-surface)",
-                  padding: 12,
-                  borderRadius: 8,
-                }}
-              >
+            <div className={`sg-col ${styles.aiProposal}`}>
+              <strong className={styles.aiProposalTitle}>AI 建议（应用后可用撤销回退）</strong>
+              <Scrollbar as="pre" className={styles.aiProposalCode}>
                 {aiProposal}
-              </pre>
+              </Scrollbar>
             </div>
           )}
         </div>
@@ -2712,7 +2911,7 @@ export function PresentationEditorPage() {
         }
         destroyOnHidden
       >
-        <div className="sg-col" style={{ gap: 12 }}>
+        <div className={`sg-col ${styles.aiBody}`}>
           <div className="sg-el-field">
             <span className="sg-el-label">元素类型</span>
             <Select
@@ -2726,7 +2925,7 @@ export function PresentationEditorPage() {
             value={aiInsertInstruction}
             onChange={(e) => setAiInsertInstruction(e.target.value)}
             placeholder="描述要生成的内容，例如：一段关于 Q3 增长的三句话总结"
-            style={{ minHeight: 72 }}
+            className={styles.aiInsertInstruction}
           />
           <p className="sg-hint">
             将在当前页（{pages.find((p) => p.id === activePageId)?.title || "—"}
@@ -2741,23 +2940,64 @@ export function PresentationEditorPage() {
 export function PresentationPlayerPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const { styles } = usePlayerStyles();
+  const frameRef = useRef<HTMLIFrameElement>(null);
   const { data } = useQuery<{ asset: Asset; html: string }>({
     queryKey: ["presentation", id],
     queryFn: () => api(`/presentations/${id}`),
   });
   const [pageNo, setPageNo] = useState<{ index: number; total: number }>({ index: 0, total: 0 });
+  const [navOpen, setNavOpen] = useState(false);
+  const [frameReady, setFrameReady] = useState(false);
+  const playerPages = useMemo(() => {
+    if (!data?.html) return [];
+    try {
+      return listPages(parsePresentationHtml(data.html));
+    } catch {
+      return [];
+    }
+  }, [data?.html]);
+  const totalPages = playerPages.length || pageNo.total;
+  const playbackSource = useMemo(
+    () => (data?.html ? buildPlaybackSrcDoc(data.html) : ""),
+    [data?.html],
+  );
 
-  // Esc 退出播放；监听 iframe 上报的页码
+  const goTo = useCallback(
+    (index: number) => {
+      if (totalPages <= 0) return;
+      const next = Math.max(0, Math.min(totalPages - 1, index));
+      setPageNo({ index: next, total: totalPages });
+      frameRef.current?.contentWindow?.postMessage({ sg: "goto", index: next }, "*");
+    },
+    [totalPages],
+  );
+
+  // 键盘在播放器外层与 iframe 内都可工作；Esc 优先关闭目录，再退出播放。
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         e.preventDefault();
-        navigate(-1);
+        if (navOpen) setNavOpen(false);
+        else navigate(-1);
+      } else if (e.key === "ArrowRight" || e.key === "PageDown" || e.key === " ") {
+        e.preventDefault();
+        goTo(pageNo.index + 1);
+      } else if (e.key === "ArrowLeft" || e.key === "PageUp") {
+        e.preventDefault();
+        goTo(pageNo.index - 1);
+      } else if (e.key === "Home") {
+        e.preventDefault();
+        goTo(0);
+      } else if (e.key === "End") {
+        e.preventDefault();
+        goTo(totalPages - 1);
       }
     };
     const onMessage = (e: MessageEvent) => {
       if (e.data && e.data.sg === "page" && typeof e.data.total === "number") {
-        setPageNo({ index: e.data.index ?? 0, total: e.data.total });
+        const total = Math.max(playerPages.length, e.data.total);
+        setPageNo({ index: e.data.index ?? 0, total });
       }
     };
     window.addEventListener("keydown", onKey);
@@ -2766,76 +3006,172 @@ export function PresentationPlayerPage() {
       window.removeEventListener("keydown", onKey);
       window.removeEventListener("message", onMessage);
     };
-  }, [navigate]);
+  }, [goTo, navOpen, navigate, pageNo.index, playerPages.length, totalPages]);
+
+  useEffect(() => {
+    if (playerPages.length <= 0) return;
+    setPageNo((current) => ({
+      index: Math.min(current.index, playerPages.length - 1),
+      total: playerPages.length,
+    }));
+  }, [playerPages.length]);
+
+  useEffect(() => setFrameReady(false), [playbackSource]);
 
   if (!data) return <Empty title="加载中…" />;
 
+  const progress = totalPages > 0 ? ((pageNo.index + 1) / totalPages) * 100 : 0;
+
   // 播放器渲染 HTML Artifact，并运行在独立 opaque origin 沙箱中（对应设计文档 Preview Sandbox）。
   return (
-    <div style={{ position: "fixed", inset: 0, zIndex: 400, background: "#000" }}>
-      <button
-        type="button"
-        onClick={() => navigate(-1)}
-        style={{
-          position: "absolute",
-          top: 16,
-          left: 16,
-          zIndex: 401,
-          background: "rgba(255,255,255,0.12)",
-          color: "#fff",
-          border: "1px solid rgba(255,255,255,0.25)",
-          borderRadius: 8,
-          padding: "6px 12px",
-          cursor: "pointer",
-          fontSize: 13,
-        }}
-      >
-        ✕ 退出（Esc）
-      </button>
-      {pageNo.total > 0 && (
+    <div className={styles.root}>
+      <main className={styles.frameArea}>
+        {!frameReady && <div className={styles.frameLoading}>正在准备演示画面…</div>}
+        <iframe
+          ref={frameRef}
+          className={`sg-player-frame ${styles.frame}`}
+          title={data.asset.title}
+          sandbox="allow-scripts allow-forms allow-popups allow-modals"
+          srcDoc={playbackSource}
+          onLoad={() => {
+            setFrameReady(true);
+            window.setTimeout(() => {
+              frameRef.current?.contentWindow?.postMessage(
+                { sg: "goto", index: pageNo.index },
+                "*",
+              );
+            }, 0);
+          }}
+        />
+      </main>
+
+      {totalPages > 0 && (
         <div
-          style={{
-            position: "absolute",
-            bottom: 16,
-            left: "50%",
-            transform: "translateX(-50%)",
-            zIndex: 401,
-            display: "flex",
-            gap: 6,
-            alignItems: "center",
-            background: "rgba(0,0,0,0.4)",
-            padding: "6px 10px",
-            borderRadius: 999,
+          className={styles.progressBar}
+          role="slider"
+          aria-label="演示进度"
+          aria-valuemin={1}
+          aria-valuemax={totalPages}
+          aria-valuenow={pageNo.index + 1}
+          tabIndex={0}
+          onClick={(event) => {
+            const rect = event.currentTarget.getBoundingClientRect();
+            const ratio = rect.width > 0 ? (event.clientX - rect.left) / rect.width : 0;
+            goTo(Math.round(Math.max(0, Math.min(1, ratio)) * (totalPages - 1)));
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "ArrowRight") {
+              event.preventDefault();
+              goTo(pageNo.index + 1);
+            } else if (event.key === "ArrowLeft") {
+              event.preventDefault();
+              goTo(pageNo.index - 1);
+            }
           }}
         >
-          {Array.from({ length: pageNo.total }).map((_, i) => (
-            <button
-              key={i}
-              type="button"
-              aria-label={`跳到第 ${i + 1} 页`}
-              onClick={() => {
-                const frame = document.querySelector<HTMLIFrameElement>(".sg-player-frame");
-                frame?.contentWindow?.postMessage({ sg: "goto", index: i }, "*");
-              }}
-              style={{
-                width: 10,
-                height: 10,
-                borderRadius: 999,
-                border: "none",
-                cursor: "pointer",
-                background: i === pageNo.index ? "#fff" : "rgba(255,255,255,0.4)",
-              }}
-            />
-          ))}
+          <span className={styles.progressBarFill} style={{ width: `${progress}%` }} />
         </div>
       )}
-      <iframe
-        className="sg-player-frame"
-        title={data.asset.title}
-        sandbox="allow-scripts allow-forms allow-popups allow-modals"
-        srcDoc={data.html}
-        style={{ width: "100%", height: "100%", border: "none", display: "block" }}
-      />
+
+      {totalPages > 0 && (
+        <footer className={styles.dock}>
+          <div className={styles.dockActions}>
+            <button
+              type="button"
+              aria-label="打开演示目录"
+              title="打开演示目录"
+              aria-expanded={navOpen}
+              className={styles.pagerButton}
+              onClick={() => setNavOpen((open) => !open)}
+            >
+              <List size={16} />
+            </button>
+            <button
+              type="button"
+              aria-label="上一页"
+              title="上一页"
+              className={`${styles.pagerButton} ${pageNo.index === 0 ? styles.pagerButtonDisabled : ""}`}
+              disabled={pageNo.index === 0}
+              onClick={() => goTo(pageNo.index - 1)}
+            >
+              <ChevronLeft size={16} />
+            </button>
+            <span className={styles.pagerLabel}>
+              {String(pageNo.index + 1).padStart(2, "0")} / {String(totalPages).padStart(2, "0")}
+            </span>
+            <button
+              type="button"
+              aria-label="下一页"
+              title="下一页"
+              className={`${styles.pagerButton} ${pageNo.index >= totalPages - 1 ? styles.pagerButtonDisabled : ""}`}
+              disabled={pageNo.index >= totalPages - 1}
+              onClick={() => goTo(pageNo.index + 1)}
+            >
+              <ChevronRight size={16} />
+            </button>
+            <button
+              type="button"
+              aria-label="全屏播放"
+              title="全屏播放"
+              className={styles.pagerButton}
+              onClick={() => void document.documentElement.requestFullscreen?.()}
+            >
+              <Maximize2 size={15} />
+            </button>
+          </div>
+        </footer>
+      )}
+
+      {navOpen && (
+        <aside className={styles.drawer} aria-label="演示目录">
+          <div className={styles.drawerHead}>
+            <strong className={styles.drawerTitle}>演示目录</strong>
+            <button
+              type="button"
+              className={styles.drawerClose}
+              aria-label="关闭目录"
+              title="关闭目录"
+              onClick={() => setNavOpen(false)}
+            >
+              <X size={15} />
+            </button>
+          </div>
+          {playerPages.length > 0 ? (
+            <nav className={styles.drawerList}>
+              {playerPages.map((page, index) => (
+                <button
+                  type="button"
+                  key={page.id || index}
+                  aria-current={index === pageNo.index ? "page" : undefined}
+                  className={`${styles.drawerItem} ${index === pageNo.index ? styles.drawerItemActive : ""}`}
+                  onClick={() => {
+                    goTo(index);
+                    setNavOpen(false);
+                  }}
+                >
+                  <span
+                    className={`${styles.drawerNo} ${index === pageNo.index ? styles.drawerItemActiveNo : ""}`}
+                  >
+                    {String(index + 1).padStart(2, "0")}
+                  </span>
+                  <span className={styles.drawerItemTitle}>
+                    {page.title || `第 ${index + 1} 页`}
+                    <small className={styles.drawerItemLayout}>
+                      {page.layout === "title"
+                        ? "PHO同业APP分析"
+                        : page.layout === "section"
+                          ? "章节"
+                          : "专题分析"}
+                    </small>
+                  </span>
+                </button>
+              ))}
+            </nav>
+          ) : (
+            <div className={styles.emptyNav}>没有检测到可播放页面</div>
+          )}
+        </aside>
+      )}
     </div>
   );
 }

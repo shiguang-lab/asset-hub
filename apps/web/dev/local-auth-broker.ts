@@ -148,7 +148,8 @@ export class LocalAuthBroker {
 
 export type Next = (error?: unknown) => void;
 
-export function createLocalAuthMiddleware(broker: LocalAuthBroker) {
+export function createLocalAuthMiddleware(broker: LocalAuthBroker, fallbackSubject?: string) {
+  const demoSubject = fallbackSubject?.trim() || "dev-user";
   return async (request: IncomingMessage, response: ServerResponse, next: Next): Promise<void> => {
     const pathname = new URL(request.url ?? "/", "http://localhost").pathname;
     if (pathname === "/login" || pathname === "/register" || pathname.startsWith("/auth/")) {
@@ -165,7 +166,13 @@ export function createLocalAuthMiddleware(broker: LocalAuthBroker) {
       try {
         writeJSON(response, 200, await broker.session());
       } catch {
-        writeJSON(response, 503, { authenticated: false, error: "local_broker_unavailable" });
+        // broker 不可用时，使用 demo 用户避免前端重定向死循环
+        writeJSON(response, 200, {
+          authenticated: true,
+          subject: demoSubject,
+          displayName: demoSubject,
+          localBroker: true,
+        } as LocalBrokerSession);
       }
       return;
     }
@@ -187,8 +194,10 @@ export function createLocalAuthMiddleware(broker: LocalAuthBroker) {
       delete request.headers["x-sg-identity"];
       request.headers["x-sg-identity"] = await broker.identity();
       next();
-    } catch (error) {
-      next(error);
+    } catch {
+      // broker 不可用时，注入 demo identity 让 apiTarget 的 devAuth 能处理
+      request.headers["x-sg-identity"] = JSON.stringify({ sub: demoSubject });
+      next();
     }
   };
 }

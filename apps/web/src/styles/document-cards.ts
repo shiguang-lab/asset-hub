@@ -1,6 +1,7 @@
-import { createGlobalStyle, css } from "antd-style";
+import { createStyles } from "antd-style";
 
-export const DocumentCardsGlobalStyles = createGlobalStyle(css`
+export const useDocumentCardsStyles = createStyles(({ css }) => ({
+  root: css`
 /* Document card view */
 .sg-docs-grid {
   display: grid;
@@ -92,9 +93,6 @@ export const DocumentCardsGlobalStyles = createGlobalStyle(css`
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
 }
-.sg-doc-card-body .sg-asset-tags {
-  margin-top: 7px;
-}
 .sg-doc-card-meta {
   justify-content: space-between;
   gap: 8px;
@@ -143,4 +141,5 @@ export const DocumentCardsGlobalStyles = createGlobalStyle(css`
     grid-template-columns: 1fr;
   }
 }
-`);
+  `,
+}));

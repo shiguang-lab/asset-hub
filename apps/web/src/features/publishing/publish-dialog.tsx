@@ -1,6 +1,7 @@
-import { Field, useToast } from "@shiguang/ui";
+import { Field, Scrollbar, useToast } from "@shiguang/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button, Input, Modal, Switch } from "antd";
+import { createStyles } from "antd-style";
 import QRCode from "qrcode";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { type Asset, api, PUBLIC_GATEWAY_BASE, type Publish } from "../../entities/api.js";
@@ -27,6 +28,35 @@ const ACCESS_OPTIONS: Array<{ id: ShareVisibility; label: string; description: s
   { id: "password", label: "密码访问", description: "获得链接并输入正确密码的人可查看" },
   { id: "public", label: "公开访问", description: "任何人可访问，并允许被搜索引擎收录" },
 ];
+
+const usePublishDialogStyles = createStyles(({ token }) => {
+  const visual = token as typeof token & Record<string, string>;
+  return {
+    draftActions: { marginBottom: 12, textAlign: "right" },
+    layout: {
+      gridTemplateColumns: "1fr 1fr",
+      gap: 24,
+      "@media (max-width: 760px)": { gridTemplateColumns: "1fr", gap: 16 },
+    },
+    accessOption: {
+      display: "block",
+      width: "100%",
+      border: "1px solid transparent",
+      color: "inherit",
+      textAlign: "left",
+      cursor: "pointer",
+      transition: "border-color 160ms ease, background 160ms ease, box-shadow 160ms ease",
+    },
+    accessOptionActive: {
+      borderColor: visual.colorAccent ?? "#7c3cff",
+      background: visual.colorAccentSoft ?? "rgba(124, 60, 255, 0.14)",
+      boxShadow: `0 0 0 1px ${visual.colorAccent ?? "#7c3cff"}`,
+    },
+    qr: { width: 150, height: 150, borderRadius: 8 },
+    references: { maxHeight: 260 },
+    reference: { padding: 12 },
+  };
+});
 
 function toShareVisibility(visibility: string): ShareVisibility {
   if (visibility === "password") return "password";
@@ -66,6 +96,7 @@ export function PublishDialog({
   open: boolean;
   onClose: () => void;
 }) {
+  const { styles, cx } = usePublishDialogStyles();
   const toast = useToast();
   const queryClient = useQueryClient();
   const draftKey = `shiguang.publish-draft:${asset.id}`;
@@ -97,7 +128,6 @@ export function PublishDialog({
   const existingPublish = existingPublishes.find((publish) => publish.status === "active") ?? null;
   const publish = activePublish ?? existingPublish;
   const shareUrl = publish?.shortUrl ?? "";
-  const canonicalUrl = publish?.url ?? shareUrl;
 
   const invalidatePublishedData = () => {
     void queryClient.invalidateQueries({ queryKey: ["publishes"] });
@@ -236,84 +266,6 @@ export function PublishDialog({
     }
   };
 
-  const downloadPoster = async (url: string) => {
-    const canvas = document.createElement("canvas");
-    canvas.width = 1200;
-    canvas.height = 630;
-    const context = canvas.getContext("2d");
-    if (!context) return;
-
-    context.fillStyle = "#0b0a0f";
-    context.fillRect(0, 0, canvas.width, canvas.height);
-
-    const fitText = (text: string, maxWidth: number): string => {
-      if (context.measureText(text).width <= maxWidth) return text;
-      let result = text;
-      while (result.length > 0 && context.measureText(`${result}…`).width > maxWidth) {
-        result = result.slice(0, -1);
-      }
-      return `${result}…`;
-    };
-
-    context.fillStyle = "#f4f3fb";
-    context.font = "bold 56px sans-serif";
-    context.fillText(fitText(asset.title, 780), 72, 220);
-
-    context.fillStyle = "#a887ff";
-    context.font = "28px sans-serif";
-    context.fillText("知序", 72, 285);
-
-    const displayedUrl = url.length > 60 ? `${url.slice(0, 57)}…` : url;
-    context.fillStyle = "#b8b5c9";
-    context.font = "24px sans-serif";
-    context.fillText(displayedUrl, 72, 500);
-
-    // Embed the QR code on the right side so the poster is scannable.
-    let qrDataUrl = qrUrl;
-    if (!qrDataUrl) {
-      try {
-        qrDataUrl = await QRCode.toDataURL(url, { width: 220, margin: 1 });
-      } catch {
-        qrDataUrl = "";
-      }
-    }
-    if (qrDataUrl) {
-      const qrImage = new Image();
-      qrImage.src = qrDataUrl;
-      try {
-        await qrImage.decode();
-      } catch {
-        // QR image failed to load; fall back to a poster without the code.
-      }
-      if (qrImage.naturalWidth > 0) {
-        const size = 220;
-        const x = canvas.width - size - 72;
-        const y = Math.round((canvas.height - size) / 2);
-        context.fillStyle = "#ffffff";
-        context.fillRect(x - 20, y - 20, size + 40, size + 40);
-        context.drawImage(qrImage, x, y, size, size);
-      }
-    }
-
-    const anchor = document.createElement("a");
-    anchor.download = `${asset.title || "文档"}-分享海报.png`;
-    anchor.href = canvas.toDataURL("image/png");
-    anchor.click();
-  };
-
-  const copyEmbedCode = async () => {
-    if (!canonicalUrl) return;
-    await copyText(
-      `<iframe src="${canonicalUrl}" title="${asset.title}" width="100%" height="720" frameborder="0"></iframe>`,
-    );
-    toast("success", "嵌入代码已复制");
-  };
-
-  const emailShare = () => {
-    if (!shareUrl) return;
-    window.location.href = `mailto:?subject=${encodeURIComponent(asset.title)}&body=${encodeURIComponent(shareUrl)}`;
-  };
-
   const submitPublish = () => {
     if (references.length > 0 && referenceDecision === null) {
       setReferenceConfirmOpen(true);
@@ -334,6 +286,11 @@ export function PublishDialog({
   return (
     <Modal
       open={open}
+      // Keep the dialog under the app style boundary. The publish form uses
+      // shared `sg-*` utility classes whose styles and theme variables are
+      // intentionally scoped to that boundary; rendering the modal into
+      // document.body would leave those classes unstyled.
+      getContainer={false}
       onCancel={onClose}
       title={publish ? "分享设置" : "发布并分享"}
       width={820}
@@ -345,13 +302,13 @@ export function PublishDialog({
       okButtonProps={{ disabled: !canSave || referencesLoading }}
     >
       {!publish ? (
-        <div style={{ marginBottom: 12, textAlign: "right" }}>
+        <div className={styles.draftActions}>
           <Button type="link" onClick={saveDraft}>
             保存草稿
           </Button>
         </div>
       ) : null}
-      <div className="sg-grid" style={{ gridTemplateColumns: "1fr 1fr", gap: 24 }}>
+      <div className={`sg-grid ${styles.layout}`}>
         <div className="sg-col">
           <div>
             <h3 className="sg-h3">访问方式</h3>
@@ -360,13 +317,21 @@ export function PublishDialog({
                 <button
                   key={option.id}
                   type="button"
-                  className="sg-card"
-                  style={{
-                    textAlign: "left",
-                    cursor: "pointer",
-                    borderColor: visibility === option.id ? "var(--sg-accent)" : undefined,
-                    background: visibility === option.id ? "var(--sg-accent-soft)" : undefined,
-                  }}
+                  className={cx(
+                    "sg-card",
+                    styles.accessOption,
+                    visibility === option.id && styles.accessOptionActive,
+                  )}
+                  aria-pressed={visibility === option.id}
+                  style={
+                    visibility === option.id
+                      ? {
+                          border: "1px solid var(--sg-accent)",
+                          background: "var(--sg-accent-soft)",
+                          boxShadow: "0 0 0 1px var(--sg-accent)",
+                        }
+                      : undefined
+                  }
                   onClick={() => setVisibility(option.id)}
                 >
                   <strong>{option.label}</strong>
@@ -440,26 +405,11 @@ export function PublishDialog({
                   >
                     打开链接
                   </Button>
-                  <Button size="small" onClick={() => void downloadPoster(shareUrl)}>
-                    下载海报
-                  </Button>
-                  <Button size="small" onClick={() => void copyEmbedCode()}>
-                    复制嵌入代码
-                  </Button>
-                  <Button size="small" onClick={emailShare}>
-                    邮件分享
-                  </Button>
                 </div>
-                {qrUrl ? (
-                  <img
-                    src={qrUrl}
-                    alt="分享链接二维码"
-                    style={{ width: 150, height: 150, borderRadius: 8 }}
-                  />
-                ) : null}
+                {qrUrl ? <img src={qrUrl} alt="分享链接二维码" className={styles.qr} /> : null}
               </div>
             ) : (
-              <p className="sg-hint">发布后可复制短链、获取二维码、下载海报或嵌入页面。</p>
+              <p className="sg-hint">发布后可复制短链、打开链接或获取二维码。</p>
             )}
           </div>
 
@@ -473,6 +423,7 @@ export function PublishDialog({
       </div>
       <Modal
         open={referenceConfirmOpen}
+        getContainer={false}
         title="确认发布关联资源"
         onCancel={() => confirmReferenceDecision(false)}
         onOk={() => confirmReferenceDecision(true)}
@@ -485,16 +436,16 @@ export function PublishDialog({
         <p className="sg-subtle">
           当前文档引用了以下资源。选择“一起发布”会把它们纳入本次发布快照；选择“仅发布当前文档”不会阻止当前文档发布，但这些引用在公开页面中不可访问。
         </p>
-        <div className="sg-col" style={{ maxHeight: 260, overflowY: "auto" }}>
+        <Scrollbar className={`sg-col ${styles.references}`}>
           {references.map((reference) => (
-            <div key={reference.id} className="sg-row-between sg-card" style={{ padding: 12 }}>
+            <div key={reference.id} className={`sg-row-between sg-card ${styles.reference}`}>
               <span>{reference.title}</span>
               <span className="sg-subtle">
                 {reference.visibility === "private" ? "私有" : "已公开"} · {reference.type}
               </span>
             </div>
           ))}
-        </div>
+        </Scrollbar>
       </Modal>
     </Modal>
   );

@@ -1,5 +1,5 @@
-import { Table } from "antd";
 import type { TableProps } from "antd";
+import { Table } from "antd";
 import { createStyles } from "antd-style";
 
 /**
@@ -42,7 +42,8 @@ const useStyles = createStyles(() => ({
   },
 }));
 
-export type AppTableProps<RecordType extends object = Record<string, unknown>> = TableProps<RecordType>;
+export type AppTableProps<RecordType extends object = Record<string, unknown>> =
+  TableProps<RecordType>;
 
 /**
  * 统一的可复用 Table。基于 antd Table，主题定制为「资产列表」同款暗色扁平表格观感

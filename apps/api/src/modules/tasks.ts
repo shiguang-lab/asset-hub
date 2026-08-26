@@ -5,23 +5,6 @@ import { requireAssetAccess } from "../platform/authorization.js";
 import { badRequest, notFound } from "../platform/errors.js";
 import type { AppContext } from "../types.js";
 
-export function estimateCredits(spec: {
-  depth?: "quick" | "standard" | "deep" | undefined;
-  quality?: "economy" | "balanced" | "best" | undefined;
-  outputs?: string[] | undefined;
-}): { min: number; max: number } {
-  const base = spec.depth === "quick" ? 150 : spec.depth === "deep" ? 1200 : 400;
-  const qualityMultiplier = spec.quality === "economy" ? 0.7 : spec.quality === "best" ? 1.8 : 1;
-  const extra = (spec.outputs ?? []).reduce((acc, o) => {
-    if (o === "dataset") return acc + 200;
-    if (o === "presentation") return acc + 300;
-    return acc;
-  }, 0);
-  const min = Math.round(base * qualityMultiplier);
-  const max = Math.round((base + extra) * qualityMultiplier);
-  return { min, max };
-}
-
 export function registerTasks(app: FastifyInstance): void {
   const ctx: AppContext = app.ctx;
 
@@ -64,15 +47,6 @@ export function registerTasks(app: FastifyInstance): void {
 
   app.post("/api/v1/research/tasks", async (req) => {
     const input = researchCreateSchema.parse(req.body);
-    const estimate = estimateCredits(input);
-    const account = await ctx.store.getCreditAccount(req.actor.workspaceId);
-    if (!account || account.balance < estimate.min) {
-      throw badRequest(
-        "CREDIT_INSUFFICIENT",
-        `Credits 不足：本任务预估需要 ${estimate.min}–${estimate.max} Credits，当前余额 ${account?.balance ?? 0}。可降低质量模式或购买 Credits。`,
-        {},
-      );
-    }
     const spec = {
       goal: input.goal,
       region: input.region ?? "全球",
@@ -93,31 +67,6 @@ export function registerTasks(app: FastifyInstance): void {
       spec: spec as unknown as Record<string, unknown>,
       ...(input.inputAssetIds !== undefined ? { inputAssetIds: input.inputAssetIds } : {}),
     });
-    const operationId = `op_reserve_${task.id}`;
-    const reserved = await ctx.store.reserveCredits(
-      req.actor.workspaceId,
-      task.id,
-      estimate.max,
-      operationId,
-    );
-    if (!reserved.ok) {
-      throw badRequest(
-        "CREDIT_INSUFFICIENT",
-        `Credits 不足：需要 ${estimate.max}，当前余额 ${reserved.balance}`,
-        {},
-      );
-    }
-    await ctx.bus.emit({
-      eventId: nextId("evt"),
-      eventType: "credit.reserved",
-      schemaVersion: 1,
-      occurredAt: nowIso(),
-      producer: "api",
-      tenantId: req.actor.workspaceId,
-      aggregate: { type: "task", id: task.id, version: 1 },
-      trace: {},
-      data: { taskId: task.id, amount: estimate.max },
-    });
     await ctx.bus.emit({
       eventId: nextId("evt"),
       eventType: "task.created",
@@ -135,12 +84,9 @@ export function registerTasks(app: FastifyInstance): void {
       "task.create",
       task.id,
       "success",
-      {
-        type: task.type,
-        estimate,
-      },
+      { type: task.type },
     );
-    return { task, estimate, reserved: estimate.max };
+    return { task };
   });
 
   app.post("/api/v1/tasks", async (req) => {
@@ -150,7 +96,6 @@ export function registerTasks(app: FastifyInstance): void {
         goal: z.string().min(1).max(500),
         spec: z.record(z.string(), z.unknown()).optional(),
         inputAssetIds: z.array(z.string()).optional(),
-        requireCredits: z.boolean().default(true),
       })
       .parse(req.body);
     await Promise.all(
@@ -158,28 +103,12 @@ export function registerTasks(app: FastifyInstance): void {
         requireAssetAccess(ctx, req.actor, assetId, "read"),
       ),
     );
-    const estimate =
-      body.type === "research" ? estimateCredits(body.spec as never) : { min: 100, max: 200 };
-    const account = await ctx.store.getCreditAccount(req.actor.workspaceId);
-    if (body.requireCredits && (!account || account.balance < estimate.min)) {
-      throw badRequest("CREDIT_INSUFFICIENT", `Credits 不足：需要至少 ${estimate.min}`, {});
-    }
     const task = await ctx.store.createTask(req.actor, {
       type: body.type,
       goal: body.goal,
       spec: body.spec ?? {},
       ...(body.inputAssetIds !== undefined ? { inputAssetIds: body.inputAssetIds } : {}),
     });
-    const operationId = `op_reserve_${task.id}`;
-    const reserved = await ctx.store.reserveCredits(
-      req.actor.workspaceId,
-      task.id,
-      estimate.max,
-      operationId,
-    );
-    if (!reserved.ok) {
-      throw badRequest("CREDIT_INSUFFICIENT", `Credits 不足：需要 ${estimate.max}`, {});
-    }
     await ctx.bus.emit({
       eventId: nextId("evt"),
       eventType: "task.created",
@@ -191,7 +120,7 @@ export function registerTasks(app: FastifyInstance): void {
       trace: {},
       data: { taskId: task.id, taskType: task.type, spec: body.spec ?? {} },
     });
-    return { task, estimate, reserved: estimate.max };
+    return { task };
   });
 
   /* ---------------- task read model ---------------- */
@@ -231,6 +160,23 @@ export function registerTasks(app: FastifyInstance): void {
     return { ...task, steps, evidence, outputs };
   });
 
+  app.get("/api/v1/tasks/:id/stream", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const query = z
+      .object({
+        runId: z.string().optional(),
+        after: z.coerce.number().int().nonnegative().optional(),
+        limit: z.coerce.number().int().min(1).max(2000).default(500),
+      })
+      .parse(req.query);
+    const task = await ctx.store.getTask(req.actor.workspaceId, id);
+    if (!task) return reply.code(404).send({ code: "RESOURCE_NOT_FOUND" });
+    return {
+      taskId: id,
+      events: await ctx.store.listTaskStreamEvents(req.actor.workspaceId, id, query),
+    };
+  });
+
   app.post("/api/v1/tasks/:id/cancel", async (req) => {
     const { id } = req.params as { id: string };
     const task = await ctx.store.getTask(req.actor.workspaceId, id);
@@ -260,6 +206,8 @@ export function registerTasks(app: FastifyInstance): void {
     await ctx.store.updateTask(req.actor.workspaceId, id, {
       status: "queued",
       progress: 0,
+      currentStep: "等待重试",
+      checkpoint: null,
       error: null,
       cancelRequested: false,
     });
@@ -305,17 +253,6 @@ export function registerTasks(app: FastifyInstance): void {
       data: { taskId: id, taskType: task.type, resume: true, spec: task.spec },
     });
     return updated;
-  });
-
-  app.get("/api/v1/research/estimate", async (req) => {
-    const query = z
-      .object({
-        depth: z.enum(["quick", "standard", "deep"]).optional(),
-        quality: z.enum(["economy", "balanced", "best"]).optional(),
-        outputs: z.array(z.string()).optional(),
-      })
-      .parse(req.query);
-    return estimateCredits(query as never);
   });
 
   /* ---------------- 定时任务 ---------------- */

@@ -11,6 +11,22 @@ import (
 	"github.com/shiguang-lab/asset-hub/apps/public-gateway/internal/platform"
 )
 
+func TestPublishedHTMLSandboxCSPAllowsSelfContainedPresentationRuntime(t *testing.T) {
+	policy := publishedHTMLSandboxCSP()
+	for _, required := range []string{
+		"script-src 'self' 'unsafe-inline'",
+		"style-src 'self' 'unsafe-inline' https:",
+		"connect-src 'none'",
+		"frame-src 'none'",
+		"frame-ancestors 'none'",
+		"form-action 'none'",
+	} {
+		if !strings.Contains(policy, required) {
+			t.Fatalf("published HTML CSP missing %q: %s", required, policy)
+		}
+	}
+}
+
 func TestReleaseDownloadAndAttachment(t *testing.T) {
 	var meta PublishMeta
 	err := json.Unmarshal([]byte(`{

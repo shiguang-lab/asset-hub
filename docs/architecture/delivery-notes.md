@@ -13,7 +13,7 @@ PRD 附录 A 42 个页面全部实现：
 - P0（01–32、34–38、41–42）：首页、全局新建/搜索、资产中心与详情（内容/信息/版本/关系）、
   Markdown/HTML 编辑器、知识库（列表/新建/详情/Ask/资料管理）、调研（首页/新建）、任务中心与详情、
   Research 结果/Source/Evidence、Dataset 数据页与 AI 分析、在线演示（首页/新建/编辑器/播放）、模板中心、
-  发布/分享、公开文档页、通知、Credits、设置、MCP 设置与连接向导、API Token、404/异常状态页。
+  发布/分享、公开文档页、通知、积分余额只读展示、设置、MCP 设置与连接向导、API Token、404/异常状态页。
 - P1（08、15、33、39、40）：资产关系视图、Research 计划确认（新建页内 AI 范围确认）、个人中心
   （`/profile`）、Git 集成（`/settings` Git 页 + worker 同步链路）、自定义域名（`/settings` 域名页 +
   DNS 验证 + 网关 Host 解析）。
@@ -26,7 +26,7 @@ PRD 附录 A 42 个页面全部实现：
   （创建演示资产并自动建立 `generated_from` 关系）；
 - Git 同步：连接（GitHub/GitLab/本地目录）→ `git_sync` 任务 → worker 拉取/扫描 Markdown 文档 →
   投影为文档资产 → 连接状态回写；
-- 定时任务：cron 表 + worker Scheduler 轮询到期 → 经 internal API 创建 Research 任务（含 Credits 预留与
+- 定时任务：cron 表 + worker Scheduler 轮询到期 → 经 internal API 创建 Research 任务（积分校验与扣费由外部系统负责；
   完成通知），支持停用/启用/删除；
 - 自定义域名：添加 → DNS TXT Token 验证 → 绑定发布 → public-gateway 按 Host 解析域名并分发内容；
 - 团队与权限：工作区成员（admin/editor/viewer）、资产 ACL（editor/viewer）、分享（自动切换 link 可见性 +
@@ -49,7 +49,7 @@ PRD 附录 A 42 个页面全部实现：
 通过 Vision OCR 提取全部 72 张 UI 图的文字与坐标，并据此重构 Web 视觉与布局：
 
 - 全局壳层：Shiguang Lab 品牌、左侧导航（首页/资产/文档/知识库/调研/任务中心/AI 助手/
-  模板中心/在线演示/数据看板/通知中心/设置 + AI Credits + 团队版）、顶部面包屑 + 居中搜索 +
+  模板中心/在线演示/数据看板/通知中心/设置 + 积分余额 + 团队版）、顶部面包屑 + 居中搜索 +
   ⌘K + 「+ 新建」菜单（文档/HTML/知识库/调研/在线演示/上传文件）；
 - 首页：主输入框 + 四个快捷创建卡片（深度调研/写文档/在线演示/知识库）、「正在执行」任务卡、
   「最近内容」表格（名称/类型/更新时间）、「推荐模板」四卡片；
@@ -75,7 +75,7 @@ PRD 附录 A 42 个页面全部实现：
 1. 创建 Markdown 文档 → 发布 → `public-gateway` 返回渲染 HTML（含 CSP/安全头）✅
 2. 短链 `/s/{slug}` → 302 到 `/p/{slug}` ✅
 3. 知识库：添加资产来源 → worker 解析/分块 → FTS 搜索命中 → Ask 返回引用（Citation 含 source/ordinal/locator）✅
-4. Research（报告+来源+数据）：worker 完成 → 3 个输出资产 + 5 条 Evidence + Credits 结算 ✅
+4. Research（报告+来源+数据）：worker 完成 → 3 个输出资产 + 5 条 Evidence；积分结算由外部系统负责 ✅
 5. 数据集：CSV 上传 → worker 导入 → Schema（string/integer）→ 分组聚合查询（MoMo=270、VnPay=205）✅
 6. 演示：报告 → AI 大纲 → 5 页演示资产 → 发布 → 网关播放页 + manifest 白名单 + 路径穿越防护（404）✅
 7. MCP：官方 SDK 客户端 initialize → tools/list（7 工具）→ search_assets 返回真实资产 ✅

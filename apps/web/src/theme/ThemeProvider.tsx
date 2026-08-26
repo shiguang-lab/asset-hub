@@ -1,8 +1,10 @@
 import { UiGlobalStyles } from "@shiguang/ui";
 import { App, ConfigProvider } from "antd";
+import zhCN from "antd/locale/zh_CN.js";
 import { StyleProvider } from "antd-style";
 import type { PropsWithChildren } from "react";
-import { AppGlobalStyles } from "../styles/AppGlobalStyles.js";
+import { AppStylesBoundary } from "../styles/AppGlobalStyles.js";
+import { AppDocumentReset } from "../styles/document-reset.js";
 import { resolveThemeConfig } from "./tokens";
 import { useThemeMode } from "./useThemeMode";
 
@@ -11,11 +13,12 @@ export const ThemeProvider = ({ children }: PropsWithChildren) => {
 
   return (
     <StyleProvider>
-      <ConfigProvider theme={resolveThemeConfig(mode)}>
+      <ConfigProvider locale={zhCN} theme={resolveThemeConfig(mode)}>
         <App>
-          <UiGlobalStyles />
-          <AppGlobalStyles />
-          {children}
+          <AppDocumentReset />
+          <UiGlobalStyles>
+            <AppStylesBoundary>{children}</AppStylesBoundary>
+          </UiGlobalStyles>
         </App>
       </ConfigProvider>
     </StyleProvider>

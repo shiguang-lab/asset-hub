@@ -1,6 +1,7 @@
 import { Empty, Field, formatDate, Scrollbar, StatusBadge, useToast } from "@shiguang/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button, Card, Input, Modal, Select, Switch, Tabs, Tag } from "antd";
+import { createStyles } from "antd-style";
 import { Download, FilePenLine, Pencil } from "lucide-react";
 import { useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
@@ -18,6 +19,24 @@ import { SandboxHtmlPreview } from "../../shared/sandbox-preview.js";
 import { useDeleteConfirm } from "../../shared/useDeleteConfirm";
 import { PublishDialog } from "../publishing/publish-dialog.js";
 import { assetContentEditorHref } from "./asset-edit.js";
+
+const useAssetDetailStyles = createStyles(() => ({
+  title: {
+    marginTop: 0,
+  },
+  contentColumn: {
+    gap: 10,
+  },
+  manifest: {
+    fontSize: 12,
+  },
+  relationColumn: {
+    gap: 4,
+  },
+  versionCode: {
+    fontSize: 11,
+  },
+}));
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -38,6 +57,7 @@ export function AssetDetailPage() {
   const [shareSubject, setShareSubject] = useState("");
   const [shareRole, setShareRole] = useState("viewer");
   const [publishOpen, setPublishOpen] = useState(false);
+  const { styles } = useAssetDetailStyles();
   const session = getAuthSession();
   const workspaceWritable = canWriteWorkspace(session);
   const workspaceAdmin = isWorkspaceAdmin(session);
@@ -146,20 +166,16 @@ export function AssetDetailPage() {
   const published = publishes?.find((p) => p.assetId === asset.id && p.status === "active");
   const content = asset.content;
   const contentEditorHref = assetContentEditorHref(asset);
+  const isPresentationContent = asset.type === "presentation" && tab === "content";
 
   return (
     <div className="sg-asset-detail-page">
       <div className="sg-row-between sg-mb sg-asset-detail-header">
         <div>
-          <h1 className="sg-h1" style={{ marginTop: 0 }}>
-            {asset.title}
-          </h1>
+          <h1 className={`sg-h1 ${styles.title}`}>{asset.title}</h1>
           <div className="sg-row sg-mt-sm">
             <StatusBadge status={asset.status} />
             <Tag>{asset.type}</Tag>
-            {asset.tags.map((t) => (
-              <Tag key={t}>#{t}</Tag>
-            ))}
           </div>
         </div>
         <div className="sg-row">
@@ -257,11 +273,13 @@ export function AssetDetailPage() {
         onChange={setTab}
       />
 
-      <div className="sg-asset-detail-content">
+      <Scrollbar
+        className={`sg-asset-detail-content${isPresentationContent ? " sg-asset-detail-content-presentation" : ""}`}
+      >
         {tab === "content" && (
-          <Card>
+          <Card className={isPresentationContent ? "sg-asset-presentation-card" : undefined}>
             {content?.kind === "blob" || asset.type === "file" ? (
-              <div className="sg-col" style={{ gap: 10 }}>
+              <div className={`sg-col ${styles.contentColumn}`}>
                 <strong>{asset.title}</strong>
                 <span className="sg-subtle">
                   {content?.refs?.[0]?.mediaType ?? "application/octet-stream"}
@@ -283,11 +301,17 @@ export function AssetDetailPage() {
             ) : content?.kind === "markdown" || asset.type === "report" ? (
               <DocumentMarkdown source={content?.text ?? ""} />
             ) : content?.kind === "html" ? (
-              <SandboxHtmlPreview source={content?.text ?? ""} />
+              asset.type === "presentation" ? (
+                <div className="sg-asset-presentation-preview">
+                  <div className="sg-asset-presentation-stage">
+                    <SandboxHtmlPreview source={content?.text ?? ""} />
+                  </div>
+                </div>
+              ) : (
+                <SandboxHtmlPreview source={content?.text ?? ""} />
+              )
             ) : content?.kind === "manifest" ? (
-              <Scrollbar>
-                <pre style={{ fontSize: 12 }}>{JSON.stringify(content.manifest, null, 2)}</pre>
-              </Scrollbar>
+              <pre className={styles.manifest}>{JSON.stringify(content.manifest, null, 2)}</pre>
             ) : (
               <Empty title="没有内容" />
             )}
@@ -297,92 +321,98 @@ export function AssetDetailPage() {
         {tab === "info" && (
           <Card>
             <AppTable<{ key: string; value: React.ReactNode }>
-                rowKey="key"
-                dataSource={(() => {
-                  const rows: { key: string; value: React.ReactNode }[] = [
-                    { key: "ID", value: <code>{asset.id}</code> },
-                    { key: "类型", value: asset.type },
-                    { key: "可见性", value: asset.visibility },
-                    { key: "来源", value: asset.sourceType },
-                    { key: "创建时间", value: formatDate(asset.createdAt) },
-                    { key: "更新时间", value: formatDate(asset.updatedAt) },
-                    { key: "版本号", value: `v${asset.lockVersion}` },
-                    { key: "当前版本", value: <code>{asset.currentVersionId}</code> },
-                  ];
-                  if (canManageAsset) {
-                    rows.push({
-                      key: "共享权限",
-                      value:
-                        (acl?.acl.length ?? 0) === 0 ? (
-                          <span className="sg-subtle">仅所有者可见</span>
-                        ) : (
-                          <div className="sg-col" style={{ gap: 4 }}>
-                            {acl?.acl.map((entry) => (
-                              <div key={entry.principal_id} className="sg-row">
-                                <span className="sg-badge">{entry.principal_id}</span>
-                                <span className="sg-badge sg-badge-accent">{entry.role}</span>
-                                <Button
-                                  size="small"
-                                  type="primary"
-                                  danger
-                                  onClick={() => revokeShare.mutate(entry.principal_id)}
-                                >
-                                  取消
-                                </Button>
-                              </div>
-                            ))}
-                          </div>
-                        ),
-                    });
-                  }
-                  return rows;
-                })()}
-                pagination={false}
-                size="middle"
-                showHeader={false}
-                columns={[
-                  { title: "", dataIndex: "key", width: 120 },
-                  { title: "", dataIndex: "value" },
-                ]}
-              />
+              rowKey="key"
+              dataSource={(() => {
+                const rows: { key: string; value: React.ReactNode }[] = [
+                  { key: "ID", value: <code>{asset.id}</code> },
+                  { key: "类型", value: asset.type },
+                  { key: "可见性", value: asset.visibility },
+                  { key: "来源", value: asset.sourceType },
+                  { key: "创建时间", value: formatDate(asset.createdAt) },
+                  { key: "更新时间", value: formatDate(asset.updatedAt) },
+                  { key: "版本号", value: `v${asset.lockVersion}` },
+                  { key: "当前版本", value: <code>{asset.currentVersionId}</code> },
+                ];
+                if (canManageAsset) {
+                  rows.push({
+                    key: "共享权限",
+                    value:
+                      (acl?.acl.length ?? 0) === 0 ? (
+                        <span className="sg-subtle">仅所有者可见</span>
+                      ) : (
+                        <div className={`sg-col ${styles.relationColumn}`}>
+                          {acl?.acl.map((entry) => (
+                            <div key={entry.principal_id} className="sg-row">
+                              <span className="sg-badge">{entry.principal_id}</span>
+                              <span className="sg-badge sg-badge-accent">{entry.role}</span>
+                              <Button
+                                size="small"
+                                type="primary"
+                                danger
+                                onClick={() => revokeShare.mutate(entry.principal_id)}
+                              >
+                                取消
+                              </Button>
+                            </div>
+                          ))}
+                        </div>
+                      ),
+                  });
+                }
+                return rows;
+              })()}
+              pagination={false}
+              size="middle"
+              showHeader={false}
+              columns={[
+                { title: "", dataIndex: "key", width: 120 },
+                { title: "", dataIndex: "value" },
+              ]}
+            />
           </Card>
         )}
 
         {tab === "versions" && (
           <Card>
-            <AppTable<{ id: string; sequence: number; changeKind: string; createdAt: string; contentHash: string }>
-                rowKey="id"
-                dataSource={versions ?? []}
-                pagination={false}
-                size="middle"
-                columns={[
-                  { title: "版本", dataIndex: "sequence", render: (v) => `v${v}` },
-                  { title: "变更类型", dataIndex: "changeKind" },
-                  { title: "时间", dataIndex: "createdAt", render: (v) => formatDate(v) },
-                  {
-                    title: "内容哈希",
-                    dataIndex: "contentHash",
-                    render: (v) => <code style={{ fontSize: 11 }}>{v.slice(0, 18)}…</code>,
-                  },
-                  {
-                    title: "操作",
-                    key: "actions",
-                    render: (_v, v) =>
-                      canManageAsset ? (
-                        <Button
-                          size="small"
-                          onClick={() =>
-                            api(`/assets/${id}/versions/${v.id}/restore`, { method: "POST" }).then(
-                              () => toast("success", "已恢复该版本"),
-                            )
-                          }
-                        >
-                          恢复
-                        </Button>
-                      ) : null,
-                  },
-                ]}
-              />
+            <AppTable<{
+              id: string;
+              sequence: number;
+              changeKind: string;
+              createdAt: string;
+              contentHash: string;
+            }>
+              rowKey="id"
+              dataSource={versions ?? []}
+              pagination={false}
+              size="middle"
+              columns={[
+                { title: "版本", dataIndex: "sequence", render: (v) => `v${v}` },
+                { title: "变更类型", dataIndex: "changeKind" },
+                { title: "时间", dataIndex: "createdAt", render: (v) => formatDate(v) },
+                {
+                  title: "内容哈希",
+                  dataIndex: "contentHash",
+                  render: (v) => <code className={styles.versionCode}>{v.slice(0, 18)}…</code>,
+                },
+                {
+                  title: "操作",
+                  key: "actions",
+                  render: (_v, v) =>
+                    canManageAsset ? (
+                      <Button
+                        size="small"
+                        onClick={() =>
+                          api(`/assets/${id}/versions/${v.id}/restore`, { method: "POST" }).then(
+                            () => toast("success", "已恢复该版本"),
+                          )
+                        }
+                      >
+                        恢复
+                      </Button>
+                    ) : null,
+                },
+              ]}
+            />
           </Card>
         )}
 
@@ -426,7 +456,7 @@ export function AssetDetailPage() {
             )}
           </Card>
         )}
-      </div>
+      </Scrollbar>
 
       <Modal
         open={kbModal}

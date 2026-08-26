@@ -47,7 +47,7 @@ src/
 
 不承担：
 
-- Asset、Credit、Publish 等最终业务落库；
+- Asset、积分、Publish 等最终业务落库；
 - 文件解析和 DuckDB 查询；
 - 用户 HTTP、MCP 或公开页面流量；
 - Provider secret 持久化；
@@ -74,14 +74,14 @@ Task 产品状态由 `api` projector 维护；Hatchet 状态只作为执行事�
 
 ## 5. Agent 执行
 
-1. API 创建 Task、Credit reservation 和 Outbox；
+1. API 创建 Task 和 Outbox；积分校验与扣费由外部积分系统负责；
 2. Workflow 加载不可变 TaskSpec；
 3. planner 生成有界计划；
 4. 每个 Tool Call 先校验 capability、scope、预算和 schema；
 5. Evidence 保存 source/version/locator/retrievedAt/contentHash；
 6. 长流程周期性写 checkpoint object；
 7. 输出先过 schema、citation、numeric consistency validator；
-8. 仅将 artifact refs 和 usage records 投影回 API。
+8. 仅将 artifact refs 投影回 API。
 
 普通摘要、改写等单步 AI Function 可以作为 Activity 执行；只有多步检索、工具调用和动态规划任务进入
 Agent loop。模型输出永远是 proposal，不是业务命令。

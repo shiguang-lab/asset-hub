@@ -1,4 +1,4 @@
-import { redirectToUnifiedLogin } from "../auth/session.js";
+import { getAuthSession, redirectToUnifiedLogin } from "../auth/session.js";
 
 export const API_BASE = (import.meta.env.VITE_API_BASE as string | undefined) ?? "/api/v1";
 export const SSE_URL = (import.meta.env.VITE_SSE_URL as string | undefined) ?? "/api/v1/events";
@@ -42,7 +42,7 @@ export async function api<T>(
     body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
   });
   if (!res.ok) {
-    if (res.status === 401) redirectToUnifiedLogin();
+    if (res.status === 401 && !getAuthSession()?.localBroker) redirectToUnifiedLogin();
     let problem: { code?: string; detail?: string; recoveries?: string[] } = {};
     try {
       problem = (await res.json()) as typeof problem;
@@ -85,7 +85,7 @@ export async function uploadFiles<T>(
     body: form,
   });
   if (!res.ok) {
-    if (res.status === 401) redirectToUnifiedLogin();
+    if (res.status === 401 && !getAuthSession()?.localBroker) redirectToUnifiedLogin();
     let problem: { code?: string; detail?: string } = {};
     try {
       problem = (await res.json()) as typeof problem;
@@ -102,7 +102,7 @@ export async function downloadFile(path: string, fileName: string): Promise<void
     credentials: "include",
   });
   if (!res.ok) {
-    if (res.status === 401) redirectToUnifiedLogin();
+    if (res.status === 401 && !getAuthSession()?.localBroker) redirectToUnifiedLogin();
     let problem: { code?: string; detail?: string } = {};
     try {
       problem = (await res.json()) as typeof problem;
@@ -144,7 +144,6 @@ export interface Asset {
   description: string;
   visibility: string;
   status: string;
-  tags: string[];
   sourceType: string;
   currentVersionId: string | null;
   lockVersion: number;
@@ -181,7 +180,6 @@ export interface Task {
   checkpoint?: Record<string, unknown> | null;
   inputAssetIds?: string[];
   outputAssetIds: string[];
-  creditsUsed: number;
   error: string | null;
   cancelRequested: boolean;
   startedAt: string | null;
@@ -204,6 +202,20 @@ export interface TaskStep {
   attempt?: number;
   startedAt?: string | null;
   completedAt?: string | null;
+}
+
+export interface TaskStreamEvent {
+  id: string;
+  taskId: string;
+  runId: string;
+  sequence: number;
+  phase: string;
+  activity: "content" | "reasoning" | "heartbeat" | "finished" | "failed";
+  delta: string;
+  receivedChars: number | null;
+  finishReason: string | null;
+  usage: { inputTokens: number; outputTokens: number } | null;
+  createdAt: string;
 }
 
 export interface KnowledgeBase {
@@ -334,14 +346,6 @@ export interface Notification {
   createdAt: string;
 }
 
-export interface CreditAccount {
-  id: string;
-  workspaceId: string;
-  balance: number;
-  totalGranted: number;
-  totalUsed: number;
-}
-
 export interface Template {
   id: string;
   type: string;
@@ -355,7 +359,6 @@ export interface HomeData {
   recentAssets: Asset[];
   runningTasks: Task[];
   unreadNotifications: number;
-  credits: number;
   templates: Template[];
 }
 

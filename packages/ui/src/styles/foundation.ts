@@ -1,7 +1,8 @@
-import { createGlobalStyle, css } from "antd-style";
+import { createStyles } from "antd-style";
 
-export const UiFoundationGlobalStyles = createGlobalStyle(css`
-:root {
+export const useUiFoundationStyles = createStyles(({ css }) => ({
+  root: css`
+& {
   --sg-fg: #1a1f36;
   --sg-fg-2: #4b5568;
   --sg-muted: #8a94a6;
@@ -23,33 +24,17 @@ export const UiFoundationGlobalStyles = createGlobalStyle(css`
     Inter, ui-sans-serif, -apple-system, "PingFang SC", "Noto Sans SC", "Microsoft YaHei",
     sans-serif;
   --sg-mono: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
-  --sg-sidebar-w: 232px;
-}
-
-[data-theme="dark"] {
-  --sg-fg: #eef1f8;
-  --sg-fg-2: #c3c9d9;
-  --sg-muted: #8a92a8;
-  --sg-bg: #0f1420;
-  --sg-bg-2: #171e2e;
-  --sg-bg-3: #202a3f;
-  --sg-border: #2a3550;
-  --sg-accent: #8b7bff;
-  --sg-accent-2: #a99cff;
-  --sg-accent-soft: rgba(139, 123, 255, 0.14);
-  --sg-shadow: 0 8px 30px rgba(0, 0, 0, 0.4);
 }
 
 * {
   box-sizing: border-box;
 }
 
-html,
-body {
+& {
   height: 100%;
 }
 
-body {
+& {
   margin: 0;
   color: var(--sg-fg);
   background: var(--sg-bg);
@@ -68,162 +53,6 @@ a:hover {
 }
 button {
   font-family: var(--sg-font);
-}
-
-/* ---------------- shell ---------------- */
-.sg-app {
-  min-height: 100vh;
-  display: flex;
-  flex-direction: column;
-}
-.sg-shell {
-  display: flex;
-  min-height: 100vh;
-}
-.sg-sidebar {
-  width: var(--sg-sidebar-w);
-  flex: none;
-  background: var(--sg-bg-2);
-  border-right: 1px solid var(--sg-border);
-  display: flex;
-  flex-direction: column;
-  padding: 14px 10px;
-  position: sticky;
-  top: 0;
-  height: 100vh;
-  overflow-y: auto;
-}
-.sg-sidebar-logo {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 6px 12px 18px;
-  font-weight: 750;
-  font-size: 16px;
-  letter-spacing: 0.01em;
-  color: var(--sg-fg);
-}
-.sg-sidebar-logo:hover {
-  text-decoration: none;
-}
-.sg-sidebar .spacer {
-  flex: 1;
-}
-.sg-nav-item {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 9px 12px;
-  border-radius: 8px;
-  color: var(--sg-fg-2);
-  font-size: 13.5px;
-  font-weight: 500;
-  cursor: pointer;
-  border: 0;
-  background: transparent;
-  width: 100%;
-  text-align: left;
-  margin-bottom: 1px;
-}
-.sg-nav-item:hover {
-  background: var(--sg-bg-3);
-  color: var(--sg-fg);
-  text-decoration: none;
-}
-.sg-nav-item.active {
-  background: var(--sg-accent-soft);
-  color: var(--sg-accent);
-  font-weight: 600;
-}
-.sg-nav-icon {
-  width: 18px;
-  text-align: center;
-  font-size: 15px;
-  flex: none;
-}
-.sg-credits-box {
-  margin: 10px 8px 6px;
-  padding: 10px 12px;
-  border: 1px solid var(--sg-border);
-  border-radius: 10px;
-  background: var(--sg-bg);
-}
-.sg-credits-box .num {
-  font-weight: 700;
-  font-size: 13px;
-}
-.sg-credits-box .buy {
-  color: var(--sg-accent);
-  font-size: 12px;
-  cursor: pointer;
-}
-.sg-team-box {
-  margin: 0 8px;
-  padding: 10px 12px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  border: 1px solid var(--sg-border);
-  border-radius: 10px;
-  font-size: 12.5px;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.sg-main {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-}
-.sg-header {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  padding: 10px 24px;
-  border-bottom: 1px solid var(--sg-border);
-  background: var(--sg-bg-2);
-  position: sticky;
-  top: 0;
-  z-index: 40;
-  min-height: 54px;
-}
-.sg-breadcrumb {
-  color: var(--sg-muted);
-  font-size: 13px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.sg-breadcrumb strong {
-  color: var(--sg-fg);
-  font-weight: 600;
-}
-.sg-search {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  background: var(--sg-bg-3);
-  border: 1px solid transparent;
-  border-radius: 8px;
-  padding: 7px 12px;
-  width: min(360px, 32vw);
-  color: var(--sg-muted);
-  cursor: pointer;
-  font-size: 13px;
-}
-.sg-search:hover {
-  border-color: var(--sg-accent);
-}
-.sg-content {
-  flex: 1;
-  padding: 22px 26px 72px;
-  max-width: 1400px;
-  width: 100%;
-  margin: 0 auto;
-}
-.sg-content.wide {
-  max-width: 1600px;
 }
 
 /* ---------------- typography ---------------- */
@@ -283,4 +112,5 @@ button {
   letter-spacing: 0.14em;
   text-transform: uppercase;
 }
-`);
+`,
+}));

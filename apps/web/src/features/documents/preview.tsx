@@ -1,6 +1,7 @@
 import { Empty, Scrollbar, StatusBadge } from "@shiguang/ui";
 import { useQuery } from "@tanstack/react-query";
 import { Button, Tag } from "antd";
+import { createStyles } from "antd-style";
 import { ArrowLeft, Edit3, Info } from "lucide-react";
 import { useNavigate, useParams } from "react-router-dom";
 import type { Asset } from "../../entities/api.js";
@@ -8,9 +9,24 @@ import { api } from "../../entities/api.js";
 import { DocumentMarkdown } from "../../shared/document-markdown.js";
 import { useShellBreadcrumb } from "../../shell/layout.js";
 
+const useDocumentPreviewStyles = createStyles(() => ({
+  headerRow: {
+    minWidth: 0,
+  },
+  titleWrap: {
+    minWidth: 0,
+  },
+  title: {
+    margin: 0,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+  },
+}));
+
 export function DocumentPreviewPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const { styles } = useDocumentPreviewStyles();
   const { data: asset, isLoading } = useQuery<Asset>({
     queryKey: ["asset", id],
     queryFn: () => api<Asset>(`/assets/${id}`),
@@ -26,15 +42,10 @@ export function DocumentPreviewPage() {
   return (
     <div className="sg-document-preview-page">
       <div className="sg-row-between sg-document-preview-header">
-        <div className="sg-row" style={{ minWidth: 0 }}>
+        <div className={`sg-row ${styles.headerRow}`}>
           <Button type="text" icon={<ArrowLeft size={16} />} onClick={() => navigate(-1)} />
-          <div style={{ minWidth: 0 }}>
-            <h1
-              className="sg-h1"
-              style={{ margin: 0, overflow: "hidden", textOverflow: "ellipsis" }}
-            >
-              {asset.title}
-            </h1>
+          <div className={styles.titleWrap}>
+            <h1 className={`sg-h1 ${styles.title}`}>{asset.title}</h1>
             <div className="sg-row sg-mt-sm">
               <StatusBadge status={asset.status} />
               <Tag>{asset.type === "report" ? "调研报告" : "文档"}</Tag>

@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
-import { Button, Progress } from "antd";
+import { Button } from "antd";
+import { createStyles } from "antd-style";
 import {
   ChartNoAxesCombined,
   FileText,
@@ -27,9 +28,55 @@ const SUGGESTIONS = [
   "如何制作一个生动的演示？",
 ];
 
+const useAssistantPageStyles = createStyles(() => ({
+  title: {
+    fontSize: 26,
+    marginBottom: 4,
+  },
+  intro: {
+    marginBottom: 22,
+  },
+  promptLabel: {
+    gap: 8,
+    marginBottom: 12,
+  },
+  promptFooter: {
+    marginTop: 12,
+  },
+  promptHint: {
+    fontSize: 12,
+  },
+  quickActions: {
+    flexWrap: "wrap",
+    gap: 10,
+    marginTop: 18,
+  },
+  suggestionsTitle: {
+    margin: "26px 0 10px",
+  },
+  suggestions: {
+    gap: 8,
+  },
+  suggestionArrow: {
+    marginLeft: "auto",
+    opacity: 0.5,
+  },
+  cardTitle: {
+    margin: 0,
+  },
+  usageRow: {
+    marginBottom: 6,
+  },
+  usageHint: {
+    fontSize: 12,
+    marginTop: 6,
+  },
+}));
+
 export function AssistantPage() {
   const navigate = useNavigate();
   const [input, setInput] = useState("");
+  const { styles } = useAssistantPageStyles();
   const { data: home } = useQuery<HomeData>({ queryKey: ["home"], queryFn: () => api("/home") });
 
   const submit = (text: string) => {
@@ -44,21 +91,17 @@ export function AssistantPage() {
     }
   };
 
-  const credits = home?.credits ?? 0;
-
   return (
     <div className="sg-assistant">
       <div className="sg-assistant-main">
         <p className="sg-eyebrow">AI 助手</p>
-        <h1 className="sg-h1" style={{ fontSize: 26, marginBottom: 4 }}>
-          你好，很高兴见到你
-        </h1>
-        <p className="sg-subtle" style={{ marginBottom: 22 }}>
+        <h1 className={`sg-h1 ${styles.title}`}>你好，很高兴见到你</h1>
+        <p className={`sg-subtle ${styles.intro}`}>
           更高效地整理信息，探索知识，创造有价值的产出。
         </p>
 
         <div className="sg-assistant-prompt">
-          <div className="sg-row" style={{ gap: 8, marginBottom: 12 }}>
+          <div className={`sg-row ${styles.promptLabel}`}>
             <span className="sg-assistant-label">
               <Sparkles size={13} /> AI 助手
             </span>
@@ -76,8 +119,8 @@ export function AssistantPage() {
             placeholder="告诉我你想做什么…"
             rows={3}
           />
-          <div className="sg-row-between" style={{ marginTop: 12 }}>
-            <span className="sg-subtle" style={{ fontSize: 12 }}>
+          <div className={`sg-row-between ${styles.promptFooter}`}>
+            <span className={`sg-subtle ${styles.promptHint}`}>
               支持搜索、写作、调研、演示与数据分析
             </span>
             <Button type="primary" onClick={() => submit(input)} disabled={!input.trim()}>
@@ -86,7 +129,7 @@ export function AssistantPage() {
           </div>
         </div>
 
-        <div className="sg-row" style={{ flexWrap: "wrap", gap: 10, marginTop: 18 }}>
+        <div className={`sg-row ${styles.quickActions}`}>
           {QUICK_ACTIONS.map((q) => (
             <button
               key={q.label}
@@ -100,10 +143,8 @@ export function AssistantPage() {
           ))}
         </div>
 
-        <h3 className="sg-h3" style={{ margin: "26px 0 10px" }}>
-          你可以这样问我
-        </h3>
-        <div className="sg-col" style={{ gap: 8 }}>
+        <h3 className={`sg-h3 ${styles.suggestionsTitle}`}>你可以这样问我</h3>
+        <div className={`sg-col ${styles.suggestions}`}>
           {SUGGESTIONS.map((s) => (
             <button
               key={s}
@@ -112,7 +153,7 @@ export function AssistantPage() {
               onClick={() => submit(s)}
             >
               {s}
-              <span style={{ marginLeft: "auto", opacity: 0.5 }}>→</span>
+              <span className={styles.suggestionArrow}>→</span>
             </button>
           ))}
         </div>
@@ -121,7 +162,7 @@ export function AssistantPage() {
       <aside className="sg-assistant-side">
         <div className="sg-card">
           <div className="sg-row-between">
-            <h3 className="sg-h3" style={{ margin: 0 }}>
+            <h3 className={`sg-h3 ${styles.cardTitle}`}>
               今日待办 {home?.runningTasks?.length ?? 0}
             </h3>
             <Button size="small" type="text" onClick={() => navigate("/tasks")}>
@@ -135,23 +176,6 @@ export function AssistantPage() {
             </div>
           ))}
           {(home?.runningTasks?.length ?? 0) === 0 && <p className="sg-subtle">没有待办任务</p>}
-        </div>
-
-        <div className="sg-card">
-          <h3 className="sg-h3">使用概览</h3>
-          <div className="sg-row-between" style={{ marginBottom: 6 }}>
-            <span className="sg-subtle">本月剩余 AI Credits</span>
-            <strong>{credits.toLocaleString("zh-CN")}</strong>
-          </div>
-          <Progress
-            percent={Math.max(
-              0,
-              Math.min(100, Math.min(100, Math.max(0, (credits / 10_000) * 100))),
-            )}
-          />
-          <div className="sg-subtle" style={{ fontSize: 12, marginTop: 6 }}>
-            额度上限 10,000
-          </div>
         </div>
       </aside>
     </div>

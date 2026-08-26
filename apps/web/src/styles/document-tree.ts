@@ -1,6 +1,7 @@
-import { createGlobalStyle, css } from "antd-style";
+import { createStyles } from "antd-style";
 
-export const DocumentTreeGlobalStyles = createGlobalStyle(css`
+export const useDocumentTreeStyles = createStyles(({ css }) => ({
+  root: css`
 /* Document organization: nested folder tree and document workspace. */
 .sg-docs-workspace {
   display: grid;
@@ -12,13 +13,19 @@ export const DocumentTreeGlobalStyles = createGlobalStyle(css`
 .sg-docs-tree-panel {
   position: sticky;
   top: 14px;
+  display: flex;
+  flex-direction: column;
   min-width: 0;
   max-height: calc(100vh - 190px);
-  overflow-y: auto;
+  overflow: hidden;
   padding: 10px 8px;
   border: 1px solid var(--sg-border);
   border-radius: 8px;
   background: var(--sg-bg-2);
+}
+.sg-docs-tree-scroll {
+  min-height: 0;
+  flex: 1 1 auto;
 }
 .sg-docs-tree-heading,
 .sg-docs-tree-row {
@@ -172,13 +179,8 @@ export const DocumentTreeGlobalStyles = createGlobalStyle(css`
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.sg-asset-menu-label {
-  padding: 7px 12px 3px;
-  color: var(--sg-muted);
-  font-size: 11px;
-}
 .sg-docs-main .sg-docs-table-wrap {
-  overflow-x: auto;
+  min-width: 0;
 }
 
 @media (max-width: 1400px) {
@@ -242,4 +244,5 @@ export const DocumentTreeGlobalStyles = createGlobalStyle(css`
 .cm-editor .cm-cursor {
   border-left-color: var(--sg-accent);
 }
-`);
+  `,
+}));

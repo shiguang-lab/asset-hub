@@ -5,12 +5,26 @@ import { EditorView, highlightActiveLine, keymap, lineNumbers } from "@codemirro
 import { useToast } from "@shiguang/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "antd";
+import { createStyles } from "antd-style";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { type Asset, api } from "../../entities/api.js";
 import { SandboxHtmlPreview } from "../../shared/sandbox-preview.js";
 
+const useHtmlEditorStyles = createStyles(({ token }) => ({
+  header: { marginBottom: 10 },
+  title: {
+    border: "none",
+    outline: "none",
+    background: "transparent",
+    color: token.colorText,
+    fontSize: 18,
+    fontWeight: 700,
+  },
+}));
+
 export function HtmlEditorPage() {
+  const { styles } = useHtmlEditorStyles();
   const { id } = useParams<{ id: string }>();
   const [params] = useSearchParams();
   const navigate = useNavigate();
@@ -93,19 +107,8 @@ export function HtmlEditorPage() {
 
   return (
     <div>
-      <div className="sg-row-between" style={{ marginBottom: 10 }}>
-        <input
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-          style={{
-            border: "none",
-            background: "transparent",
-            fontSize: 18,
-            fontWeight: 700,
-            color: "var(--sg-fg)",
-            outline: "none",
-          }}
-        />
+      <div className={`sg-row-between ${styles.header}`}>
+        <input value={title} onChange={(e) => setTitle(e.target.value)} className={styles.title} />
         <div className="sg-row">
           <Button size="small" onClick={() => setPreview((p) => !p)}>
             {preview ? "回到源码" : "运行预览"}

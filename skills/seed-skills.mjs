@@ -14,12 +14,16 @@ import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const SKILL_GATEWAY = process.env.SKILL_GATEWAY_URL ?? "http://100.87.115.78:3110/api";
-const TOKEN = process.env.SKILL_GATEWAY_SERVICE_TOKEN ?? process.env.OPC_TOKEN ?? "";
+const TOKEN =
+  process.env.SKILL_GATEWAY_SERVICE_TOKEN ??
+  process.env.SKILL_GATEWAY_TOKEN ??
+  process.env.OPC_TOKEN ??
+  "";
 const AGENT_ID = process.env.CAPABILITY_AGENT_ID ?? "asset-hub";
 const SEED_DIR = dirname(fileURLToPath(import.meta.url));
 
 if (!TOKEN) {
-  console.error("缺少 SKILL_GATEWAY_SERVICE_TOKEN（或 OPC_TOKEN）");
+  console.error("缺少 SKILL_GATEWAY_SERVICE_TOKEN、SKILL_GATEWAY_TOKEN（或 OPC_TOKEN）");
   process.exit(1);
 }
 

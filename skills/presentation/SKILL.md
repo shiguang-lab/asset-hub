@@ -1,91 +1,82 @@
 ---
 name: presentation
-description: 从文档/研究报告/数据提炼章节大纲，并据此规划、生成符合 asset-hub 规范的单文件 HTML 演示文稿（data-sg-* 协议，含视觉布局与图表）。用于 asset-hub 演示生成 Agent。
-version: 1.1.0
+description: 将主题、文档、报告、数据或已有 HTML 重构为具有专业叙事、完整设计系统、图表与图解、动画和可编辑标签的在线演示；当前 Asset Hub 的 slide runtime 使用固定 16:9 参考舞台。用户只要提到生成、改造、重排、增强、检查、预览或发布在线演示、H5 演示、HTML presentation、PPT 风格页面，就应使用本 Skill；不要把任务退化为摘要分页或通用卡片网页。
+version: 2.0.1
 tags:
   - presentation
   - html
-  - outline
-  - design
+  - visual-design
+  - visual-qa
 ---
 
-# 在线演示生成 Skill
+# 专业在线演示创作 Skill
 
-为 asset-hub 生成单文件 HTML 演示（HTML Artifact）。本 Skill 覆盖从「源内容 → 章节大纲 → 页面规划 → HTML」的完整链路，遵循 `data-sg-*` Authoring Protocol，供 SG Runtime 与可视化编辑器消费。
+本 Skill 只描述内容、叙事和视觉创作方法。当前 Asset Hub 的 SG slide runtime 约束（16:9 参考舞台、HTML 安全、播放缩放、编辑锚点、浏览器 QA 和输出格式）由 Agent system prompt 与代码负责，不在这里重复实现细节。
 
-## 何时使用
+目标不是把文档分页，也不是套通用卡片模板，而是把材料组织成一套有观点、有节奏、有视觉论证的演示。保留构图、图形、字体组合和动效的创作自由，但所有选择都要服务于受众和内容。
 
-- 将文档、研究报告、数据集洞察、知识库内容转成在线演示。
-- 从主题或大纲直接生成演示。
-- 修改/重排已有演示页面（EDIT scope: element / page / presentation）。
+## 生成工作流
 
-## 输入
+### 1. 创作简报
 
-- `goal`：演示主题/标题。
-- `source`：源材料（Markdown 或文本）。
-- `profile`：演示类型（research / pitch / product-launch / data-story）。
-- `outline`：可选的章节大纲（生成阶段输入）。
+从用户要求和源材料提炼：
 
-## 阶段一：大纲提炼（Outline）
+- `audience`：谁在看、他们已有何种背景。
+- `purpose`：希望受众理解、相信或采取什么行动。
+- `density`：只选 `speaker-led` 或 `reading-first`。现场讲述默认前者；异步阅读、报告和内部评审默认后者。
+- `evidence`：哪些数字、引用、图片和结论有可靠来源，哪些只能做定性表达。
+- `constraints`：页数、语气、品牌、素材、语言和交付场景。
 
-从源内容提炼「章节大纲」，**不要**逐条照抄标题。参考金字塔原理（Pyramid Principle）与断言-证据法（Assertion-Evidence）：
+### 2. 叙事与页面规格
 
-1. 每章一个「结论先行」的断言式标题（完整句子表达观点，如「AI 正加速渗透传统行业」，而非「AI 趋势」这类标签）。
-2. 每章含 2~4 个具体要点：来自正文的数据、事实、判断，禁止「背景与现状/关键数据/结论与建议」这类通用套话。
-3. 尽量抽取可量化数据点（数值 + 口径/来源/时间）。
-4. 章节间叙事递进：现状 → 问题 → 分析 → 结论 → 行动。
-5. 每章标注视觉类型 visual：metrics（指标卡）/ chart（图表）/ two-column（对比）/ quote（金句）/ timeline（阶段演进）/ default。
+采用结论先行和“断言—证据—含义/行动”的结构重组材料，不按原文目录逐章搬运。每页先写清楚一个主要观点，再决定版式。页面规格至少包含：
 
-章节大纲 JSON 结构：
+- `title`：尽量写成观点句，而不是“背景/现状/方案”这类空标签。
+- `purpose`：这一页要让受众理解或相信什么。
+- `contentBudget`：标题、正文、标签、注释和图形的数量上限。
+- `focalPoint`：视觉焦点及其位置。
+- `composition`：网格、层级、留白和视觉动线。
+- `visualBrief`：图表、流程、矩阵、图片、架构图或隐喻具体表达什么关系。
+- `assetBrief`：需要哪些真实素材；没有可靠素材时如何用 CSS/SVG 表达。
+- `motion`：哪些内容按什么顺序出现，以及顺序为什么有助于理解。
 
-```json
-{
-  "title": "演示标题",
-  "theme": "light",
-  "aspectRatio": "16:9",
-  "sections": [
-    {
-      "id": "sec-1",
-      "title": "断言式章节标题",
-      "summary": "一句话概述",
-      "points": ["要点1", "要点2"],
-      "data": [{ "id": "d1", "label": "指标名", "value": "数值", "note": "口径" }],
-      "visual": "metrics"
-    }
-  ]
-}
-```
+### 3. 探索视觉方向
 
-## 阶段二：页面规划（Page Plan）
+在生成整篇前形成三个真正不同的候选方向，再选择最适合受众、场合和密度的一套。差异应体现在视觉论点、字体组合、色彩对比、网格、标志性视觉装置、图表语言和动效节奏，而不只是换色。
 
-把章节大纲展开为具体页面，**允许 1 个章节拆成 1~3 页**（不要求 1:1）：
+避免通用 AI 风格：白底紫渐变、连续圆角卡片、所有内容居中、每页固定双栏、系统字体大标题、装饰图形冒充信息图。可以从编辑设计、海报、产品界面、数据出版物、文化视觉或主题本身寻找形式，但要保持可扩展到整套 deck 的语法。
 
-- 第 1 页 `title`（封面），最后 1 页 `closing`（总结）。
-- 内容丰富的章节拆成「章节引言页（section）+ 内容页」。
-- visual 映射：metrics → metric 块（大数字）；chart → chart 块（meta.chart 给 `{type, data, labels}`）；two-column → two-column 布局 + card；quote → quote 页；timeline → timeline 块（每行「时期：事件」）；default → heading + bullet。
-- 每页标题用断言式完整句；bullet 每条 ≤ 24 字；数值必须来自大纲 data，不得编造。
+### 4. 建立设计系统
 
-## 阶段三：HTML 生成
+选中方向后固定字体层级、色彩角色、间距节奏、网格逻辑、形状/描边语言、图片裁切方式、图表主题和动画曲线。安全区和字号是内容预算的一部分，不是为了塞下更多字而事后压缩的补丁。
 
-输出完整 HTML 文档（`<!doctype html><html><head><style>…</style></head><body>…</body></html>`），不要 Markdown 代码围栏、不要解释。
+- `speaker-led`：一页一个强观点，少量文字，大字号，更多页面和更清晰的讲述节奏。
+- `reading-first`：页面更自洽，可使用结构化表格、注释、对比和图解，但必须保持层级和呼吸感。
+- 内容超出预算时优先拆页、重排或删减装饰性文案，不牺牲关键事实，也不把正文压到难以阅读。
 
-- 每个页面用 `<section data-sg-page="layout" data-sg-id="page-…" aria-label="标题">` 包裹。
-- 可编辑元素带稳定锚点 `data-sg-id`，按类型标注 `data-sg-kind`（`text` / `image` / `link` / `chart` / `counter` / `code-island`）。
-- 图表块用 `data-sg-kind="chart"` + `data-sg-chart` JSON；运行时由 SG.chart 渲染（ECharts 或 SVG 兜底）。
-- 动画用 `data-sg-enter`（fade / fade-up / slide / scale），Hover 用 `data-sg-hover`（lift / glow / scale / border）。
-- `:root` 内放主题 CSS 变量（--sg-primary / --sg-background / --sg-text-primary 等）。
+### 5. 逐页生成与素材使用
 
-## 视觉设计规范（Design Guidelines）
+按 2~4 页一组生成，持续携带设计系统以及前后页上下文，但不要让所有页面重复同一种构图。至少混合封面、章节/转场、叙事内容、数据/图解、对比/决策、引用/声明和收束等节奏。
 
-- **布局**：封面/章节页居中大标题；内容页「标题 + 卡片/指标/图表」；避免整页堆纯文字。
-- **层级**：标题（clamp 28~48px）> 指标数值（36~56px）> 正文（16~18px）；正文行高 1.7。
-- **卡片化**：要点、指标、对比用卡片承载，圆角 8~24px，浅色 surface 背景 + 主色描边。
-- **数据可视化**：有量化数据优先用 metric 大数字卡或 chart；图表标轴/单位/来源。
-- **留白**：页面 padding 64px+，卡片间距 20~28px。
-- **克制动画**：进场 fade-up（每块 stagger 60ms），Hover 用 lift；research 类演示动画克制。
+图形必须表达关系：
 
-## 约束
+- 流程显示方向、阶段、输入和输出。
+- 矩阵/象限明确坐标含义和分布逻辑。
+- 趋势突出转折、差异或变化含义。
+- 架构图体现层级、边界、流向和不变量。
+- 图表直接标注结论、单位和来源，避免库默认主题。
 
-- 单文件、无外部网络依赖；图片可用外部 URL 或 `asset:<id>`。
-- 结构以 `data-sg-page` 分页；正文引用遵循 `asset:<id>` 协议。
-- 禁止引入未列出的第三方库、CDN、`<script src>`、`<link href>`、fetch/XHR/eval。
+优先使用用户提供且可验证的素材。没有可靠图片时用有语义的 CSS/SVG 视觉，不捏造图片地址、数据或引用。所有关键数字和证据都应能回溯到材料。
+
+### 6. 动效与质量复盘
+
+动效服务于讲述顺序、强调和空间关系，而不是装饰。优先使用少量高影响的分步呈现、淡入、位移或尺度变化，连续页面共享节奏但不要每页复制同一套动画；尊重减少动态偏好。
+
+逐页回看叙事是否连贯、观点是否重复、图形是否真正表达关系、数据是否支持结论、标题是否易读、内容是否过载，以及成品是否像针对当前主题设计。浏览器截图和几何诊断由平台 QA 执行；发现问题时只定向修复受影响页面，并再次验证。
+
+## 不属于本 Skill 的内容
+
+- 不规定如何拼接 system message、如何解析 Skill 或如何调用模型；这些属于 Agent runtime。
+- 不要求模型复制完整的 viewport CSS、导航控制器或编辑器代码；平台会注入和管理这些能力。
+- 不把 `1920×1080` 当成所有演示场景的普适设计原则；它是当前 SG slide runtime 的参考舞台契约。
+- 不包含 PPT 转换脚本、Vercel 部署、PDF 导出或模板库索引；这些是独立工具/工作流。

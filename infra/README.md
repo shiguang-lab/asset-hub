@@ -12,7 +12,7 @@ Asset Hub 复用 NAS 上的共享基础服务，按“独立库 / 租户 / bucke
 | 持久任务 | 共享 Hatchet full | gRPC `100.87.115.78:7077`、Dashboard `:8888` | 独立 tenant `asset-hub` + token |
 | 对象存储 | 共享 SeaweedFS S3 网关 | `100.87.115.78:8333` | 独立 bucket `asset-hub` + credential |
 | 事件总线 | 共享 NATS JetStream | `nats://100.87.115.78:4222` | subject 前缀 `asset_hub.*` |
-| 模型路由 | 共享 model-gateway | `http://100.87.115.78:3150` | 独立 client `asset-hub-runtime`、scope `asset-hub` |
+| 模型路由 | 共享 model-gateway | `http://100.87.115.78:3150` | 独立 `resolve` client `asset-hub-runtime`，使用全局模型目录 |
 | 认证 | 共享 auth-service + ZITADEL | 平台统一 | 复用 `X-SG-Identity` |
 | 北向入口 | 共享 access-gateway | 平台统一 | 新增 host/path policy |
 | 访问分析 | 共享 Umami | 平台统一 | 新 siteId |
@@ -82,4 +82,6 @@ cd infra/compose
 
 首次执行会生成权限为 `0600` 的 `runtime.env`，保存服务间令牌和镜像版本。
 后续部署保留该文件，避免滚动更新时令牌意外变化。共享网关路由模板见
-`infra/gateway/asset-hub.caddy`。
+`/Users/yanxianliang/shiguang/deploy/access-gateway/Caddyfile`，由统一部署仓库维护。
+Asset Hub 应用部署不会修改 Caddy；网关配置变更应通过统一的
+`shiguang/deploy/access-gateway/deploy.sh` 发布。

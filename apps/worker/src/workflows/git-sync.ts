@@ -41,7 +41,6 @@ export async function runGitSyncWorkflow(
       runId: ctx.runId,
       attempt: 1,
       outputs,
-      usage: { inputTokens: 0, outputTokens: 0, providerCostMicros: 0, creditUnits: 20 },
       failures: [],
     });
     if (!result.ok) throw new Error("git import projection failed");

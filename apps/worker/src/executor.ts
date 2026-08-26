@@ -80,7 +80,6 @@ export class Executor {
           runId,
           attempt: 1,
           outputs: [],
-          usage: { creditUnits: 0 },
           failures: [{ item: "workflow", reason: message, retryable: true }],
         })
         .catch(() => undefined);

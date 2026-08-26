@@ -137,6 +137,30 @@ func (c Config) FetchReleaseFile(publishID, releaseID, path string) (body []byte
 	return body, resp.StatusCode, err
 }
 
+func (c Config) FetchPresentationContent(publishID, releaseID string) (body []byte, status int, err error) {
+	query := url.Values{}
+	query.Set("publishId", publishID)
+	query.Set("releaseId", releaseID)
+	req, err := http.NewRequest(http.MethodGet, c.APIBase+"/internal/v1/presentation-content?"+query.Encode(), nil)
+	if err != nil {
+		return nil, 0, err
+	}
+	req.Header.Set("X-Internal-Token", c.GatewayToken)
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer resp.Body.Close()
+	body, err = io.ReadAll(io.LimitReader(resp.Body, 256<<20))
+	if err != nil {
+		return nil, 0, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return body, resp.StatusCode, nil
+	}
+	return body, http.StatusOK, nil
+}
+
 type UnlockResult struct {
 	Token     string `json:"token"`
 	PublishID string

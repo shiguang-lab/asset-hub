@@ -1,3 +1,6 @@
+import { Agent } from "@mastra/core/agent";
+import type { MessageListInput } from "@mastra/core/agent/message-list";
+import type { Workspace } from "@mastra/core/workspace";
 import {
   loadMcpGatewayConfig,
   loadModelGatewayConfig,
@@ -6,25 +9,35 @@ import {
 } from "@shiguang/config";
 import { z } from "zod";
 
+import { createMastraModel, type ResolvedModelRoute } from "./mastra-model.js";
 import { connectMcpServers } from "./mcp.js";
+import { type AgentSkillManifest, createMastraRemoteSkillWorkspace } from "./remote-skills.js";
 
+export * from "./mastra-model.js";
 export * from "./mcp.js";
+export * from "./remote-skills.js";
 
 export type ModelQuality = "economy" | "balanced" | "best";
 
 /**
- * asset-hub Agent 在 Model Gateway 中固定的 Agent 键。
- * 网关端为该键配置唯一默认绑定 → deepseek-v4-flash，运行时直接解析，无需质量档/策略键映射。
+ * asset-hub Agent 在全局 Model Gateway 中固定的 Agent 键。
+ * 网关端为该键配置唯一默认绑定 → doubao-seed-2.0-lite，运行时直接解析，无需质量档/策略键映射。
  */
 export const MODEL_AGENT_KEY = "asset-hub";
+export const MAX_MODEL_OUTPUT_TOKENS = 32_768;
+export const DEFAULT_MODEL_OUTPUT_TOKENS = 16_384;
 
 /* ------------------------------------------------------------------ */
 /* Chat completion client                                               */
 /* ------------------------------------------------------------------ */
 
+export type ChatContentPart =
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string; detail?: "low" | "high" | "auto" } };
+
 export interface ChatMessage {
   role: "system" | "user" | "assistant" | "tool";
-  content: string | null;
+  content: string | ChatContentPart[] | null;
   /** tool 消息回填时用于关联 assistant 的 tool_calls。 */
   tool_call_id?: string;
   /** assistant 消息携带的 tool_calls（OpenAI 兼容格式）。 */
@@ -58,6 +71,11 @@ export interface ChatCompletionRequest {
   quality?: ModelQuality;
   taskId?: string;
   tools?: ChatTool[];
+  thinkingMode?: "enabled" | "disabled" | "auto";
+  fallbackToLocal?: boolean;
+  signal?: AbortSignal;
+  /** Mastra Workspace 提供按需 Skill 发现与读取，不展开 Skill 全文。 */
+  workspace?: Workspace;
 }
 
 export interface ChatCompletionResponse {
@@ -67,8 +85,18 @@ export interface ChatCompletionResponse {
     outputTokens: number;
   };
   provider: string;
+  finishReason?: string;
   toolCalls?: ChatToolCall[];
 }
+
+export interface ChatStreamUpdate {
+  delta: string;
+  text: string;
+  activity: "content" | "reasoning" | "heartbeat" | "failed";
+  receivedChars: number;
+}
+
+export type ChatStreamHandler = (update: ChatStreamUpdate) => void | Promise<void>;
 
 const completionSchema = z.object({
   choices: z.array(
@@ -95,17 +123,10 @@ const completionSchema = z.object({
     .optional(),
 });
 
-interface ResolvedRoute {
-  provider: string;
-  model: string;
-  baseUrl?: string;
-  apiKey: string;
-}
-
 export class ModelGatewayClient {
   constructor(private readonly config: ModelGatewayConfig) {}
 
-  private async resolve(taskId: string): Promise<ResolvedRoute | null> {
+  private async resolve(taskId: string): Promise<ResolvedModelRoute | null> {
     if (!this.config.baseUrl) throw new Error("MODEL_GATEWAY_URL is not configured");
     const url = new URL("/internal/model-config/resolve", this.config.baseUrl);
     const res = await fetch(url, {
@@ -118,22 +139,52 @@ export class ModelGatewayClient {
     });
     if (!res.ok) {
       const body = await res.text().catch(() => "");
-      throw new Error(`model gateway resolve ${res.status}: ${body.slice(0, 300)}`);
+      throw new Error(`global Model Gateway resolve ${res.status}: ${body.slice(0, 300)}`);
     }
-    return (await res.json()) as ResolvedRoute | null;
+    return (await res.json()) as ResolvedModelRoute | null;
   }
 
   async complete(request: ChatCompletionRequest): Promise<ChatCompletionResponse> {
+    if (request.tools?.length) return this.completeDirect(request);
+    if (!this.config.baseUrl) throw new Error("MODEL_GATEWAY_URL is not configured");
+    const taskId = request.taskId ?? `task_${crypto.randomUUID()}`;
+    const runtime = await this.resolve(taskId);
+    if (!runtime) {
+      throw new Error(`global Model Gateway has no route for agentKey=${MODEL_AGENT_KEY}`);
+    }
+    const agent = this.createAgent(request, runtime, taskId);
+    const output = await agent.generate(toMastraMessages(request.messages), {
+      maxSteps: request.workspace ? 4 : 1,
+      abortSignal: request.signal,
+      modelSettings: {
+        temperature: request.temperature ?? 0.7,
+        maxOutputTokens: clampMaxTokens(request.maxTokens ?? DEFAULT_MODEL_OUTPUT_TOKENS, this.config.maxOutputTokens),
+      },
+    });
+    return {
+      text: output.text,
+      usage: {
+        inputTokens: output.totalUsage.inputTokens ?? 0,
+        outputTokens: output.totalUsage.outputTokens ?? 0,
+      },
+      provider: "mastra/global-model-gateway",
+    };
+  }
+
+  private async completeDirect(request: ChatCompletionRequest): Promise<ChatCompletionResponse> {
     if (!this.config.baseUrl) {
       throw new Error("MODEL_GATEWAY_URL is not configured");
     }
     const taskId = request.taskId ?? `task_${crypto.randomUUID()}`;
     const runtime = await this.resolve(taskId);
     if (!runtime) {
-      throw new Error(`model gateway has no route configured for agentKey=${MODEL_AGENT_KEY}`);
+      throw new Error(`global Model Gateway has no route for agentKey=${MODEL_AGENT_KEY}`);
     }
     const url = new URL("/v1/chat/completions", runtime.baseUrl ?? this.config.baseUrl);
     const controller = new AbortController();
+    const abortFromRequest = () => controller.abort(request.signal?.reason);
+    if (request.signal?.aborted) abortFromRequest();
+    else request.signal?.addEventListener("abort", abortFromRequest, { once: true });
     const timer = setTimeout(() => controller.abort(), this.config.timeoutMs);
     try {
       const res = await fetch(url, {
@@ -147,7 +198,10 @@ export class ModelGatewayClient {
           model: runtime.model ?? this.config.model,
           messages: request.messages,
           temperature: request.temperature ?? 0.7,
-          max_tokens: request.maxTokens ?? 2048,
+          max_tokens: clampMaxTokens(request.maxTokens ?? DEFAULT_MODEL_OUTPUT_TOKENS, this.config.maxOutputTokens),
+          ...(request.thinkingMode && request.thinkingMode !== "auto"
+            ? { thinking: { type: request.thinkingMode } }
+            : {}),
           ...(request.responseFormat === "json_object"
             ? { response_format: { type: "json_object" } }
             : {}),
@@ -161,7 +215,7 @@ export class ModelGatewayClient {
       });
       if (!res.ok) {
         const body = await res.text().catch(() => "");
-        throw new Error(`model gateway ${res.status}: ${body.slice(0, 300)}`);
+        throw new Error(`global Model Gateway ${res.status}: ${body.slice(0, 300)}`);
       }
       const parsed = completionSchema.parse(await res.json());
       const text = parsed.choices[0]?.message.content ?? "";
@@ -178,13 +232,173 @@ export class ModelGatewayClient {
           inputTokens: parsed.usage?.prompt_tokens ?? 0,
           outputTokens: parsed.usage?.completion_tokens ?? 0,
         },
-        provider: "model-gateway",
+        provider: "global-model-gateway",
         ...(toolCalls.length ? { toolCalls } : {}),
       };
     } finally {
+      request.signal?.removeEventListener("abort", abortFromRequest);
       clearTimeout(timer);
     }
   }
+
+  async completeStream(
+    request: ChatCompletionRequest,
+    onUpdate: ChatStreamHandler,
+  ): Promise<ChatCompletionResponse> {
+    if (request.tools?.length) {
+      throw new Error("streaming tool calls are not supported by this client");
+    }
+    if (!this.config.baseUrl) throw new Error("MODEL_GATEWAY_URL is not configured");
+    const taskId = request.taskId ?? `task_${crypto.randomUUID()}`;
+    const runtime = await this.resolve(taskId);
+    if (!runtime) {
+      throw new Error(`global Model Gateway has no route for agentKey=${MODEL_AGENT_KEY}`);
+    }
+    const controller = new AbortController();
+    const abortFromRequest = () => controller.abort(request.signal?.reason);
+    if (request.signal?.aborted) abortFromRequest();
+    else request.signal?.addEventListener("abort", abortFromRequest, { once: true });
+    let firstByteTimer: ReturnType<typeof setTimeout> | undefined;
+    let idleTimer: ReturnType<typeof setTimeout> | undefined;
+    const totalTimer = setTimeout(
+      () => controller.abort(new Error("模型生成超过任务总时长限制")),
+      this.config.streamTotalTimeoutMs,
+    );
+    const armFirstByteTimeout = () => {
+      firstByteTimer = setTimeout(
+        () => controller.abort(new Error("等待模型首个输出超时")),
+        this.config.streamFirstByteTimeoutMs,
+      );
+    };
+    const armIdleTimeout = () => {
+      if (idleTimer) clearTimeout(idleTimer);
+      idleTimer = setTimeout(
+        () => controller.abort(new Error("模型流式输出长时间没有新内容")),
+        this.config.streamIdleTimeoutMs,
+      );
+    };
+    armFirstByteTimeout();
+    let text = "";
+    try {
+      const agent = this.createAgent(request, runtime, taskId);
+      const output = await agent.stream(toMastraMessages(request.messages), {
+        maxSteps: request.workspace ? 4 : 1,
+        abortSignal: controller.signal,
+        modelSettings: {
+          temperature: request.temperature ?? 0.7,
+          maxOutputTokens: clampMaxTokens(request.maxTokens ?? DEFAULT_MODEL_OUTPUT_TOKENS, this.config.maxOutputTokens),
+        },
+      });
+      let finishReason: string | undefined;
+      let receivedFirstByte = false;
+      for await (const chunk of output.fullStream) {
+        const typedChunk = chunk as { type?: string; payload?: { text?: string; finishReason?: string }; finishReason?: string };
+        const payload = typedChunk.payload;
+        if (typedChunk.type === "finish" || typedChunk.type === "finish-step") {
+          finishReason = typedChunk.finishReason ?? payload?.finishReason ?? finishReason;
+        }
+        const delta = typeof payload?.text === "string" ? payload.text : "";
+        const activity =
+          chunk.type === "reasoning-delta"
+            ? "reasoning"
+            : chunk.type === "text-delta" && delta
+              ? "content"
+              : "heartbeat";
+        if (!receivedFirstByte) {
+          receivedFirstByte = true;
+          if (firstByteTimer) clearTimeout(firstByteTimer);
+        }
+        armIdleTimeout();
+        if (activity === "content") text += delta;
+        await onUpdate({
+          delta: activity === "content" ? delta : "",
+          text,
+          activity,
+          receivedChars: text.length + (activity === "reasoning" ? delta.length : 0),
+        });
+      }
+      const usage = await output.totalUsage;
+      return {
+        text,
+        usage: {
+          inputTokens: usage.inputTokens ?? 0,
+          outputTokens: usage.outputTokens ?? 0,
+        },
+        provider: "mastra/global-model-gateway",
+        ...(finishReason ? { finishReason } : {}),
+      };
+    } catch (error) {
+      await Promise.resolve(onUpdate({
+        delta: "",
+        text,
+        activity: "failed",
+        receivedChars: text.length,
+      })).catch(() => undefined);
+      if (controller.signal.aborted && controller.signal.reason instanceof Error) {
+        throw controller.signal.reason;
+      }
+      throw error;
+    } finally {
+      request.signal?.removeEventListener("abort", abortFromRequest);
+      if (firstByteTimer) clearTimeout(firstByteTimer);
+      if (idleTimer) clearTimeout(idleTimer);
+      clearTimeout(totalTimer);
+    }
+  }
+
+  private createAgent(
+    request: ChatCompletionRequest,
+    runtime: ResolvedModelRoute,
+    taskId: string,
+  ): Agent {
+    if (!this.config.baseUrl) throw new Error("MODEL_GATEWAY_URL is not configured");
+    return new Agent({
+      id: `asset-hub-${taskId.replace(/[^a-zA-Z0-9._-]/g, "-").slice(0, 96)}`,
+      name: "Asset Hub Agent",
+      instructions: systemInstructions(request.messages),
+      model: createMastraModel(runtime, {
+        taskId,
+        fallbackBaseUrl: this.config.baseUrl,
+        thinkingMode: request.thinkingMode,
+      }),
+      ...(request.workspace ? { workspace: request.workspace } : {}),
+    });
+  }
+}
+
+function clampMaxTokens(value: number, configuredCeiling = MAX_MODEL_OUTPUT_TOKENS): number {
+  if (!Number.isFinite(value) || value <= 0) return DEFAULT_MODEL_OUTPUT_TOKENS;
+  return Math.min(Math.floor(value), MAX_MODEL_OUTPUT_TOKENS, Math.max(1, configuredCeiling));
+}
+
+function systemInstructions(messages: ChatMessage[]): string {
+  const system = messages
+    .filter((message) => message.role === "system")
+    .map((message) => chatContentAsText(message.content))
+    .filter(Boolean)
+    .join("\n\n");
+  return `${system || "Follow the user's request accurately."}${messages.some((message) => message.role === "system" && message.content && chatContentAsText(message.content).includes("严格 JSON")) ? "\nReturn valid JSON only; do not wrap it in Markdown fences." : ""}`;
+}
+
+function toMastraMessages(messages: ChatMessage[]): MessageListInput {
+  return messages
+    .filter((message) => message.role !== "system")
+    .map((message) => ({
+      role: message.role,
+      content: Array.isArray(message.content)
+        ? message.content.map((part) =>
+            part.type === "text" ? part : { type: "image", image: new URL(part.image_url.url) },
+          )
+        : (message.content ?? ""),
+      ...(message.tool_call_id ? { toolCallId: message.tool_call_id } : {}),
+    })) as MessageListInput;
+}
+
+function chatContentAsText(content: ChatMessage["content"]): string {
+  if (Array.isArray(content)) {
+    return content.map((part) => (part.type === "text" ? part.text : "[image]")).join("\n");
+  }
+  return content ?? "";
 }
 
 export function createModelClient(): ModelGatewayClient {
@@ -207,7 +421,16 @@ export interface LocalModelOptions {
  */
 export class LocalModel {
   async complete(request: ChatCompletionRequest): Promise<ChatCompletionResponse> {
-    const prompt = request.messages.map((m) => `${m.role}: ${m.content}`).join("\n\n");
+    const prompt = request.messages
+      .map((message) => {
+        const content = Array.isArray(message.content)
+          ? message.content
+              .map((part) => (part.type === "text" ? part.text : "[rendered slide image]"))
+              .join("\n")
+          : (message.content ?? "");
+        return `${message.role}: ${content}`;
+      })
+      .join("\n\n");
     const output = LocalModel.infer(prompt);
     return {
       text: output,
@@ -222,12 +445,6 @@ export class LocalModel {
   static infer(prompt: string): string {
     if (prompt.includes("research-scope")) {
       return LocalModel.scope(prompt);
-    }
-    if (prompt.includes("presentation-outline")) {
-      return LocalModel.outline(prompt);
-    }
-    if (prompt.includes("presentation-slide")) {
-      return LocalModel.slide(prompt);
     }
     if (prompt.includes("knowledge-answer")) {
       return LocalModel.knowledge(prompt);
@@ -255,73 +472,6 @@ export class LocalModel {
         { id: "trends", label: "趋势与机会", enabled: true },
         { id: "risks", label: "风险与挑战", enabled: true },
       ],
-    });
-  }
-
-  private static outline(prompt: string): string {
-    const title = LocalModel.extractAfter(prompt, "title:", 120) || "演示文稿";
-    const source = LocalModel.extractAfter(prompt, "source:", 4000);
-    const lines = (source || "")
-      .split(/\r?\n/)
-      .map((l) => l.replace(/^#+\s*/, "").trim())
-      .filter((l) => l.length > 0);
-    const sectionCount = Math.min(6, Math.max(3, lines.length));
-    const sections = lines.length >= sectionCount ? lines.slice(0, sectionCount) : [];
-    const slides = [
-      { id: "s1", layout: "title", title, blocks: [{ id: "b1", type: "heading", content: title }] },
-    ];
-    for (let i = 0; i < sectionCount; i += 1) {
-      const heading = sections[i] ?? `主题 ${i + 1}`;
-      slides.push({
-        id: `s${i + 2}`,
-        layout: i % 2 === 0 ? "content" : "two-column",
-        title: heading,
-        blocks: [
-          { id: `b${i * 2 + 1}`, type: "heading", content: heading },
-          {
-            id: `b${i * 2 + 2}`,
-            type: "bullet",
-            content: [
-              `${heading}的关键事实与数据`,
-              "行业背景与驱动因素",
-              "影响与后续行动建议",
-            ].join("\n"),
-          },
-        ],
-      });
-    }
-    slides.push({
-      id: `s${sectionCount + 2}`,
-      layout: "closing",
-      title: "总结与展望",
-      blocks: [
-        { id: "b-end-1", type: "heading", content: "总结与展望" },
-        { id: "b-end-2", type: "text", content: "核心结论 · 行动建议 · Q&A" },
-      ],
-    });
-    return JSON.stringify({
-      title,
-      theme: "light",
-      aspectRatio: "16:9",
-      slides,
-    });
-  }
-
-  private static slide(prompt: string): string {
-    const title = LocalModel.extractAfter(prompt, "title:", 120) || "内容页";
-    return JSON.stringify({
-      id: `slide_${Date.now().toString(36)}`,
-      layout: "content",
-      title,
-      blocks: [
-        { id: "h1", type: "heading", content: title },
-        {
-          id: "t1",
-          type: "bullet",
-          content: "要点一：背景与现状\n要点二：核心数据\n要点三：结论与建议",
-        },
-      ],
-      notes: "",
     });
   }
 
@@ -419,6 +569,7 @@ export interface AiResult {
   text: string;
   usage: { inputTokens: number; outputTokens: number };
   provider: string;
+  finishReason?: string;
   toolCalls?: ChatToolCall[];
 }
 
@@ -426,7 +577,13 @@ export class AiService {
   private readonly gateway: ModelGatewayClient;
   private readonly local: LocalModel;
 
-  constructor(private readonly options: { forceLocal?: boolean; quality?: ModelQuality } = {}) {
+  constructor(
+    private readonly options: {
+      forceLocal?: boolean;
+      quality?: ModelQuality;
+      workspace?: Workspace;
+    } = {},
+  ) {
     this.gateway = createModelClient();
     this.local = new LocalModel();
   }
@@ -441,21 +598,70 @@ export class AiService {
 
   async complete(request: ChatCompletionRequest): Promise<AiResult> {
     if (this.useLocal()) {
+      if (request.fallbackToLocal === false) {
+        throw new Error("MODEL_GATEWAY_URL is not configured and local fallback is disabled");
+      }
       return this.local.complete(request);
     }
     try {
       return await this.gateway.complete({
         ...request,
+        ...(request.workspace || !this.options.workspace
+          ? {}
+          : { workspace: this.options.workspace }),
         quality: request.quality ?? this.options.quality ?? "balanced",
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      console.warn("[ai-core] model gateway failed, falling back to local:", message);
-      if (process.env.AI_FALLBACK_TO_LOCAL === "false") {
+      console.warn("[ai-core] global Model Gateway failed, falling back to local:", message);
+      if (request.fallbackToLocal === false || process.env.AI_FALLBACK_TO_LOCAL === "false") {
         throw err;
       }
       const fallback = await this.local.complete(request);
       return { ...fallback, text: `${fallback.text}\n\n<!-- ai-fallback: ${message} -->` };
+    }
+  }
+
+  async completeStream(
+    request: ChatCompletionRequest,
+    onUpdate: ChatStreamHandler,
+  ): Promise<AiResult> {
+    if (this.useLocal()) {
+      if (request.fallbackToLocal === false) {
+        throw new Error("MODEL_GATEWAY_URL is not configured and local fallback is disabled");
+      }
+      const local = await this.local.complete(request);
+      await onUpdate({
+        delta: local.text,
+        text: local.text,
+        activity: "content",
+        receivedChars: local.text.length,
+      });
+      return local;
+    }
+    try {
+      return await this.gateway.completeStream(
+        {
+          ...request,
+          ...(request.workspace || !this.options.workspace
+            ? {}
+            : { workspace: this.options.workspace }),
+          quality: request.quality ?? this.options.quality ?? "balanced",
+        },
+        onUpdate,
+      );
+    } catch (err) {
+      if (request.fallbackToLocal === false || process.env.AI_FALLBACK_TO_LOCAL === "false") {
+        throw err;
+      }
+      const local = await this.local.complete(request);
+      await onUpdate({
+        delta: local.text,
+        text: local.text,
+        activity: "content",
+        receivedChars: local.text.length,
+      });
+      return local;
     }
   }
 
@@ -481,11 +687,28 @@ export class AiService {
     }
     return { data: schema.parse(parsed), provider: res.provider, usage: res.usage };
   }
+
+  async completeJsonStream<T>(
+    request: ChatCompletionRequest,
+    schema: z.ZodType<T>,
+    onUpdate: ChatStreamHandler,
+  ): Promise<{ data: T; provider: string; usage: { inputTokens: number; outputTokens: number } }> {
+    const res = await this.completeStream({ ...request, responseFormat: "json_object" }, onUpdate);
+    const raw = res.text.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      throw new Error("AI 服务返回了非 JSON 内容，可能余额不足或服务不可用");
+    }
+    return { data: schema.parse(parsed), provider: res.provider, usage: res.usage };
+  }
 }
 
 export const createAiService = (options?: {
   forceLocal?: boolean;
   quality?: ModelQuality;
+  workspace?: Workspace;
 }): AiService => new AiService(options);
 
 /* ------------------------------------------------------------------ */
@@ -494,95 +717,61 @@ export const createAiService = (options?: {
 
 export interface CapabilityContext {
   agentId: string;
-  skills: Array<{ name: string; description: string; content: string }>;
+  skills: Array<{ name: string; version: string }>;
+  skillManifest?: AgentSkillManifest;
+  /** Mastra 原生 Skill Workspace；Agent 通过工具按需读取相关内容。 */
+  workspace?: Workspace;
   mcpServers: Array<{
     name: string;
     url: string;
     headers?: Record<string, string>;
     timeoutMs?: number;
   }>;
-  /** 注入 system prompt 的完整能力说明（含各 Skill 的 SKILL.md 全文）；无配置能力时返回 null。 */
+  /** 仅列出能力名称，不包含 SKILL.md 内容。 */
   summary: string;
+  dispose: () => Promise<void>;
 }
 
 /**
- * 拉取该 Agent 在 Skill Gateway / MCP Gateway 中已分配的能力 manifest，
- * 生成一段可注入 system prompt 的摘要。任一网关未配置时跳过；两者都无内容时返回 null。
+ * 将 Skill Gateway manifest 挂载为 Mastra Workspace，同时加载 MCP manifest。
+ * Skill 正文不会被下载并拼入 system prompt；只有 Agent 选择相关 Skill 时才会读取 blob。
  */
-export async function loadCapabilityContext(agentId: string): Promise<CapabilityContext | null> {
+export async function loadCapabilityContext(
+  agentId: string,
+  taskId?: string,
+): Promise<CapabilityContext | null> {
   const skill = loadSkillGatewayConfig();
   const mcp = loadMcpGatewayConfig();
 
-  const [skills, mcpServers] = await Promise.all([
-    skill.baseUrl ? fetchSkills(agentId, skill.baseUrl, skill.token) : Promise.resolve([]),
+  const [remoteSkills, mcpServers] = await Promise.all([
+    skill.baseUrl && skill.token && taskId
+      ? createMastraRemoteSkillWorkspace({
+          agentId,
+          taskId,
+          skillGatewayUrl: skill.baseUrl,
+          token: skill.token,
+        }).catch(() => null)
+      : Promise.resolve(null),
     mcp.baseUrl ? fetchMcpServers(agentId, mcp.baseUrl, mcp.token) : Promise.resolve([]),
   ]);
 
+  const skills = (remoteSkills?.manifest.skills ?? [])
+    .filter((entry) => entry.enabled)
+    .map((entry) => ({ name: entry.name, version: entry.version }));
   if (skills.length === 0 && mcpServers.length === 0) return null;
   const summary = buildCapabilitySummary(skills, mcpServers);
-  return { agentId, skills, mcpServers, summary };
-}
-
-async function fetchSkills(
-  agentId: string,
-  baseUrl: string,
-  token: string | null,
-): Promise<Array<{ name: string; description: string; content: string }>> {
-  try {
-    const base = baseUrl.replace(/\/+$/, "");
-    const res = await fetch(`${base}/skills/manifests/${encodeURIComponent(agentId)}`, {
-      headers: { authorization: `Bearer ${token ?? ""}` },
-      signal: AbortSignal.timeout(8_000),
-    });
-    if (!res.ok) return [];
-    const body = (await res.json()) as {
-      skills?: Array<{
-        name?: string;
-        versionTree?: { entries?: Record<string, { blobHash?: string }> };
-      }>;
-    };
-    const skills: Array<{ name: string; description: string; content: string }> = [];
-    for (const skill of body.skills ?? []) {
-      if (typeof skill.name !== "string") continue;
-      const blobHash = skill.versionTree?.entries?.["SKILL.md"]?.blobHash;
-      let content = "";
-      if (blobHash) {
-        const blobRes = await fetch(`${base}/blobs/${encodeURIComponent(blobHash)}`, {
-          headers: { authorization: `Bearer ${token ?? ""}` },
-          signal: AbortSignal.timeout(8_000),
-        });
-        if (blobRes.ok) content = await blobRes.text();
-      }
-      skills.push({
-        name: skill.name,
-        description: extractFrontmatterDescription(content),
-        content,
-      });
-    }
-    return skills;
-  } catch {
-    return [];
-  }
-}
-
-function extractFrontmatterDescription(markdown: string): string {
-  const match = markdown.match(/^---\r?\n([\s\S]*?)\r?\n---/);
-  if (!match) return "";
-  const frontmatter = match[1] ?? "";
-  const lineMatch = frontmatter.match(/^description:\s*(.*)$/m);
-  if (!lineMatch) return "";
-  const raw = (lineMatch[1] ?? "").trim();
-  if (raw === "|" || raw === ">") {
-    const lines = frontmatter.split(/\r?\n/);
-    const start = lines.findIndex((l) => /^description:\s*[|>]/.test(l));
-    const block: string[] = [];
-    for (const line of lines.slice(start + 1)) {
-      if (!/^\s+/.test(line)) break;
-      block.push(line.trim());
-    }
-    return block.join(raw === ">" ? " " : "\n").trim();
-  }
-  return raw.replace(/^["']|["']$/g, "").trim();
+  return {
+    agentId,
+    skills,
+    mcpServers,
+    summary,
+    ...(remoteSkills
+      ? { workspace: remoteSkills.workspace, skillManifest: remoteSkills.manifest }
+      : {}),
+    dispose: async () => {
+      await remoteSkills?.workspace.destroy();
+    },
+  };
 }
 
 async function fetchMcpServers(
@@ -621,24 +810,17 @@ async function fetchMcpServers(
 }
 
 function buildCapabilitySummary(
-  skills: Array<{ name: string; description: string; content: string }>,
+  skills: Array<{ name: string; version: string }>,
   mcpServers: CapabilityContext["mcpServers"],
 ): string {
   const lines: string[] = ["可用动态能力："];
   for (const s of skills) {
-    lines.push(`- Skill「${s.name}」${s.description ? `：${s.description}` : ""}`);
+    lines.push(`- Skill「${s.name}」(${s.version})，通过 Mastra Workspace 按需读取`);
   }
   for (const m of mcpServers) {
     lines.push(`- MCP 工具服务「${m.name}」(${m.url})`);
   }
-  if (skills.some((s) => s.content.trim())) {
-    lines.push("\n已加载的 Skill 规范（按需遵循）：");
-    for (const s of skills) {
-      if (!s.content.trim()) continue;
-      lines.push(`\n=== Skill: ${s.name} ===\n${s.content.trim()}`);
-    }
-  }
-  lines.push("\n在回答时遵循相关 Skill 规范；不要编造未列出的能力。");
+  lines.push("\n按需使用已列出的能力，不要编造未列出的能力。");
   return lines.join("\n");
 }
 

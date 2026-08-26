@@ -143,7 +143,7 @@ erDiagram
 - `task_runs/task_steps/task_attempts`：产品读模型，不替代 Hatchet history；
 - `evidence_items`：claim、source asset/version、locator、excerpt hash、retrievedAt、confidence、verification status；
 - `task_outputs`：task → asset/version relation；
-- `model_usage`：step、provider profile、tokens、provider cost、credit units。
+- `model_usage`：step、provider profile、tokens、provider cost。
 
 原始网页快照需遵守 robots/授权和内容合规策略；默认存元数据与必要引用，不永久复制无权保存的完整正文。
 
@@ -190,16 +190,9 @@ API 接收结构化请求：
 
 内容更新后创建新 Release，再原子切换 `active_release_id`；缓存键包含 release id/etag，旧 release 延迟清理，发布切换可回滚。
 
-## 9. Credits 账本
+## 9. 积分余额
 
-Credits 必须用 append-only ledger，不在用户表直接做 `balance = balance - x`：
-
-- `credit_accounts`；
-- `credit_ledger_entries`：grant/reserve/settle/release/refund/expire；
-- `credit_reservations`：绑定 task，带过期时间；
-- `usage_records`：模型、存储、任务维度的原始计量。
-
-启动高成本任务时 reserve 上限；运行中分步记录 provider usage；结束后 settle 实际值并 release 余额。所有操作以 `operation_id` 唯一，防止重试重复扣费。
+积分账户、扣费、套餐和用量由外部积分系统负责。Asset Hub 只保留一个只读余额适配边界，任务创建、演示生成、数据集导入和 Git 同步不在本地做余额校验、预留、结算或扣费。外部系统接入后，只需替换余额读取适配，不改变资产与任务流程。
 
 ## 10. 生命周期与备份
 

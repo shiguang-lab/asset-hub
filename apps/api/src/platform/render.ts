@@ -3,8 +3,10 @@ import { createRequire } from "node:module";
 import {
   type AssetLinkResolver,
   renderPresentationHtml,
+  stripPresentationPlatformShell,
   rewriteAssetLinks,
   validatePresentationHtml,
+  validatePresentationHtmlVisualQuality,
 } from "@shiguang/content";
 import type { PresentationDocument } from "@shiguang/contracts";
 
@@ -66,11 +68,22 @@ export function buildReleaseBundle(input: {
       (input.presentation
         ? renderPresentationHtml(input.presentation, input.title, { echartsJs: loadEchartsJs() })
         : "");
-    const issues = validatePresentationHtml(presentationHtml);
+    const sourcePresentationHtml = stripPresentationPlatformShell(
+      resolve ? rewriteAssetLinks(presentationHtml, resolve) : presentationHtml,
+    );
+    const issues = validatePresentationHtml(sourcePresentationHtml);
     if (issues.length > 0) {
       throw new Error(`演示 HTML 校验失败: ${issues.map((issue) => issue.message).join("; ")}`);
     }
-    files.push({ path: "index.html", content: presentationHtml, mediaType: "text/html" });
+    const visualIssues = validatePresentationHtmlVisualQuality(sourcePresentationHtml);
+    const blockingVisualIssues = visualIssues.filter((issue) => issue.severity === "error");
+    if (blockingVisualIssues.length > 0) {
+      throw new Error(
+        `演示视觉 QA 失败: ${blockingVisualIssues.map((issue) => issue.message).join("; ")}`,
+      );
+    }
+    // Presentations are served from the asset version and composed by SSR at
+    // request time. Do not persist a platform-owned index.html in the release.
   } else if (input.assetType === "html" && input.html) {
     const rendered = resolve ? rewriteAssetLinks(input.html, resolve) : input.html;
     files.push({ path: "index.html", content: rendered, mediaType: "text/html" });
@@ -83,7 +96,9 @@ export function buildReleaseBundle(input: {
     entrypoint:
       input.assetType === "document" || input.assetType === "report" || input.assetType === "file"
         ? "index.md"
-        : "index.html",
+        : input.assetType === "presentation"
+          ? "presentation-source"
+          : "index.html",
     title: input.title,
     assetType: input.assetType,
     files: files.map((f) => ({
@@ -91,7 +106,7 @@ export function buildReleaseBundle(input: {
       mediaType: f.mediaType,
       size: Buffer.byteLength(f.content),
     })),
-    csp: "default-src 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self'",
+    csp: "default-src 'self'; img-src 'self' data: https:; style-src 'self' 'unsafe-inline' https:; script-src 'self' 'unsafe-inline' https:; connect-src 'self'",
   };
   return { files, manifest };
 }
@@ -101,9 +116,15 @@ export interface PublishDownloadAction {
   href: string;
 }
 
+export interface PublishDownloadActionOptions {
+  /** Presentation player consumes the link itself; do not render a top-right toolbar. */
+  presentation?: boolean;
+}
+
 export function injectPublishDownloadActions(
   html: string,
   actions: PublishDownloadAction[],
+  options: PublishDownloadActionOptions = {},
 ): string {
   if (actions.length === 0) return html;
   const links = actions
@@ -112,7 +133,9 @@ export function injectPublishDownloadActions(
         `<a class="sg-publish-download" href="${escapeHtml(action.href)}">${escapeHtml(action.label)}</a>`,
     )
     .join("");
-  const panel = `<style>
+  const panel = options.presentation
+    ? `<nav class="sg-publish-downloads" data-sg-player-downloads hidden aria-hidden="true">${links}</nav>`
+    : `<style>
   .sg-publish-downloads { position:fixed; right:20px; top:20px; z-index:1000; display:flex; flex-wrap:wrap; justify-content:flex-end; gap:8px; max-width:min(520px,calc(100vw - 32px)); }
   .sg-publish-download { display:inline-flex; align-items:center; min-height:36px; padding:7px 12px; border:1px solid rgba(109,93,252,.35); border-radius:7px; color:#fff; background:#6d5dfc; box-shadow:0 8px 24px rgba(23,32,51,.16); font:500 14px/1.4 -apple-system,"PingFang SC",sans-serif; text-decoration:none; }
   .sg-publish-download:hover { background:#5d4ee6; }

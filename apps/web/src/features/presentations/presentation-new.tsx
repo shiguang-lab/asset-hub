@@ -1,512 +1,721 @@
 import { useToast } from "@shiguang/ui";
-import { useMutation, useQuery } from "@tanstack/react-query";
-import { Button, Card, Input, Select, Spin } from "antd";
-import { useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
-import { type Asset, api } from "../../entities/api.js";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Button, Card, Input, Select } from "antd";
+import {
+  BrainCircuit,
+  Check,
+  Circle,
+  CircleX,
+  FileText,
+  Layers3,
+  LoaderCircle,
+  PanelTop,
+  RotateCcw,
+  Save,
+  ScanSearch,
+  Sparkles,
+  Square,
+  WandSparkles,
+  X,
+} from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { type Asset, api, type Task } from "../../entities/api.js";
+import { usePresentationsStyles } from "../../styles/presentations.js";
 
-interface Section {
-  id: string;
-  title: string;
-  summary: string;
-  points: string[];
-  data: unknown[];
-  visual: string;
-}
-interface Outline {
-  title: string;
-  theme: string;
-  aspectRatio: string;
-  sections: Section[];
-}
-
-function stringValue(value: unknown, fallback = ""): string {
-  return typeof value === "string" ? value : fallback;
-}
-
-/** Normalize API/model output so an incomplete or legacy outline never crashes the editor. */
-export function normalizeOutline(value: unknown): Outline | null {
-  if (!value || typeof value !== "object") return null;
-  const raw = value as Record<string, unknown>;
-  const rawSections = Array.isArray(raw.sections) ? raw.sections : [];
-  const sections: Section[] = rawSections.flatMap((item, index) => {
-    if (!item || typeof item !== "object") return [];
-    const section = item as Record<string, unknown>;
-    return [
-      {
-        id: stringValue(section.id, `sec-${index + 1}`),
-        title: stringValue(section.title, `要点 ${index + 1}`),
-        summary: stringValue(section.summary),
-        points: Array.isArray(section.points)
-          ? section.points.filter((point): point is string => typeof point === "string")
-          : [],
-        data: Array.isArray(section.data) ? section.data : [],
-
-        visual: VISUAL_OPTIONS.some((option) => option.value === section.visual)
-          ? String(section.visual)
-          : "default",
-      },
-    ];
-  });
-
-  // Older API versions returned slides here. Convert them into editable sections.
-  if (sections.length === 0 && Array.isArray(raw.slides)) {
-    for (const [index, item] of raw.slides.entries()) {
-      if (!item || typeof item !== "object") continue;
-      const slide = item as Record<string, unknown>;
-      const blocks = Array.isArray(slide.blocks) ? slide.blocks : [];
-      const points = blocks.flatMap((block) => {
-        if (!block || typeof block !== "object") return [];
-        const value = block as Record<string, unknown>;
-        if (value.type !== "bullet" && value.type !== "text") return [];
-        return stringValue(value.content)
-          .split(/\r?\n/)
-          .map((point) => point.trim())
-          .filter(Boolean);
-      });
-      sections.push({
-        id: stringValue(slide.id, `sec-${index + 1}`),
-        title: stringValue(slide.title, `要点 ${index + 1}`),
-        summary: points[0] ?? "",
-        points: points.slice(0, 4),
-        data: [],
-
-        visual: "default",
-      });
-    }
-  }
-
-  if (sections.length === 0) return null;
-  return {
-    title: stringValue(raw.title, "演示文稿"),
-    theme: stringValue(raw.theme, "light"),
-    aspectRatio: stringValue(raw.aspectRatio, "16:9"),
-    sections,
-  };
-}
-
-const VISUAL_OPTIONS = [
-  { value: "default", label: "通用" },
-  { value: "metrics", label: "指标卡" },
-  { value: "chart", label: "图表" },
-  { value: "two-column", label: "双栏对比" },
-  { value: "quote", label: "金句" },
-  { value: "timeline", label: "时间轴" },
+const profiles = [
+  { value: "research", label: "研究分析" },
+  { value: "pitch", label: "商业提案" },
+  { value: "product-launch", label: "产品发布" },
+  { value: "data-story", label: "数据故事" },
 ];
 
-export function PresentationNewPage() {
-  const [params] = useSearchParams();
-  const navigate = useNavigate();
-  const toast = useToast();
-  const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
-  const [assetId, setAssetId] = useState(params.get("asset") ?? "");
-  const [title, setTitle] = useState("");
-  const [prompt, setPrompt] = useState(params.get("topic") ?? "");
-  const [theme, setTheme] = useState("light");
-  const [outline, setOutline] = useState<Outline | null>(null);
-  const [sourceMode, setSourceMode] = useState<"document" | "report" | "template" | "ai">(
-    (params.get("source") as "document" | "report" | "template" | "ai") || "document",
+const phaseOrder = [
+  { id: "source", label: "准备资料", icon: FileText },
+  { id: "planning", label: "深度规划", icon: BrainCircuit },
+  { id: "rendering", label: "生成页面", icon: Layers3 },
+  { id: "visualizing", label: "真实渲染", icon: ScanSearch },
+  { id: "reviewing", label: "视觉审查", icon: Sparkles },
+  { id: "repairing", label: "定向修复", icon: WandSparkles },
+  { id: "compiling", label: "编译编辑能力", icon: PanelTop },
+  { id: "saving", label: "保存演示", icon: Save },
+] as const;
+
+type GenerationPhase = (typeof phaseOrder)[number]["id"] | "failed" | "cancelled";
+type GenerationActivity = "waiting" | "reasoning" | "streaming" | "processing" | "done" | "failed";
+
+interface PresentationPlan {
+  audience?: string;
+  coreMessage?: string;
+  narrative?: string;
+  visualDirection?: string;
+  style?: string;
+  density?: "speaker-led" | "reading-first";
+  selectedStyle?: string;
+  styleCandidates?: Array<{ name?: string; thesis?: string; fit?: string }>;
+  designSystem?: {
+    visualThesis?: string;
+    displayFont?: string;
+    bodyFont?: string;
+    grid?: string;
+    chartLanguage?: string;
+  };
+  slides?: Array<{
+    title?: string;
+    purpose?: string;
+    layoutIntent?: string;
+    visualType?: string;
+    contentBudget?: string;
+    focalPoint?: string;
+    composition?: string;
+    visualBrief?: string;
+  }>;
+}
+
+interface PresentationCheckpoint {
+  schema?: string;
+  phase?: GenerationPhase;
+  phaseLabel?: string;
+  activity?: GenerationActivity;
+  startedAt?: string;
+  updatedAt?: string;
+  receivedChars?: number;
+  completedPages?: number;
+  estimatedPages?: number;
+  pageTitles?: string[];
+  plan?: PresentationPlan;
+  reviewSummary?: string;
+  renderSummary?: string;
+  renderIssueCount?: number;
+  repairApplied?: boolean;
+  stoppedAtPhase?: GenerationPhase;
+  failureStage?: string;
+  failureDetails?: Record<string, unknown>;
+  errorCode?: string;
+  errorMessage?: string;
+}
+
+interface PresentationDraft {
+  assetId?: string | null;
+  title?: string;
+  prompt?: string;
+  profile?: string;
+  theme?: string;
+}
+
+function asCheckpoint(task?: Task): PresentationCheckpoint {
+  return (task?.checkpoint ?? {}) as PresentationCheckpoint;
+}
+
+function formatDuration(start?: string, end?: string): string {
+  if (!start) return "刚刚开始";
+  const seconds = Math.max(
+    0,
+    Math.floor(((end ? new Date(end).getTime() : Date.now()) - new Date(start).getTime()) / 1000),
   );
+  if (seconds < 60) return `${seconds} 秒`;
+  const minutes = Math.floor(seconds / 60);
+  const remaining = seconds % 60;
+  return `${minutes} 分 ${remaining} 秒`;
+}
 
-  const { data: assets } = useQuery<{ items: Asset[] }>({
-    queryKey: ["assets"],
-    queryFn: () => api("/assets", { params: { limit: 50 } }),
+function useElapsed(start?: string, end?: string, active = false): string {
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    if (!active || !start) return;
+    const timer = window.setInterval(() => setTick((value) => value + 1), 1000);
+    return () => window.clearInterval(timer);
+  }, [active, start]);
+  return useMemo(() => formatDuration(start, end), [start, end, tick]);
+}
+
+function activityLabel(activity?: GenerationActivity): string {
+  if (activity === "reasoning") return "模型正在深度推理";
+  if (activity === "streaming") return "模型正在持续输出";
+  if (activity === "processing") return "系统正在处理";
+  if (activity === "done") return "阶段已完成";
+  if (activity === "failed") return "阶段失败";
+  return "等待模型响应";
+}
+
+export function PresentationNewPage() {
+  const { styles } = usePresentationsStyles();
+  const { taskId } = useParams<{ taskId?: string }>();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const queryClient = useQueryClient();
+  const [params] = useSearchParams();
+  const toast = useToast();
+  const routeDraft = (location.state as { draft?: PresentationDraft } | null)?.draft;
+  const [assetId, setAssetId] = useState(routeDraft?.assetId ?? params.get("assetId") ?? "");
+  const [title, setTitle] = useState(routeDraft?.title ?? "我的在线演示");
+  const [prompt, setPrompt] = useState(routeDraft?.prompt ?? "");
+  const [profile, setProfile] = useState(routeDraft?.profile ?? "research");
+  const [theme, setTheme] = useState(routeDraft?.theme ?? "dark");
+
+  const assets = useQuery({
+    queryKey: ["presentation-source-assets"],
+    queryFn: () => api<{ items: Asset[] }>("/assets", { params: { limit: 100 } }),
+    enabled: !taskId,
   });
-  const outlineMutation = useMutation({
-    mutationFn: () =>
-      api<{ outline?: unknown }>("/presentations/outline", {
-        method: "POST",
-        body: { assetId: assetId || undefined, title: title || undefined, theme, prompt: prompt || undefined },
-      }),
-    onSuccess: (data) => {
-      // Accept both the current `{ outline }` envelope and older direct-outline responses.
-      const normalized = normalizeOutline(data.outline ?? data);
-      if (!normalized) {
-        toast("error", "服务返回了空的大纲，请重试");
-        return;
-      }
-      setOutline(normalized);
-      if (!title) setTitle(normalized.title);
-      setStep(2);
-      toast("success", "章节大纲已生成，可编辑后确认");
+  const task = useQuery({
+    queryKey: ["presentation-generation-task", taskId],
+    queryFn: () => api<Task>(`/tasks/${taskId}`),
+    enabled: Boolean(taskId),
+    refetchInterval: (query) => {
+      const status = query.state.data?.status;
+      return status === "completed" || status === "failed" || status === "cancelled"
+        ? false
+        : 2_000;
     },
-    onError: (e: Error) => toast("error", `生成失败：${e.message}，可点击「生成大纲」重试`),
   });
 
-  const confirmMutation = useMutation({
+  const generate = useMutation({
     mutationFn: () =>
-      api<Asset>("/presentations/outline/confirm", {
+      api<{ task: Task }>("/presentations/generate", {
         method: "POST",
         body: {
-          title: outline?.title ?? title,
-          theme: outline?.theme ?? theme,
-          aspectRatio: outline?.aspectRatio ?? "16:9",
-          sections: outline?.sections ?? [],
-          sourceAssetId: assetId || undefined,
+          ...(assetId ? { assetId } : {}),
+          title,
+          prompt,
+          profile,
+          theme,
+          operation: "asset",
         },
       }),
-    onSuccess: (asset) => {
-      toast("success", "演示已生成，可进入编辑与发布");
-      setStep(4);
-      setTimeout(() => navigate(`/presentations/${asset.id}`), 1200);
+    onSuccess: (result) => {
+      navigate(`/presentations/generate/${result.task.id}`, { replace: true });
     },
-    onError: (e: Error) => toast("error", e.message),
+    onError: (error) => toast("error", error instanceof Error ? error.message : "生成失败"),
   });
 
-  const docAssets = (assets?.items ?? []).filter((a) =>
-    sourceMode === "document"
-      ? a.type === "document"
-      : sourceMode === "report"
-        ? a.type === "report"
-        : ["document", "report"].includes(a.type),
+  const cancel = useMutation({
+    mutationFn: () => api<Task>(`/tasks/${taskId}/cancel`, { method: "POST" }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: ["presentation-generation-task", taskId],
+      });
+    },
+    onError: (error) => toast("error", error instanceof Error ? error.message : "取消失败"),
+  });
+
+  const retry = useMutation({
+    mutationFn: () => api<{ ok: boolean }>(`/tasks/${taskId}/retry`, { method: "POST" }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: ["presentation-generation-task", taskId],
+      });
+    },
+    onError: (error) => toast("error", error instanceof Error ? error.message : "重试失败"),
+  });
+
+  useEffect(() => {
+    const current = task.data;
+    if (current?.status !== "completed") return;
+    const output = current.outputs?.[0];
+    if (output?.id) navigate(`/presentations/${output.id}`, { replace: true });
+  }, [task.data, navigate]);
+
+  const sourceAssets = (assets.data?.items ?? []).filter((item) =>
+    ["document", "report", "text"].includes(item.type),
   );
-  const recentAssets = (assets?.items ?? [])
-    .slice()
-    .sort((a, b) => (b.updatedAt ?? "").localeCompare(a.updatedAt ?? ""))
-    .slice(0, 4);
+  const taskActive = Boolean(
+    task.data && !["completed", "failed", "cancelled"].includes(task.data.status),
+  );
+  const elapsed = useElapsed(
+    asCheckpoint(task.data).startedAt ?? task.data?.startedAt ?? task.data?.createdAt,
+    taskActive ? undefined : (task.data?.completedAt ?? undefined),
+    taskActive,
+  );
 
-  const updateSection = (index: number, patch: Partial<Section>) => {
-    setOutline((o) =>
-      o ? { ...o, sections: o.sections.map((s, i) => (i === index ? { ...s, ...patch } : s)) } : o,
-    );
-  };
-  const updatePoints = (index: number, value: string) => {
-    updateSection(index, {
-      points: value
-        .split("\n")
-        .map((p) => p.trim())
-        .filter(Boolean),
-    });
-  };
-
-  const removeSection = (index: number) => {
-    setOutline((o) => o && { ...o, sections: o.sections.filter((_, i) => i !== index) });
-  };
-  const addSection = () => {
-    setOutline((o) =>
-      o
-        ? {
-            ...o,
-            sections: [
-              ...o.sections,
-              {
-                id: `sec-${Date.now().toString(36)}`,
-                title: "新章节",
-                summary: "",
-                points: [],
-                data: [],
-
-                visual: "default",
-              },
-            ],
+  if (taskId) {
+    return (
+      <div className={`${styles.root} sg-presentation-generation-root`}>
+        <GenerationWorkspace
+          taskId={taskId}
+          task={task.data}
+          loading={task.isLoading}
+          loadError={
+            task.isError
+              ? task.error instanceof Error
+                ? task.error.message
+                : "任务加载失败"
+              : null
           }
-        : o,
+          cancelling={cancel.isPending}
+          retrying={retry.isPending}
+          onCancel={() => cancel.mutate()}
+          onRetry={() => retry.mutate()}
+          onEdit={() => {
+            const draft = (task.data?.spec ?? {}) as PresentationDraft;
+            navigate("/presentations/new", { state: { draft } });
+          }}
+          elapsed={elapsed}
+        />
+      </div>
     );
-  };
-
+  }
 
   return (
-    <div className="sg-workflow-page">
-
-      <div className="sg-stepper">
-        {[
-          { id: 1, label: "选择内容来源" },
-          { id: 2, label: "AI 生成大纲" },
-          { id: 3, label: "确认并生成" },
-          { id: 4, label: "编辑与发布" },
-        ].map((s) => (
-          <div
-            key={s.id}
-            className={`sg-step ${step === s.id ? "active" : step > s.id ? "done" : ""}`}
-          >
-            <span className="num">{step > s.id ? "✓" : s.id}</span>
-            {s.label}
-          </div>
-        ))}
-      </div>
-
-      {step === 1 && (
-        <div className="sg-col">
-          <p className="sg-subtle">选择现有内容或从空白开始，AI 将帮助您生成演示大纲</p>
-          <div className="sg-grid" style={{ gridTemplateColumns: "repeat(4, 1fr)" }}>
-            {[
-              { mode: "document", label: "从文档选择", sub: "从文档中提取内容，智能生成演示", icon: "📄" },
-              { mode: "report", label: "从报告选择", sub: "基于研究报告快速生成专业演示", icon: "📊" },
-              { mode: "template", label: "从模板创建", sub: "使用精选模板，快速创建演示", icon: "▣" },
-              { mode: "ai", label: "AI 智能生成", sub: "输入主题，AI 帮你生成完整演示", icon: "✦" },
-            ].map((item) => (
-              <Card
-                key={item.label}
-                hoverable
-                onClick={() => {
-                  setSourceMode(item.mode as "document" | "report" | "template" | "ai");
-                  setStep(2);
-                }}
-              >
-                <div style={{ fontSize: 26, marginBottom: 8 }}>{item.icon}</div>
-                <strong>{item.label}</strong>
-                <p className="sg-subtle" style={{ margin: "6px 0" }}>
-                  {item.sub}
-                </p>
-              </Card>
-            ))}
-          </div>
-          <div className="sg-row">
-            <Button type="text" onClick={() => toast("info", "请到知识库或数据集页上传文件")}>
-              ⬆ 上传文件
-            </Button>
-            <Button type="text" onClick={() => setStep(2)}>
-              空白演示
-            </Button>
-          </div>
-          <h2 className="sg-h2 sg-mt">最近使用</h2>
-          <div className="sg-grid" style={{ gridTemplateColumns: "repeat(4, 1fr)" }}>
-            {recentAssets.map((a) => (
-              <Card
-                key={a.id}
-                hoverable
-                onClick={() => {
-                  setAssetId(a.id);
-                  setStep(2);
-                }}
-              >
-                <strong style={{ fontSize: 13 }}>{a.title}</strong>
-                <div className="sg-subtle" style={{ marginTop: 6 }}>
-                  {a.type}
-                </div>
-              </Card>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {step === 2 && (
-        <div className="sg-col">
-          <Card>
-            <div className="sg-row-between">
-              <div>
-                <h2 className="sg-h3">AI 生成演示大纲</h2>
-                <p className="sg-subtle">
-                  基于文档内容提炼「章节大纲」（断言式标题 + 要点 + 数据 +
-                  视觉类型）。一个章节在生成时会展开为一页或多页。
-                </p>
-              </div>
-              <div className="sg-row">
-                <Button size="small" onClick={() => setStep(1)}>
-                  返回
-                </Button>
-                <Button size="small" type="primary" disabled={!outline} onClick={() => setStep(3)}>
-                  下一步：确认并生成
-                </Button>
-              </div>
-            </div>
-            <div className="sg-col sg-mt" style={{ gap: 16 }}>
-              <div className="sg-grid" style={{ gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-                <div>
-                  <small className="sg-subtle" style={{ display: "block", marginBottom: 4 }}>
-                    来源文档
-                  </small>
-                  <Select
-                    showSearch
-                    optionFilterProp="label"
-                    value={assetId}
-                    onChange={setAssetId}
-                    options={[
-                      { value: "", label: "不指定来源文档" },
-                      ...docAssets.map((a) => ({ value: a.id, label: a.title })),
-                    ]}
-                    placeholder="搜索或选择来源文档…"
-                    style={{ width: "100%" }}
-                  />
-                </div>
-                <div>
-                  <small className="sg-subtle" style={{ display: "block", marginBottom: 4 }}>
-                    演示标题
-                  </small>
-                  <Input
-                    value={title}
-                    onChange={(e) => setTitle(e.target.value)}
-                    placeholder="输入演示标题（可选）"
-                    style={{ width: "100%" }}
-                  />
-                </div>
-              </div>
-              <div>
-                <small className="sg-subtle" style={{ display: "block", marginBottom: 4 }}>
-                  生成要求（可选）
-                </small>
-                <Input.TextArea
-                  value={prompt}
-                  onChange={(e) => setPrompt(e.target.value)}
-                  placeholder="补充生成指令，例如：侧重财务数据、面向高管汇报、控制在 6 页以内"
-                  autoSize={{ minRows: 4, maxRows: 8 }}
-                  style={{ width: "100%" }}
-                />
-              </div>
-              <div className="sg-grid" style={{ gridTemplateColumns: "auto 1fr", gap: 16, alignItems: "end" }}>
-                <div>
-                  <small className="sg-subtle" style={{ display: "block", marginBottom: 4 }}>
-                    演示风格
-                  </small>
-                  <Select
-                    value={theme}
-                    onChange={setTheme}
-                    options={[
-                      { value: "light", label: "明亮" },
-                      { value: "dark", label: "深色" },
-                      { value: "brand", label: "商务" },
-                      { value: "minimal", label: "简约" },
-                      { value: "gradient", label: "创意" },
-                    ]}
-                    style={{ width: 200 }}
-                  />
-                </div>
-                <div className="sg-row" style={{ justifyContent: "flex-end" }}>
-                  <Button
-                    type="primary"
-                    disabled={(!assetId && !prompt) || outlineMutation.isPending}
-                    onClick={() => outlineMutation.mutate()}
-                  >
-                    {outlineMutation.isPending ? <Spin size="small" /> : "生成大纲"}
-                  </Button>
-                </div>
-              </div>
-            </div>
-          </Card>
-
-          {outline && (
-            <Card>
-              <div className="sg-row-between sg-mb">
-                <strong>AI 生成的章节大纲（共 {outline.sections.length} 章）</strong>
-                <div className="sg-row">
-                  <Button size="small" onClick={addSection}>
-                    + 章节
-                  </Button>
-                  <Button size="small" onClick={() => outlineMutation.mutate()}>
-                    重新生成
-                  </Button>
-                </div>
-              </div>
-              <div className="sg-col">
-                {outline.sections.map((section, i) => (
-                  <div key={section.id} className="sg-card" style={{ padding: 14 }}>
-                    <div className="sg-row-between sg-mb-sm">
-                      <span className="sg-badge">{i + 1}</span>
-                      <div className="sg-row">
-                        <Select
-                          value={section.visual}
-                          onChange={(v) => updateSection(i, { visual: v })}
-                          options={VISUAL_OPTIONS}
-                          style={{ width: 110 }}
-                        />
-                        <Button size="small" type="primary" danger onClick={() => removeSection(i)}>
-                          删除
-                        </Button>
-                      </div>
-                    </div>
-                    <div className="sg-mb-sm">
-                      <small className="sg-subtle" style={{ display: "block", marginBottom: 4 }}>
-                        章节标题
-                      </small>
-                      <Input
-                        value={section.title}
-                        onChange={(e) => updateSection(i, { title: e.target.value })}
-                        placeholder="断言式标题，如「营收同比增长 23%」"
-                      />
-                    </div>
-                    <div className="sg-mb-sm">
-                      <small className="sg-subtle" style={{ display: "block", marginBottom: 4 }}>
-                        一句话概述（可选）
-                      </small>
-                      <Input
-                        value={section.summary}
-                        onChange={(e) => updateSection(i, { summary: e.target.value })}
-                        placeholder="该章的一句话概述"
-                      />
-                    </div>
-                    <div className="sg-mb-sm">
-                      <small className="sg-subtle">要点（每行一条）</small>
-                      <Input.TextArea
-                        value={section.points.join("\n")}
-                        onChange={(e) => updatePoints(i, e.target.value)}
-                        style={{ minHeight: 72, marginTop: 4 }}
-                      />
-                    </div>
-                  </div>
-                ))}
-              </div>
-              <p className="sg-hint sg-mt">
-                提示：章节标题建议用「结论先行」的完整句（如「AI 正加速渗透传统行业」）。
-                一个章节在生成阶段会自动展开为一页或多页。
-              </p>
-            </Card>
-          )}
-        </div>
-      )}
-
-      {step === 3 && outline && (
-        <div className="sg-col">
-          <Card>
-            <h2 className="sg-h3">确认生成内容</h2>
-            <p className="sg-subtle">
-              请确认以下章节大纲与风格设置，确认后将按大纲自动生成 H5 演示（章节可展开为多页），预计
-              1-2 分钟完成。
+    <div className={styles.root}>
+      <main className="sg-pg-new">
+        <header className="sg-pg-new-hero">
+          <div>
+            <span className="sg-pg-kicker">
+              <Sparkles size={14} />
+              AI PRESENTATION STUDIO
+            </span>
+            <h1>把主题变成一场有叙事、有画面的演示</h1>
+            <p>
+              AI 先推演受众、叙事和视觉方向，再自由生成完整 HTML
+              画布；系统最后只增加可编辑标签，不把创意压回固定模板。
             </p>
-            <div className="sg-grid sg-mt" style={{ gridTemplateColumns: "1fr 1.4fr" }}>
-              <div className="sg-col">
-                <div className="sg-option-row">
-                  <span>演示标题</span>
-                  <strong>{outline.title}</strong>
-                </div>
-                <div className="sg-option-row">
-                  <span>章节数</span>
-                  <strong>{outline.sections.length} 章</strong>
-                </div>
-                <div className="sg-option-row">
-                  <span>演示风格</span>
-                  <strong>{theme}</strong>
-                </div>
-                <div className="sg-option-row">
-                  <span>页面比例</span>
-                  <strong>16:9</strong>
-                </div>
-                <div className="sg-option-row">
-                  <span>内容来源</span>
-                  <strong>{docAssets.find((a) => a.id === assetId)?.title ?? title}</strong>
+          </div>
+          <div className="sg-pg-capabilities">
+            <span>自由布局</span>
+            <span>图表与图解</span>
+            <span>分步动画</span>
+            <span>局部可编辑</span>
+          </div>
+        </header>
+
+        <Card className="sg-pg-form-card">
+          <div className="sg-pg-form-grid">
+            <section className="sg-pg-form-main">
+              <label htmlFor="presentation-title">
+                <span>演示标题</span>
+                <Input
+                  id="presentation-title"
+                  size="large"
+                  value={title}
+                  onChange={(event) => setTitle(event.target.value)}
+                  placeholder="输入一个清晰的主题"
+                />
+              </label>
+              <label className="sg-pg-prompt-field" htmlFor="presentation-prompt">
+                <span>你希望这场演示达成什么</span>
+                <Input.TextArea
+                  id="presentation-prompt"
+                  autoSize={{ minRows: 9, maxRows: 15 }}
+                  value={prompt}
+                  onChange={(event) => setPrompt(event.target.value)}
+                  placeholder="例如：面向管理层解释北京文旅市场的增长机会。需要有强视觉封面、北京城市图片、趋势图、机会四象限和三阶段行动路径；风格现代、克制。"
+                />
+              </label>
+            </section>
+
+            <aside className="sg-pg-form-options">
+              <label htmlFor="presentation-source">
+                <span>参考资料</span>
+                <Select
+                  id="presentation-source"
+                  size="large"
+                  allowClear
+                  value={assetId || undefined}
+                  onChange={(value) => setAssetId(value ?? "")}
+                  loading={assets.isLoading}
+                  options={sourceAssets.map((asset) => ({ value: asset.id, label: asset.title }))}
+                  placeholder="可选：读取已有文档或报告"
+                />
+              </label>
+              <label htmlFor="presentation-profile">
+                <span>叙事类型</span>
+                <Select
+                  id="presentation-profile"
+                  size="large"
+                  value={profile}
+                  onChange={setProfile}
+                  options={profiles}
+                />
+              </label>
+              <label htmlFor="presentation-theme">
+                <span>视觉基调</span>
+                <Select
+                  id="presentation-theme"
+                  size="large"
+                  value={theme}
+                  onChange={setTheme}
+                  options={[
+                    { value: "dark", label: "深色沉浸" },
+                    { value: "light", label: "明亮编辑感" },
+                    { value: "brand", label: "品牌表达" },
+                    { value: "minimal", label: "极简克制" },
+                  ]}
+                />
+              </label>
+              <div className="sg-pg-form-note">
+                <BrainCircuit size={18} />
+                <div>
+                  <strong>会进行深度规划</strong>
+                  <p>复杂推理用于叙事与审查；HTML 使用流式生成，因此可以看到模型是否在正常工作。</p>
                 </div>
               </div>
-              <Card>
-                <h3 className="sg-h3">章节预览（共 {outline.sections.length} 章）</h3>
-                <div className="sg-col sg-mt-sm">
-                  {outline.sections.map((section, i) => (
-                    <div key={section.id} className="sg-row">
-                      <span className="sg-badge">{String(i + 1).padStart(2, "0")}</span>
-                      <span style={{ fontSize: 13 }}>{section.title || "未命名"}</span>
-                    </div>
-                  ))}
-                </div>
-              </Card>
-            </div>
-          </Card>
-          <div className="sg-row" style={{ justifyContent: "flex-end" }}>
-            <Button onClick={() => setStep(2)}>上一步</Button>
+            </aside>
+          </div>
+          <footer className="sg-pg-form-footer">
+            <span>生成期间可以离开此页面，任务会继续执行。</span>
             <Button
               type="primary"
-              onClick={() => confirmMutation.mutate()}
-              disabled={confirmMutation.isPending}
+              size="large"
+              icon={<Sparkles size={17} />}
+              loading={generate.isPending}
+              disabled={!title.trim() && !prompt.trim() && !assetId}
+              onClick={() => generate.mutate()}
             >
-              {confirmMutation.isPending ? <Spin size="small" /> : "确认生成"}
+              开始生成
             </Button>
-          </div>
-        </div>
-      )}
-
-      {step === 4 && (
-        <Card className="sg-center" style={{ padding: 48 }}>
-          <Spin />
-          <p className="sg-subtle sg-mt">演示已生成，正在进入编辑器…</p>
+          </footer>
         </Card>
-      )}
+      </main>
     </div>
+  );
+}
+
+function GenerationWorkspace({
+  taskId,
+  task,
+  loading,
+  loadError,
+  cancelling,
+  retrying,
+  elapsed,
+  onCancel,
+  onRetry,
+  onEdit,
+}: {
+  taskId: string;
+  task?: Task;
+  loading: boolean;
+  loadError: string | null;
+  cancelling: boolean;
+  retrying: boolean;
+  elapsed: string;
+  onCancel: () => void;
+  onRetry: () => void;
+  onEdit: () => void;
+}) {
+  const checkpoint = asCheckpoint(task);
+  const terminal = Boolean(
+    loadError || (task && ["completed", "failed", "cancelled"].includes(task.status)),
+  );
+  const failed = task?.status === "failed" || Boolean(loadError);
+  const cancelled = task?.status === "cancelled";
+  const retryable = task?.status === "failed" || task?.status === "cancelled";
+  const phase = checkpoint.phase ?? "source";
+  const effectivePhase = checkpoint.stoppedAtPhase ?? phase;
+  const currentIndex = phaseOrder.findIndex((item) => item.id === effectivePhase);
+  const progress = task?.progress ?? 0;
+  const pageTitles = checkpoint.pageTitles ?? [];
+  const planSlides = checkpoint.plan?.slides ?? [];
+  const errorMessage =
+    loadError ?? checkpoint.errorMessage ?? task?.error ?? "任务执行失败，请重试。";
+  const errorCode = checkpoint.errorCode ?? task?.error?.match(/^\[([^\]]+)\]/)?.[1];
+  const errorSummary = errorMessage.replace(/^\[[^\]]+\]\s*/, "").trim();
+  const stoppedPhaseLabel = phaseOrder.find((item) => item.id === checkpoint.stoppedAtPhase)?.label;
+  const modelOutput =
+    checkpoint.failureDetails && typeof checkpoint.failureDetails.modelOutput === "object"
+      ? (checkpoint.failureDetails.modelOutput as Record<string, unknown>)
+      : null;
+  const retryInfo =
+    checkpoint.failureDetails && typeof checkpoint.failureDetails.retry === "object"
+      ? (checkpoint.failureDetails.retry as Record<string, unknown>)
+      : null;
+
+  return (
+    <main className="sg-pg-workspace">
+      <header className="sg-pg-workspace-head">
+        <div>
+          <span className="sg-pg-kicker">
+            <WandSparkles size={14} />
+            GENERATION WORKSPACE
+          </span>
+          <h1>{task?.goal || "正在准备演示生成任务"}</h1>
+          <p>
+            任务 <code>{taskId}</code> · 已运行 {elapsed}
+          </p>
+        </div>
+        <div className="sg-pg-head-actions">
+          {!terminal && (
+            <Button
+              icon={<Square size={14} />}
+              loading={cancelling}
+              disabled={loading}
+              onClick={onCancel}
+            >
+              停止生成
+            </Button>
+          )}
+          {(failed || cancelled) && (
+            <>
+              <Button onClick={onEdit}>修改要求</Button>
+              {retryable && (
+                <Button
+                  type="primary"
+                  icon={<RotateCcw size={15} />}
+                  loading={retrying}
+                  onClick={onRetry}
+                >
+                  使用原要求重试
+                </Button>
+              )}
+            </>
+          )}
+        </div>
+      </header>
+
+      <section className={`sg-pg-progress-card ${failed || cancelled ? "is-error" : ""}`}>
+        <div className="sg-pg-progress-copy">
+          <div className={`sg-pg-live ${failed || cancelled ? "is-error" : ""}`}>
+            {failed || cancelled ? (
+              <CircleX size={18} />
+            ) : (
+              <LoaderCircle className="sg-spin" size={18} />
+            )}
+            <span>
+              {failed
+                ? "生成失败"
+                : cancelled
+                  ? "任务已取消"
+                  : (checkpoint.phaseLabel ?? task?.currentStep ?? "任务排队中")}
+            </span>
+          </div>
+          <strong>{progress}%</strong>
+        </div>
+        <div
+          className="sg-pg-progress-track"
+          role="progressbar"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={progress}
+        >
+          <i style={{ width: `${progress}%` }} />
+        </div>
+        <div className="sg-pg-progress-meta">
+          <span>
+            {failed || cancelled
+              ? `流程已停止${errorSummary ? ` · ${errorSummary}` : ""}`
+              : activityLabel(checkpoint.activity)}
+          </span>
+          <span>
+            {checkpoint.receivedChars?.toLocaleString() ?? 0} 字符 ·{" "}
+            {checkpoint.completedPages ?? 0}
+            {checkpoint.estimatedPages ? ` / ${checkpoint.estimatedPages}` : ""} 页
+          </span>
+        </div>
+      </section>
+
+      <div className="sg-pg-workspace-grid">
+        <section className="sg-pg-pipeline">
+          <div className="sg-pg-section-head">
+            <div>
+              <span>生成流程</span>
+              <h2>真实阶段状态</h2>
+            </div>
+            <small>进度由服务端任务统一管理</small>
+          </div>
+          <ol>
+            {phaseOrder.map((item, index) => {
+              const Icon = item.icon;
+              const isCurrent = !terminal && item.id === phase;
+              const isFailed = (failed || cancelled) && item.id === checkpoint.stoppedAtPhase;
+              const isDone =
+                progress === 100 ||
+                currentIndex > index ||
+                (item.id === phase && checkpoint.activity === "done");
+              const isSkipped =
+                item.id === "repairing" &&
+                currentIndex > index &&
+                checkpoint.repairApplied !== true;
+              return (
+                <li
+                  key={item.id}
+                  className={[
+                    isCurrent ? "is-current" : "",
+                    isFailed ? "is-failed" : "",
+                    isDone ? "is-done" : "",
+                    isSkipped ? "is-skipped" : "",
+                  ]
+                    .filter(Boolean)
+                    .join(" ")}
+                >
+                  <span className="sg-pg-step-icon">
+                    {isDone ? (
+                      <Check size={16} />
+                    ) : isFailed ? (
+                      <X size={15} />
+                    ) : isCurrent ? (
+                      <LoaderCircle className="sg-spin" size={16} />
+                    ) : (
+                      <Circle size={14} />
+                    )}
+                  </span>
+                  <Icon size={18} />
+                  <div>
+                    <strong>{item.label}</strong>
+                    <small>
+                      {isSkipped
+                        ? "无需修复"
+                        : isFailed
+                          ? cancelled
+                            ? "在此阶段停止"
+                            : "在此阶段失败"
+                          : isCurrent
+                            ? activityLabel(checkpoint.activity)
+                            : isDone
+                              ? "已完成"
+                              : "等待前序阶段"}
+                    </small>
+                  </div>
+                </li>
+              );
+            })}
+          </ol>
+        </section>
+
+        <section className={`sg-pg-output ${failed || cancelled ? "is-error" : ""}`}>
+          <div className="sg-pg-section-head">
+            <div>
+              <span>实时产物</span>
+              <h2>
+                {failed
+                  ? "阶段异常"
+                  : cancelled
+                    ? "任务已取消"
+                    : pageTitles.length
+                      ? "页面正在逐页成形"
+                      : "等待页面输出"}
+              </h2>
+            </div>
+            <small>{failed || cancelled ? "生成已停止" : `${pageTitles.length} 页已闭合`}</small>
+          </div>
+          {failed || cancelled ? (
+            <div className="sg-pg-output-error">
+              <div className="sg-pg-output-error-heading">
+                <div className="sg-pg-error-icon">
+                  <X size={18} />
+                </div>
+                <div>
+                  <strong>{cancelled ? "任务已取消" : "生成阶段未完成"}</strong>
+                  <p>{errorSummary}</p>
+                </div>
+              </div>
+              <dl>
+                <div>
+                  <dt>失败阶段</dt>
+                  <dd>{stoppedPhaseLabel ?? checkpoint.failureStage ?? "未知阶段"}</dd>
+                </div>
+                <div>
+                  <dt>错误代码</dt>
+                  <dd>{errorCode ?? (cancelled ? "GENERATION_CANCELLED" : "GENERATION_FAILED")}</dd>
+                </div>
+                {retryInfo && (
+                  <div>
+                    <dt>重试情况</dt>
+                    <dd>
+                      {String(retryInfo.retries ?? 0)} 次重试 / 共 {String(retryInfo.attempts ?? 1)}{" "}
+                      次尝试
+                    </dd>
+                  </div>
+                )}
+                {modelOutput && (
+                  <div>
+                    <dt>模型输出</dt>
+                    <dd>
+                      {String(modelOutput.receivedChars ?? 0)} 字符 ·{" "}
+                      {String(modelOutput.sectionOpenCount ?? 0)} 个页面节点 ·{" "}
+                      {modelOutput.hasGeneratedSlidesMarker ? "包含" : "缺少"}页面 marker
+                    </dd>
+                  </div>
+                )}
+              </dl>
+            </div>
+          ) : pageTitles.length ? (
+            <div className="sg-pg-page-list">
+              {pageTitles.map((pageTitle, index) => (
+                <article key={`${index}-${pageTitle}`}>
+                  <div className="sg-pg-page-number">{String(index + 1).padStart(2, "0")}</div>
+                  <div>
+                    <strong>{pageTitle}</strong>
+                    <span>{planSlides[index]?.visualType ?? "自由画布"}</span>
+                  </div>
+                  <Check size={15} />
+                </article>
+              ))}
+            </div>
+          ) : (
+            <div className="sg-pg-output-empty">
+              <LoaderCircle className="sg-spin" size={25} />
+              <strong>{activityLabel(checkpoint.activity)}</strong>
+              <p>模型的推理活动和输出流会持续更新在这里；页面只有完整闭合后才计数。</p>
+            </div>
+          )}
+        </section>
+
+        <section className="sg-pg-plan">
+          <div className="sg-pg-section-head">
+            <div>
+              <span>创意计划</span>
+              <h2>{checkpoint.plan ? "AI 已确定叙事方向" : "正在形成创意计划"}</h2>
+            </div>
+          </div>
+          {checkpoint.plan ? (
+            <dl>
+              <div>
+                <dt>核心信息</dt>
+                <dd>{checkpoint.plan.coreMessage}</dd>
+              </div>
+              <div>
+                <dt>目标受众</dt>
+                <dd>{checkpoint.plan.audience}</dd>
+              </div>
+              <div>
+                <dt>叙事路径</dt>
+                <dd>{checkpoint.plan.narrative}</dd>
+              </div>
+              <div>
+                <dt>视觉方向</dt>
+                <dd>{checkpoint.plan.visualDirection ?? checkpoint.plan.style}</dd>
+              </div>
+              {checkpoint.plan.selectedStyle && (
+                <div>
+                  <dt>选定设计系统</dt>
+                  <dd>
+                    {checkpoint.plan.selectedStyle}
+                    {checkpoint.plan.density
+                      ? ` · ${checkpoint.plan.density === "speaker-led" ? "现场讲述" : "异步阅读"}`
+                      : ""}
+                  </dd>
+                </div>
+              )}
+              {checkpoint.plan.designSystem?.visualThesis && (
+                <div>
+                  <dt>视觉论点</dt>
+                  <dd>{checkpoint.plan.designSystem.visualThesis}</dd>
+                </div>
+              )}
+              {checkpoint.renderSummary && (
+                <div>
+                  <dt>浏览器渲染</dt>
+                  <dd>{checkpoint.renderSummary}</dd>
+                </div>
+              )}
+              {checkpoint.reviewSummary && (
+                <div>
+                  <dt>审查结论</dt>
+                  <dd>{checkpoint.reviewSummary}</dd>
+                </div>
+              )}
+            </dl>
+          ) : (
+            <div className="sg-pg-plan-skeleton">
+              <i />
+              <i />
+              <i />
+              <i />
+            </div>
+          )}
+        </section>
+      </div>
+    </main>
   );
 }

@@ -58,6 +58,15 @@ export class ApiClient {
     stepId?: string;
     stepStatus?: string;
     detail?: string;
+    checkpoint?: Record<string, unknown>;
+    stream?: {
+      phase: string;
+      activity: "content" | "reasoning" | "heartbeat" | "finished" | "failed";
+      delta?: string;
+      receivedChars?: number;
+      finishReason?: string | null;
+      usage?: { inputTokens: number; outputTokens: number };
+    };
   }): Promise<void> {
     try {
       await this.request("/internal/v1/progress", {
@@ -95,5 +104,14 @@ export class ApiClient {
 
   async postInternal<T>(path: string, body: Record<string, unknown>): Promise<T> {
     return this.request<T>(path, { method: "POST", body: JSON.stringify(body) });
+  }
+
+  async getTaskState(taskId: string): Promise<{
+    status: string;
+    cancelRequested: boolean;
+    progress: number;
+    checkpoint: Record<string, unknown> | null;
+  }> {
+    return this.getInternal(`/internal/v1/tasks/${encodeURIComponent(taskId)}/state`);
   }
 }

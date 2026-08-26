@@ -9,8 +9,7 @@ import {
   type AssetVersion,
   type AuditEvent,
   type ChartSpec,
-  type CreditAccount,
-  type CreditLedgerEntry,
+  type CreditBalance,
   type Dataset,
   type DatasetQuery,
   type DatasetQueryResult,
@@ -32,6 +31,7 @@ import {
   type ShortLink,
   type SourceStatus,
   type Task,
+  type TaskStreamEvent,
   type TaskStatus,
   type TaskStep,
   type Template,
@@ -99,7 +99,6 @@ function mapAsset(r: Row): Asset {
     description: str(r.description),
     visibility: str(r.visibility) as Asset["visibility"],
     status: str(r.status) as Asset["status"],
-    tags: parse<string[]>(r.tags_json, []),
     sourceType: str(r.source_type) as Asset["sourceType"],
     currentVersionId: r.current_version_id === null ? null : str(r.current_version_id),
     lockVersion: num(r.lock_version, 1),
@@ -233,7 +232,6 @@ export class Store {
          ON CONFLICT (id) DO NOTHING`,
       )
       .run(id, `user:${subject}`, subject, now);
-    await this.ensureWorkspaceCreditAccount(id);
     return (await this.getWorkspaceBySubject(subject)) as Workspace;
   }
 
@@ -261,7 +259,6 @@ export class Store {
          ON CONFLICT(workspace_id, subject) DO UPDATE SET role = excluded.role, status = 'active'`,
       )
       .run(nextId("mem"), id, input.subject, input.role, now);
-    await this.ensureWorkspaceCreditAccount(id);
     return (await this.getWorkspace(id)) as Workspace;
   }
 
@@ -293,16 +290,6 @@ export class Store {
     return member && ["admin", "editor", "viewer"].includes(member.role)
       ? (member.role as WorkspaceRole)
       : null;
-  }
-
-  private async ensureWorkspaceCreditAccount(workspaceId: string): Promise<void> {
-    await this.db
-      .prepare(
-        `INSERT INTO credit_accounts (id, workspace_id, balance, total_granted, total_used, updated_at)
-         VALUES (?, ?, 0, 0, 0, ?)
-         ON CONFLICT (workspace_id) DO NOTHING`,
-      )
-      .run(nextId("acc"), workspaceId, nowIso());
   }
 
   async getWorkspaceOwnerSubject(workspaceId: string): Promise<string | null> {
@@ -407,7 +394,6 @@ export class Store {
     opts: {
       type?: AssetType;
       q?: string;
-      tag?: string;
       status?: string;
       visibility?: string;
       includeDeleted?: boolean;
@@ -454,10 +440,6 @@ export class Store {
       clauses.push("(a.title LIKE ? OR a.description LIKE ?)");
       const like = `%${opts.q}%`;
       params.push(like, like);
-    }
-    if (opts.tag) {
-      clauses.push("a.tags_json LIKE ?");
-      params.push(`%"${opts.tag}"%`);
     }
     if (opts.after) {
       clauses.push("(a.updated_at < ? OR (a.updated_at = ? AND a.id < ?))");
@@ -585,14 +567,14 @@ export class Store {
         : "";
     const params: unknown[] = [workspaceId];
     if (access && accessClause) params.push(access.subject, access.subject);
-    params.push(`%${query}%`, `%${query}%`, `%${query}%`, limit);
+    params.push(`%${query}%`, `%${query}%`, limit);
     const rows = (await this.db
       .prepare(
         `SELECT a.*, owner_user.name AS owner_display_name FROM assets a
          LEFT JOIN users owner_user ON owner_user.subject = a.owner_subject
          WHERE a.workspace_id = ? AND a.deleted_at IS NULL
            ${accessClause}
-           AND (a.title LIKE ? OR a.description LIKE ? OR a.tags_json LIKE ?)
+           AND (a.title LIKE ? OR a.description LIKE ?)
          ORDER BY a.updated_at DESC LIMIT ?`,
       )
       .all(...params)) as Row[];
@@ -605,7 +587,6 @@ export class Store {
       type: AssetType;
       title: string;
       description?: string;
-      tags?: string[];
       visibility?: Asset["visibility"];
       sourceType?: Asset["sourceType"];
       content?: AssetContent;
@@ -618,8 +599,8 @@ export class Store {
     const info = contentVersionInfo(input.content);
     await this.db
       .prepare(
-        `INSERT INTO assets (id, workspace_id, owner_subject, type, title, description, visibility, status, tags_json, source_type, current_version_id, lock_version, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 'normal', ?, ?, ?, 1, ?, ?)`,
+        `INSERT INTO assets (id, workspace_id, owner_subject, type, title, description, visibility, status, source_type, current_version_id, lock_version, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 'normal', ?, ?, 1, ?, ?)`,
       )
       .run(
         id,
@@ -629,7 +610,6 @@ export class Store {
         input.title,
         input.description ?? "",
         input.visibility ?? "private",
-        json(input.tags ?? []),
         input.sourceType ?? "manual",
         versionId,
         now,
@@ -653,7 +633,6 @@ export class Store {
       type: AssetType;
       title: string;
       description?: string;
-      tags?: string[];
       visibility?: Asset["visibility"];
       sourceType?: Asset["sourceType"];
       content?: AssetContent;
@@ -726,7 +705,7 @@ export class Store {
   async updateAssetMeta(
     actor: ActorContext,
     assetId: string,
-    patch: Partial<Pick<Asset, "title" | "description" | "tags" | "visibility" | "status">>,
+    patch: Partial<Pick<Asset, "title" | "description" | "visibility" | "status">>,
     expectedLockVersion?: number,
   ): Promise<Asset | null> {
     const asset = await this.getAsset(actor.workspaceId, assetId);
@@ -739,12 +718,11 @@ export class Store {
     const now = nowIso();
     await this.db
       .prepare(
-        `UPDATE assets SET title = ?, description = ?, tags_json = ?, visibility = ?, status = ?, lock_version = lock_version + 1, updated_at = ? WHERE id = ?`,
+        `UPDATE assets SET title = ?, description = ?, visibility = ?, status = ?, lock_version = lock_version + 1, updated_at = ? WHERE id = ?`,
       )
       .run(
         patch.title ?? asset.title,
         patch.description ?? asset.description,
-        json(patch.tags ?? asset.tags),
         patch.visibility ?? asset.visibility,
         patch.status ?? asset.status,
         now,
@@ -778,21 +756,14 @@ export class Store {
   async batchUpdateAssets(
     actor: ActorContext,
     ids: string[],
-    action: "delete" | "restore" | "tag",
-    tags?: string[],
+    action: "delete" | "restore",
   ): Promise<number> {
-    const now = nowIso();
     let changed = 0;
     for (const id of ids) {
       const asset = await this.getAsset(actor.workspaceId, id);
       if (!asset) continue;
       if (action === "delete") await this.softDelete(actor, id);
       if (action === "restore") await this.restore(actor, id);
-      if (action === "tag") {
-        await this.db
-          .prepare("UPDATE assets SET tags_json = ?, updated_at = ? WHERE id = ?")
-          .run(json(Array.from(new Set([...(tags ?? []), ...asset.tags]))), now, id);
-      }
       changed += 1;
     }
     return changed;
@@ -1088,6 +1059,91 @@ export class Store {
     return row ? mapTask(row) : null;
   }
 
+  async appendTaskStreamEvent(input: {
+    taskId: string;
+    runId: string;
+    sequence: number;
+    phase: string;
+    activity: TaskStreamEvent["activity"];
+    delta?: string;
+    receivedChars?: number | null;
+    finishReason?: string | null;
+    usage?: { inputTokens: number; outputTokens: number } | null;
+  }): Promise<TaskStreamEvent | null> {
+    const task = await this.getTaskAny(input.taskId);
+    if (!task) return null;
+    const id = nextId("str");
+    const createdAt = nowIso();
+    await this.db
+      .prepare(
+        `INSERT INTO task_stream_events
+          (id, task_id, run_id, sequence, phase, activity, delta, received_chars, finish_reason, usage_json, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT (task_id, run_id, sequence) DO NOTHING`,
+      )
+      .run(
+        id,
+        input.taskId,
+        input.runId,
+        input.sequence,
+        input.phase,
+        input.activity,
+        input.delta ?? "",
+        input.receivedChars ?? null,
+        input.finishReason ?? null,
+        input.usage ? json(input.usage) : null,
+        createdAt,
+      );
+    const row = (await this.db
+      .prepare("SELECT * FROM task_stream_events WHERE task_id = ? AND run_id = ? AND sequence = ?")
+      .get(input.taskId, input.runId, input.sequence)) as Row | undefined;
+    if (!row) return null;
+    return {
+      id: str(row.id),
+      taskId: str(row.task_id),
+      runId: str(row.run_id),
+      sequence: num(row.sequence),
+      phase: str(row.phase),
+      activity: str(row.activity) as TaskStreamEvent["activity"],
+      delta: str(row.delta),
+      receivedChars: row.received_chars === null ? null : num(row.received_chars),
+      finishReason: row.finish_reason === null ? null : str(row.finish_reason),
+      usage: row.usage_json === null ? null : parse<{ inputTokens: number; outputTokens: number }>(row.usage_json, { inputTokens: 0, outputTokens: 0 }),
+      createdAt: str(row.created_at),
+    };
+  }
+
+  async listTaskStreamEvents(
+    workspaceId: string,
+    taskId: string,
+    opts: { runId?: string; after?: number; limit?: number } = {},
+  ): Promise<TaskStreamEvent[]> {
+    const task = await this.getTask(workspaceId, taskId);
+    if (!task) return [];
+    const clauses = ["task_id = ?"];
+    const params: unknown[] = [taskId];
+    if (opts.runId) {
+      clauses.push("run_id = ?");
+      params.push(opts.runId);
+    }
+    if (opts.after !== undefined) {
+      clauses.push("sequence > ?");
+      params.push(opts.after);
+    }
+    params.push(Math.min(Math.max(opts.limit ?? 500, 1), 2000));
+    const rows = (await this.db
+      .prepare(`SELECT * FROM task_stream_events WHERE ${clauses.join(" AND ")} ORDER BY sequence ASC LIMIT ?`)
+      .all(...params)) as Row[];
+    return rows.map((row) => ({
+      id: str(row.id), taskId: str(row.task_id), runId: str(row.run_id), sequence: num(row.sequence),
+      phase: str(row.phase), activity: str(row.activity) as TaskStreamEvent["activity"], delta: str(row.delta),
+      receivedChars: row.received_chars === null ? null : num(row.received_chars),
+      finishReason: row.finish_reason === null ? null : str(row.finish_reason),
+      usage: row.usage_json === null ? null : parse<{ inputTokens: number; outputTokens: number }>(row.usage_json, { inputTokens: 0, outputTokens: 0 }),
+      createdAt: str(row.created_at),
+    }));
+  }
+
   async updateTask(
     workspaceId: string,
     taskId: string,
@@ -1155,7 +1211,7 @@ export class Store {
     const now = nowIso();
     await this.db
       .prepare(
-        "UPDATE tasks SET cancel_requested = 1, updated_at = ? WHERE id = ? AND workspace_id = ?",
+        "UPDATE tasks SET cancel_requested = TRUE, updated_at = ? WHERE id = ? AND workspace_id = ?",
       )
       .run(now, taskId, workspaceId);
     return await this.getTask(workspaceId, taskId);
@@ -1904,9 +1960,9 @@ export class Store {
 
   /** Look up a publish by id regardless of workspace (published pages are a public data plane). */
   async getPublishById(publishId: string): Promise<Publish | null> {
-    const row = (await this.db
-      .prepare("SELECT * FROM publishes WHERE id = ?")
-      .get(publishId)) as Row | undefined;
+    const row = (await this.db.prepare("SELECT * FROM publishes WHERE id = ?").get(publishId)) as
+      | Row
+      | undefined;
     return row ? await this.mapPublish(row) : null;
   }
 
@@ -2501,185 +2557,14 @@ export class Store {
       .run(nowIso(), workspaceId, subject);
   }
 
-  /* ---------------- billing ---------------- */
+  /* ---------------- read-only points balance ---------------- */
 
-  async getCreditAccount(workspaceId: string): Promise<CreditAccount | null> {
+  async getCreditBalance(workspaceId: string): Promise<CreditBalance | null> {
     const row = (await this.db
-      .prepare("SELECT * FROM credit_accounts WHERE workspace_id = ?")
+      .prepare("SELECT balance FROM credit_accounts WHERE workspace_id = ?")
       .get(workspaceId)) as Row | undefined;
     if (!row) return null;
-    return {
-      id: str(row.id),
-      workspaceId: str(row.workspace_id),
-      balance: num(row.balance),
-      totalGranted: num(row.total_granted),
-      totalUsed: num(row.total_used),
-      updatedAt: str(row.updated_at),
-    };
-  }
-
-  async ledger(workspaceId: string, limit = 100): Promise<CreditLedgerEntry[]> {
-    const rows = (await this.db
-      .prepare(
-        "SELECT * FROM credit_ledger_entries WHERE workspace_id = ? ORDER BY created_at DESC LIMIT ?",
-      )
-      .all(workspaceId, limit)) as Row[];
-    return rows.map((r) => ({
-      id: str(r.id),
-      workspaceId: str(r.workspace_id),
-      entryType: str(r.entry_type) as CreditLedgerEntry["entryType"],
-      amount: num(r.amount),
-      operationId: str(r.operation_id),
-      taskId: r.task_id === null ? null : str(r.task_id),
-      description: str(r.description),
-      createdAt: str(r.created_at),
-    }));
-  }
-
-  async reserveCredits(
-    workspaceId: string,
-    taskId: string,
-    amount: number,
-    operationId: string,
-  ): Promise<{ ok: boolean; balance: number; reserved: number }> {
-    const account = await this.getCreditAccount(workspaceId);
-    if (!account) return { ok: false, balance: 0, reserved: 0 };
-    const dup = await this.db
-      .prepare("SELECT id FROM credit_ledger_entries WHERE operation_id = ?")
-      .get(operationId);
-    if (dup) {
-      const res = (await this.db
-        .prepare("SELECT amount FROM credit_reservations WHERE task_id = ?")
-        .get(taskId)) as { amount: number } | undefined;
-      return { ok: true, balance: account.balance, reserved: res?.amount ?? amount };
-    }
-    if (account.balance < amount) return { ok: false, balance: account.balance, reserved: 0 };
-    const now = nowIso();
-    await this.db.exec("BEGIN");
-    try {
-      await this.db
-        .prepare(
-          "UPDATE credit_accounts SET balance = balance - ?, total_used = total_used + ?, updated_at = ? WHERE workspace_id = ?",
-        )
-        .run(amount, amount, now, workspaceId);
-      await this.db
-        .prepare(
-          "INSERT INTO credit_ledger_entries (id, workspace_id, entry_type, amount, operation_id, task_id, description, created_at) VALUES (?, ?, 'reserve', ?, ?, ?, ?, ?)",
-        )
-        .run(nextId("led"), workspaceId, amount, operationId, taskId, "任务 Credits 预留", now);
-      await this.db
-        .prepare(
-          "INSERT INTO credit_reservations (id, workspace_id, task_id, amount, status, expires_at, created_at) VALUES (?, ?, ?, ?, 'active', ?, ?) ON CONFLICT(task_id) DO UPDATE SET amount = excluded.amount",
-        )
-        .run(
-          nextId("res"),
-          workspaceId,
-          taskId,
-          amount,
-          new Date(Date.now() + 24 * 3600 * 1000).toISOString(),
-          now,
-        );
-      await this.db.exec("COMMIT");
-    } catch (err) {
-      await this.db.exec("ROLLBACK");
-      throw err;
-    }
-    return {
-      ok: true,
-      balance: ((await this.getCreditAccount(workspaceId)) as CreditAccount).balance,
-      reserved: amount,
-    };
-  }
-
-  async settleCredits(
-    workspaceId: string,
-    taskId: string,
-    actual: number,
-    operationId: string,
-  ): Promise<void> {
-    const dup = await this.db
-      .prepare("SELECT id FROM credit_ledger_entries WHERE operation_id = ?")
-      .get(operationId);
-    if (dup) return;
-    const reservation = (await this.db
-      .prepare("SELECT * FROM credit_reservations WHERE task_id = ?")
-      .get(taskId)) as Row | undefined;
-    const reserved = reservation ? num(reservation.amount) : actual;
-    const refund = Math.max(0, reserved - actual);
-    const extra = Math.max(0, actual - reserved);
-    const now = nowIso();
-    await this.db.exec("BEGIN");
-    try {
-      await this.db
-        .prepare(
-          "INSERT INTO credit_ledger_entries (id, workspace_id, entry_type, amount, operation_id, task_id, description, created_at) VALUES (?, ?, 'settle', ?, ?, ?, ?, ?)",
-        )
-        .run(nextId("led"), workspaceId, actual, operationId, taskId, "任务 Credits 结算", now);
-      if (refund > 0) {
-        await this.db
-          .prepare(
-            "INSERT INTO credit_ledger_entries (id, workspace_id, entry_type, amount, operation_id, task_id, description, created_at) VALUES (?, ?, 'release', ?, ?, ?, ?, ?)",
-          )
-          .run(
-            nextId("led"),
-            workspaceId,
-            refund,
-            `op_rel_${taskId}_${now}`,
-            taskId,
-            "预留返还",
-            now,
-          );
-        await this.db
-          .prepare(
-            "UPDATE credit_accounts SET balance = balance + ?, total_used = total_used - ?, updated_at = ? WHERE workspace_id = ?",
-          )
-          .run(refund, refund, now, workspaceId);
-      }
-      if (extra > 0) {
-        await this.db
-          .prepare(
-            "UPDATE credit_accounts SET balance = balance - ?, total_used = total_used + ?, updated_at = ? WHERE workspace_id = ?",
-          )
-          .run(extra, extra, now, workspaceId);
-      }
-      await this.db
-        .prepare("UPDATE credit_reservations SET status = 'settled' WHERE task_id = ?")
-        .run(taskId);
-      await this.db.exec("COMMIT");
-    } catch (err) {
-      await this.db.exec("ROLLBACK");
-      throw err;
-    }
-  }
-
-  async usageRecords(workspaceId: string, limit = 100): Promise<Array<Record<string, unknown>>> {
-    return (await this.db
-      .prepare(
-        "SELECT * FROM usage_records WHERE workspace_id = ? ORDER BY created_at DESC LIMIT ?",
-      )
-      .all(workspaceId, limit)) as Array<Record<string, unknown>>;
-  }
-
-  async recordUsage(input: {
-    workspaceId: string;
-    taskId?: string;
-    kind: string;
-    amount: number;
-    metadata?: Record<string, unknown>;
-  }): Promise<void> {
-    await this.db
-      .prepare(
-        "INSERT INTO usage_records (id, workspace_id, task_id, kind, amount, metadata_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-      )
-      .run(
-        nextId("use"),
-        input.workspaceId,
-        input.taskId ?? null,
-        input.kind,
-        input.amount,
-        json(input.metadata ?? {}),
-        nowIso(),
-      );
+    return { balance: num(row.balance) };
   }
 
   /* ---------------- tokens & mcp ---------------- */
@@ -2920,7 +2805,7 @@ export class Store {
   async insertInbox(eventId: string, consumer: string): Promise<void> {
     await this.db
       .prepare(
-        "INSERT OR IGNORE INTO inbox_events (event_id, consumer, processed_at) VALUES (?, ?, ?)",
+        "INSERT INTO inbox_events (event_id, consumer, processed_at) VALUES (?, ?, ?) ON CONFLICT (event_id, consumer) DO NOTHING",
       )
       .run(eventId, consumer, nowIso());
   }
@@ -3173,7 +3058,7 @@ export class Store {
         String(patch.goal ?? current.goal),
         json(patch.spec ?? parse<Record<string, unknown>>(current.spec_json, {})),
         cron,
-        enabled ? 1 : 0,
+        enabled,
         nextRunAt,
         nowIso(),
         id,
@@ -3191,7 +3076,7 @@ export class Store {
     const now = nowIso();
     return (await this.db
       .prepare(
-        "SELECT * FROM task_schedules WHERE enabled = 1 AND next_run_at IS NOT NULL AND next_run_at <= ? ORDER BY next_run_at LIMIT 10",
+        "SELECT * FROM task_schedules WHERE enabled = TRUE AND next_run_at IS NOT NULL AND next_run_at <= ? ORDER BY next_run_at LIMIT 10",
       )
       .all(now)) as Array<Record<string, unknown>>;
   }

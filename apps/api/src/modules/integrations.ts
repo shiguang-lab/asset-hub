@@ -4,7 +4,6 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { badRequest, notFound } from "../platform/errors.js";
 import type { AppContext } from "../types.js";
-import { estimateCredits } from "./tasks.js";
 
 export function registerIntegrations(app: FastifyInstance): void {
   const ctx: AppContext = app.ctx;
@@ -194,7 +193,6 @@ export function registerIntegrations(app: FastifyInstance): void {
       goal: `同步 Git 仓库：${String(connection.name)}`,
       spec: { connectionId: id },
     });
-    await ctx.store.reserveCredits(req.actor.workspaceId, task.id, 100, `op_reserve_${task.id}`);
     await ctx.bus.emit({
       eventId: nextId("evt"),
       eventType: "task.created",
@@ -207,7 +205,7 @@ export function registerIntegrations(app: FastifyInstance): void {
       data: { taskId: task.id, taskType: "git_sync", spec: { connectionId: id } },
     });
     await ctx.store.audit(req.actor.workspaceId, req.actor.subject, "git.sync", id, "success", {});
-    return { task, estimate: estimateCredits({ depth: "quick", outputs: [] }) };
+    return { task };
   });
 
   /* ---------------- 自定义域名 ---------------- */

@@ -43,7 +43,7 @@ PRD 的 P0 范围很宽，不能并行铺开所有页面后再补可靠性。按
 - Hatchet Workflow、task projector、SSE progress；
 - Agent planner/tool loop/evidence；
 - checkpoint、cancel、partial success、failed item retry；
-- Credits reserve/settle；
+- 外部积分系统余额只读适配；
 - 完成/失败通知。
 
 退出标准：关闭浏览器 10 分钟仍继续，Worker 重启可恢复，重试不重复 Asset/扣费，至少输出 Report + Sources。
@@ -72,7 +72,7 @@ PRD 的 P0 范围很宽，不能并行铺开所有页面后再补可靠性。按
 
 ## 8. Phase 6：商业化与上线加固（2–4 周）
 
-- Credits/Storage 明细和额度不足降级；
+- Storage 明细和任务失败降级；
 - API token、MCP connection guide/revoke；
 - rate limit、abuse、backup restore、load test；
 - accessibility、SEO、analytics 口径；
@@ -92,4 +92,4 @@ PRD 的 P0 范围很宽，不能并行铺开所有页面后再补可靠性。按
 | Phase 2 结束 | 中文检索质量是否足以推迟 OpenSearch |
 | Phase 3 结束 | Agent 成功率、单任务成本、人工介入率是否达到上线线 |
 | Phase 4 结束 | DuckDB pool 是否满足并发；是否需要专用 OLAP |
-| 上线前 | SLO、RPO/RTO、数据保留、Credits 定价和合规政策最终值 |
+| 上线前 | SLO、RPO/RTO、数据保留、外部积分系统对接与合规政策最终值 |

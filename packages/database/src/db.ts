@@ -90,16 +90,6 @@ export async function seedDemo(db: Db, subject: string, workspaceName: string): 
     .run(subject, ws, "演示用户", "demo@shiguang.local", "balanced", "zh-CN", now);
   await db
     .prepare(
-      "INSERT INTO credit_accounts (id, workspace_id, balance, total_granted, total_used, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
-    )
-    .run(nextId("acc"), ws, 10000, 10000, 0, now);
-  await db
-    .prepare(
-      "INSERT INTO credit_ledger_entries (id, workspace_id, entry_type, amount, operation_id, description, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-    )
-    .run(nextId("led"), ws, "grant", 10000, "op_seed_" + subject, "新用户初始 Credits", now);
-  await db
-    .prepare(
       "INSERT INTO mcp_configs (id, workspace_id, enabled, scope, scope_ids, write_enabled, server_url, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .run(nextId("mcp"), ws, false, "all", "[]", false, "", now);
@@ -180,7 +170,6 @@ export async function seedDemoAssets(db: Db, storage: ObjectStore, subject: stri
   interface DemoDoc {
     title: string;
     description: string;
-    tags: string[];
     visibility: "private" | "link" | "public";
     publishedUrl: string | null;
     updatedAgo: number;
@@ -192,7 +181,6 @@ export async function seedDemoAssets(db: Db, storage: ObjectStore, subject: stri
     {
       title: "2024 新能源汽车行业研究报告",
       description: "深入分析全球新能源汽车市场趋势、竞争格局与技术演进",
-      tags: ["行业研究", "新能源汽车"],
       visibility: "public",
       publishedUrl: "http://localhost:3004/p/nev-2024",
       updatedAgo: 1 * D + 6 * H,
@@ -220,7 +208,6 @@ export async function seedDemoAssets(db: Db, storage: ObjectStore, subject: stri
     {
       title: "越南消费金融市场分析",
       description: "聚焦越南消费金融市场现状与未来机遇，包含市场规模、主要玩家与增长驱动",
-      tags: ["消费金融", "越南市场"],
       visibility: "link",
       publishedUrl: "http://localhost:3004/p/vietnam-fintech",
       updatedAgo: 6 * H,
@@ -244,7 +231,6 @@ export async function seedDemoAssets(db: Db, storage: ObjectStore, subject: stri
     {
       title: "AI Agent 产品设计规范",
       description: "定义 AI Agent 产品的设计原则、功能模块与交互规范",
-      tags: ["产品设计", "AI Agent"],
       visibility: "link",
       publishedUrl: null,
       updatedAgo: 2 * D + 4 * H,
@@ -265,7 +251,6 @@ export async function seedDemoAssets(db: Db, storage: ObjectStore, subject: stri
     {
       title: "Shiguang Lab 产品需求文档",
       description: "Shiguang Lab 核心功能需求、用户场景与验收标准",
-      tags: ["PRD", "产品需求"],
       visibility: "link",
       publishedUrl: null,
       updatedAgo: 95 * D,
@@ -287,7 +272,6 @@ AI 原生知识与数字资产工作空间。
     {
       title: "行业数据 Dashboard",
       description: "可视化展示行业关键指标与趋势数据，支持多维度下钻分析",
-      tags: ["数据可视化", "Dashboard"],
       visibility: "public",
       publishedUrl: "http://localhost:3004/p/industry-dashboard",
       updatedAgo: 97 * D,
@@ -331,8 +315,8 @@ AI 原生知识与数字资产工作空间。
   });
   await db
     .prepare(
-      `INSERT INTO assets (id, workspace_id, owner_subject, type, title, description, visibility, status, tags_json, source_type, current_version_id, lock_version, created_at, updated_at)
-       VALUES (?, ?, ?, 'presentation', '新能源汽车行业研究报告演示', '由文档生成的在线演示', 'link', 'normal', '["行业研究"]', 'template', ?, 1, ?, ?)`,
+      `INSERT INTO assets (id, workspace_id, owner_subject, type, title, description, visibility, status, source_type, current_version_id, lock_version, created_at, updated_at)
+       VALUES (?, ?, ?, 'presentation', '新能源汽车行业研究报告演示', '由文档生成的在线演示', 'link', 'normal', 'template', ?, 1, ?, ?)`,
     )
     .run(presId, workspaceId, subject, presVersionId, presUpdated, presUpdated);
   await db
@@ -451,7 +435,6 @@ async function insertDoc(
   doc: {
     title: string;
     description: string;
-    tags: string[];
     visibility: string;
     publishedUrl: string | null;
     updatedAgo: number;
@@ -465,8 +448,8 @@ async function insertDoc(
   const updatedAt = new Date(Date.now() - doc.updatedAgo).toISOString();
   await db
     .prepare(
-      `INSERT INTO assets (id, workspace_id, owner_subject, type, title, description, visibility, status, tags_json, source_type, current_version_id, lock_version, published_url, created_at, updated_at)
-       VALUES (?, ?, ?, 'document', ?, ?, ?, 'normal', ?, 'manual', ?, 1, ?, ?, ?)`,
+      `INSERT INTO assets (id, workspace_id, owner_subject, type, title, description, visibility, status, source_type, current_version_id, lock_version, published_url, created_at, updated_at)
+       VALUES (?, ?, ?, 'document', ?, ?, ?, 'normal', 'manual', ?, 1, ?, ?, ?)`,
     )
     .run(
       id,
@@ -475,7 +458,6 @@ async function insertDoc(
       doc.title,
       doc.description,
       doc.visibility,
-      JSON.stringify(doc.tags),
       versionId,
       doc.publishedUrl,
       createdAt,

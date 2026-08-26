@@ -59,7 +59,7 @@ MVP 若使用单节点基础设施，必须记录其单点风险并保证可恢�
 - HTTP command 使用 `Idempotency-Key + actor + route` 唯一索引；
 - Workflow/Activity 使用业务 key，不使用随机 attempt 作为业务身份；
 - Event consumer 使用 Inbox；
-- Asset version、publish release、credit ledger 具有业务唯一约束；
+- Asset version、publish release 具有业务唯一约束；
 - 外部 API 不保证幂等时保存 provider request id 和 result。
 
 ### 3.2 Timeout/Retry

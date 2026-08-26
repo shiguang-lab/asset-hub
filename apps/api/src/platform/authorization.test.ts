@@ -36,7 +36,6 @@ function asset(overrides: Partial<Asset> = {}): Asset {
     description: "",
     visibility: "private",
     status: "normal",
-    tags: [],
     sourceType: "manual",
     currentVersionId: null,
     lockVersion: 1,

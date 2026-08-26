@@ -1,6 +1,7 @@
-import { Avatar, Empty, StatusBadge, useToast } from "@shiguang/ui";
+import { Avatar, Empty, Scrollbar, StatusBadge, useToast } from "@shiguang/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button, Input, Modal, Select, Switch } from "antd";
+import { createStyles } from "antd-style";
 import {
   ArrowRight,
   BarChart3,
@@ -50,7 +51,7 @@ import {
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
-import { type CSSProperties, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { type Asset, api, downloadFile, type Task } from "../../entities/api.js";
 import { AppTabs } from "../../shared/AppTabs.js";
@@ -92,6 +93,70 @@ interface Schedule {
   enabled: boolean;
   next_run_at: string | null;
   run_count: number;
+}
+
+const useTaskWidthStyles = createStyles((_utils, props: { value: number }) => ({
+  fill: {
+    width: `${props.value}%`,
+  },
+}));
+
+function TaskWidthFill({ value, as = "i" }: { value: number; as?: "i" | "b" }) {
+  const { styles } = useTaskWidthStyles({ value });
+  return as === "b" ? <b className={styles.fill} /> : <i className={styles.fill} />;
+}
+
+const useTaskHeightStyles = createStyles((_utils, props: { value: number }) => ({
+  fill: {
+    height: `${props.value}%`,
+  },
+}));
+
+function TaskHeightFill({ value, children }: { value: number; children?: React.ReactNode }) {
+  const { styles } = useTaskHeightStyles({ value });
+  return <i className={styles.fill}>{children}</i>;
+}
+
+const useTaskPointStyles = createStyles((_utils, props: { bottom: number; left: number }) => ({
+  point: {
+    bottom: `${props.bottom}px`,
+    left: `${props.left}%`,
+  },
+}));
+
+function TaskPoint({
+  bottom,
+  left,
+  children,
+}: {
+  bottom: number;
+  left: number;
+  children: React.ReactNode;
+}) {
+  const { styles } = useTaskPointStyles({ bottom, left });
+  return <i className={styles.point}>{children}</i>;
+}
+
+const useTaskRingStyles = createStyles((_utils, props: { progress: number }) => ({
+  ring: {
+    background: `conic-gradient(#7758dd ${props.progress}deg, #e1dceb 0) !important`,
+  },
+}));
+
+function TaskRing({ progress, children }: { progress: number; children: React.ReactNode }) {
+  const { styles } = useTaskRingStyles({ progress });
+  return <i className={styles.ring}>{children}</i>;
+}
+
+const useTaskZoomStyles = createStyles((_utils, props: { scale: number }) => ({
+  canvas: {
+    transform: `scale(${props.scale})`,
+  },
+}));
+
+function TaskZoomCanvas({ scale, children }: { scale: number; children: React.ReactNode }) {
+  const { styles } = useTaskZoomStyles({ scale });
+  return <article className={styles.canvas}>{children}</article>;
 }
 
 function taskTitle(task: Task): string {
@@ -269,15 +334,15 @@ export function TasksPage() {
             onChange={(key) => setFilter(key as TaskFilter)}
           />
           <div className="sg-task-toolbar">
-            <label className="sg-task-search">
-              <Search size={16} />
-              <input
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder="搜索任务名称、关键词…"
-                aria-label="搜索任务"
-              />
-            </label>
+            <Input
+              className="sg-task-search"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="搜索任务名称、关键词…"
+              aria-label="搜索任务"
+              prefix={<Search size={16} />}
+              allowClear
+            />
             <Select
               value={type}
               onChange={setType}
@@ -369,7 +434,7 @@ export function TasksPage() {
                         )}
                         {task.status !== "completed" && (
                           <div className={`sg-task-progress-track ${partial ? "warning" : ""}`}>
-                            <i style={{ width: `${Math.max(2, task.progress)}%` }} />
+                            <TaskWidthFill value={Math.max(2, task.progress)} />
                           </div>
                         )}
                         <span>
@@ -433,14 +498,15 @@ export function TasksPage() {
                           查看结果
                         </Button>
                       )}
-                      <button
-                        type="button"
-                        className="sg-task-more"
+                      <Button
+                        size="small"
+                        type="text"
+                        className="sg-list-action-btn sg-task-more"
                         onClick={() => navigate(`/tasks/${task.id}`)}
                         aria-label="更多任务操作"
                       >
                         <MoreHorizontal size={17} />
-                      </button>
+                      </Button>
                     </div>
                   </article>
                 );
@@ -744,15 +810,16 @@ export function TaskNewPage() {
                     <p>你想让 AI 帮你完成什么？</p>
                   </div>
                 </div>
-                <label className="sg-task-description-field">
-                  <textarea
+                <div className="sg-task-description-field">
+                  <Input.TextArea
                     value={description}
                     onChange={(event) => setDescription(event.target.value)}
                     placeholder="例如：帮我分析越南消费金融市场，包括市场规模、增长趋势、主要玩家、竞争格局、监管环境和未来趋势预测。"
                     maxLength={2000}
+                    autoSize={{ minRows: 4, maxRows: 8 }}
                   />
                   <span>{description.length} / 2000</span>
-                </label>
+                </div>
                 <button
                   type="button"
                   className="sg-task-ai-optimize"
@@ -861,10 +928,13 @@ export function TaskNewPage() {
                   <p>选择已有文档、数据集或知识库作为任务上下文，也可以跳过</p>
                 </div>
               </div>
-              <label className="sg-task-resource-search">
-                <Search size={15} />
-                <input placeholder="搜索可用资源" />
-              </label>
+              <Input
+                className="sg-task-resource-search"
+                placeholder="搜索可用资源"
+                prefix={<Search size={15} />}
+                allowClear
+                aria-label="搜索可用资源"
+              />
               <div className="sg-task-resource-list">
                 {(assets?.items ?? []).map((asset) => {
                   const selected = resourceIds.includes(asset.id);
@@ -1004,13 +1074,6 @@ export function TaskNewPage() {
                   </dd>
                 </div>
               </dl>
-              <div className="sg-task-credit-estimate">
-                <Gauge size={20} />
-                <span>
-                  <b>预计消耗 400–900 Credits</b>
-                  <small>实际消耗取决于任务复杂度和输出数量</small>
-                </span>
-              </div>
             </section>
           )}
           <footer className="sg-task-new-footer">
@@ -1229,7 +1292,7 @@ export function TaskDetailPage() {
           <div className="sg-task-detail-progress">
             <strong>{Math.round(task.progress)}%</strong>
             <div>
-              <i style={{ width: `${Math.max(2, task.progress)}%` }} />
+              <TaskWidthFill value={Math.max(2, task.progress)} />
             </div>
             <span>{remaining(task)}</span>
           </div>
@@ -1258,7 +1321,7 @@ export function TaskDetailPage() {
           <span>创建时间: {dateTime(task.createdAt)}</span>
           <span>预计完成: {task.completedAt ? dateTime(task.completedAt) : remaining(task)}</span>
         </div>
-        <div className="sg-task-stage-hero">
+        <Scrollbar className="sg-task-stage-hero">
           {stages.map((stage, index) => (
             <div key={stage.label} className={stage.state}>
               <i>{stage.state === "completed" ? <Check size={14} /> : index + 1}</i>
@@ -1275,7 +1338,7 @@ export function TaskDetailPage() {
               {index < stages.length - 1 && <ArrowRight size={16} />}
             </div>
           ))}
-        </div>
+        </Scrollbar>
       </section>
       <div className="sg-task-detail-layout">
         <main className="sg-task-detail-main">
@@ -1549,7 +1612,7 @@ function TaskProcess({ task, steps }: { task: Task; steps: NonNullable<Task["ste
                   <div className="sg-task-step-progress">
                     <span>完成 {Math.round(step.progress)}%</span>
                     <i>
-                      <b style={{ width: `${step.progress}%` }} />
+                      <TaskWidthFill as="b" value={step.progress} />
                     </i>
                   </div>
                 </>
@@ -1638,7 +1701,7 @@ function TaskProcess({ task, steps }: { task: Task; steps: NonNullable<Task["ste
             <h4>用户增长趋势</h4>
             <div className="sg-task-mini-bars">
               {[42, 55, 63, 78, 91].map((height) => (
-                <i key={height} style={{ height: `${height}%` }} />
+                <TaskHeightFill key={height} value={height} />
               ))}
             </div>
           </article>
@@ -1788,9 +1851,9 @@ function TaskPreview({
               <h3>市场规模（2019–2025）</h3>
               <div className="sg-task-large-bars">
                 {[31, 42, 55, 67, 78, 89].map((height, index) => (
-                  <i key={height} style={{ height: `${height}%` }}>
+                  <TaskHeightFill key={height} value={height}>
                     <span>{2019 + index}</span>
-                  </i>
+                  </TaskHeightFill>
                 ))}
               </div>
             </section>
@@ -1840,10 +1903,13 @@ function TaskSources({ evidence }: { evidence: Array<Record<string, unknown>> })
     <div className="sg-task-sources">
       <div className="sg-task-source-head">
         <h2>引用来源</h2>
-        <label>
-          <Search size={15} />
-          <input placeholder="搜索来源" />
-        </label>
+        <Input
+          className="sg-task-source-search"
+          placeholder="搜索来源"
+          prefix={<Search size={15} />}
+          allowClear
+          aria-label="搜索来源"
+        />
       </div>
       {evidence.length ? (
         evidence.map((item, index) => (
@@ -1947,7 +2013,8 @@ function TaskReport({ task, onDownload }: { task: Task; onDownload: () => void }
             </button>
           </div>
           <div className="sg-task-report-page-control">
-            <input
+            <Input
+              className="sg-task-report-page-input"
               type="number"
               aria-label="当前页"
               min={1}
@@ -2003,8 +2070,8 @@ function TaskReport({ task, onDownload }: { task: Task; onDownload: () => void }
             </button>
           </div>
         </div>
-        <div className="sg-task-report-canvas">
-          <article style={{ transform: `scale(${zoom / 100})` }}>
+        <Scrollbar className="sg-task-report-canvas">
+          <TaskZoomCanvas scale={zoom / 100}>
             <h1>6. 趋势与机会</h1>
             <h2>6.1 发展趋势</h2>
             <div className="sg-task-report-block">
@@ -2020,10 +2087,10 @@ function TaskReport({ task, onDownload }: { task: Task; onDownload: () => void }
               <div className="sg-task-report-bars">
                 <b>线上贷款占比</b>
                 {[32, 46, 62, 78].map((height, index) => (
-                  <i key={height} style={{ height: `${height}%` }}>
+                  <TaskHeightFill key={height} value={height}>
                     <em>{height}%</em>
                     <small>{2020 + index}</small>
-                  </i>
+                  </TaskHeightFill>
                 ))}
               </div>
             </div>
@@ -2060,10 +2127,10 @@ function TaskReport({ task, onDownload }: { task: Task; onDownload: () => void }
                 <b>监管政策数量（累计）</b>
                 <div>
                   {[8, 12, 18, 26].map((value, index) => (
-                    <i key={value} style={{ bottom: `${value * 2}px`, left: `${8 + index * 29}%` }}>
+                    <TaskPoint key={value} bottom={value * 2} left={8 + index * 29}>
                       <em>{value}</em>
                       <small>{2020 + index}</small>
-                    </i>
+                    </TaskPoint>
                   ))}
                 </div>
               </div>
@@ -2078,18 +2145,15 @@ function TaskReport({ task, onDownload }: { task: Task; onDownload: () => void }
               </div>
               <div className="sg-task-report-rings">
                 {[28, 46, 68].map((value, index) => (
-                  <i
-                    key={value}
-                    style={{ "--ring-progress": `${value * 3.6}deg` } as CSSProperties}
-                  >
+                  <TaskRing key={value} progress={value * 3.6}>
                     <b>{value}%</b>
                     <small>{2021 + index}</small>
-                  </i>
+                  </TaskRing>
                 ))}
               </div>
             </div>
-          </article>
-        </div>
+          </TaskZoomCanvas>
+        </Scrollbar>
       </main>
     </div>
   );
@@ -2223,10 +2287,6 @@ function TaskSettings({
           <div>
             <dt>质量模式</dt>
             <dd>{String(task.spec.quality ?? "balanced")}</dd>
-          </div>
-          <div>
-            <dt>Credits 已用</dt>
-            <dd>{task.creditsUsed}</dd>
           </div>
           <div>
             <dt>关联资源</dt>
