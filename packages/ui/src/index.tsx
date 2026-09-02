@@ -97,7 +97,7 @@ const BRAND_LOADING_STYLES = `
 }
 .sg-brand-loading__stage {
   width: var(--sg-loader-size);
-  height: var(--sg-loader-size);
+  height: calc(var(--sg-loader-size) * 1431 / 1600);
 }
 .sg-brand-loading__svg {
   display: block;
@@ -114,11 +114,11 @@ const BRAND_LOADING_STYLES = `
   stroke-dashoffset: 1;
 }
 .sg-brand-loading__reveal--ring {
-  stroke-width: 3.4;
+  stroke-width: 132;
   animation: sg-loader-draw-ring 2.6s cubic-bezier(.65, 0, .35, 1) infinite;
 }
 .sg-brand-loading__reveal--mark {
-  stroke-width: 3.6;
+  stroke-width: 144;
   animation: sg-loader-draw-mark 2.6s cubic-bezier(.65, 0, .35, 1) infinite;
 }
 .sg-brand-loading__detail {
@@ -197,33 +197,38 @@ function BrandLoading({
     >
       <style data-sg-brand-loading="true">{BRAND_LOADING_STYLES}</style>
       <div className="sg-brand-loading__stage" aria-hidden="true">
-        <svg className="sg-brand-loading__svg" viewBox="0 0 32 32" fill="none" aria-hidden="true">
-          <mask id={maskId} x="0" y="0" width="32" height="32" maskUnits="userSpaceOnUse">
-            <circle
+        <svg
+          className="sg-brand-loading__svg"
+          viewBox="0 0 1600 1431"
+          fill="none"
+          aria-hidden="true"
+        >
+          <mask id={maskId} x="0" y="0" width="1600" height="1431" maskUnits="userSpaceOnUse">
+            <path
               className="sg-brand-loading__reveal sg-brand-loading__reveal--ring"
-              cx="16"
-              cy="16"
-              r="11"
+              d="M728 176C416 192 170 438 166 744C162 1050 350 1265 674 1350"
               pathLength="1"
             />
             <path
               className="sg-brand-loading__reveal sg-brand-loading__reveal--mark"
-              d="M14 25V12a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h11a1 1 0 0 0 1-1v-4H9"
+              d="M670 432V540C670 650 580 723 320 765H1064C1172 765 1248 842 1248 949C1248 1054 1174 1111 1065 1111H833V1350"
               pathLength="1"
             />
-            <rect className="sg-brand-loading__detail" x="18" y="7" width="6" height="6" rx="1" />
+            <rect className="sg-brand-loading__detail" width="1600" height="1431" />
           </mask>
           <image
             className="sg-brand-loading__art sg-brand-loading__art--base"
-            href="/favicon.svg"
-            width="32"
-            height="32"
+            href="/brand-mark.svg"
+            width="1600"
+            height="1431"
+            preserveAspectRatio="xMidYMid meet"
           />
           <image
             className="sg-brand-loading__art"
-            href="/favicon.svg"
-            width="32"
-            height="32"
+            href="/brand-mark.svg"
+            width="1600"
+            height="1431"
+            preserveAspectRatio="xMidYMid meet"
             mask={`url(#${maskId})`}
           />
         </svg>

@@ -2,6 +2,12 @@ packages:
   - "apps/*"
   - "packages/*"
 
+allowBuilds:
+  '@hatchet-dev/typescript-sdk': set this to true or false
+  esbuild: set this to true or false
+  protobufjs: set this to true or false
+  sharp: set this to true or false
+
 catalog:
   "@aws-sdk/client-s3": ^3.600.0
   "@biomejs/biome": ^2.3.8

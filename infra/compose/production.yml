@@ -1,7 +1,7 @@
 name: asset-hub
 
 x-app-env: &app-env
-  - ../../.env
+  - ${ASSET_HUB_APP_ENV_FILE:-../../.env}
   - ./runtime.env
 
 x-security: &security
@@ -13,14 +13,7 @@ x-security: &security
 services:
   web:
     <<: *security
-    image: shiguang/asset-hub-web:${IMAGE_TAG:-latest}
-    build:
-      context: ../..
-      dockerfile: Dockerfile
-      target: web
-      args:
-        VITE_UNIFIED_LOGIN_ORIGIN: https://shiguanglab.com
-        VITE_PUBLIC_GATEWAY_BASE: https://doc.shiguanglab.com
+    image: ghcr.io/shiguang-lab/asset-hub-web:${IMAGE_TAG:-latest}
     restart: unless-stopped
     read_only: true
     tmpfs:
@@ -40,11 +33,7 @@ services:
 
   api:
     <<: *security
-    image: shiguang/asset-hub-api:${IMAGE_TAG:-latest}
-    build:
-      context: ../..
-      dockerfile: Dockerfile
-      target: api
+    image: ghcr.io/shiguang-lab/asset-hub-api:${IMAGE_TAG:-latest}
     restart: unless-stopped
     read_only: true
     tmpfs:
@@ -81,11 +70,7 @@ services:
 
   worker:
     <<: *security
-    image: shiguang/asset-hub-worker:${IMAGE_TAG:-latest}
-    build:
-      context: ../..
-      dockerfile: Dockerfile
-      target: worker
+    image: ghcr.io/shiguang-lab/asset-hub-worker:${IMAGE_TAG:-latest}
     restart: unless-stopped
     env_file: *app-env
     environment:
@@ -103,11 +88,7 @@ services:
 
   compute-worker:
     <<: *security
-    image: shiguang/asset-hub-compute-worker:${IMAGE_TAG:-latest}
-    build:
-      context: ../..
-      dockerfile: Dockerfile
-      target: compute-worker
+    image: ghcr.io/shiguang-lab/asset-hub-compute-worker:${IMAGE_TAG:-latest}
     restart: unless-stopped
     read_only: true
     tmpfs:
@@ -132,11 +113,7 @@ services:
 
   public-gateway:
     <<: *security
-    image: shiguang/asset-hub-public-gateway:${IMAGE_TAG:-latest}
-    build:
-      context: ../..
-      dockerfile: Dockerfile
-      target: public-gateway
+    image: ghcr.io/shiguang-lab/asset-hub-public-gateway:${IMAGE_TAG:-latest}
     restart: unless-stopped
     read_only: true
     tmpfs:
@@ -166,11 +143,7 @@ services:
 
   ssr:
     <<: *security
-    image: shiguang/asset-hub-ssr:${IMAGE_TAG:-latest}
-    build:
-      context: ../..
-      dockerfile: Dockerfile
-      target: ssr
+    image: ghcr.io/shiguang-lab/asset-hub-ssr:${IMAGE_TAG:-latest}
     restart: unless-stopped
     read_only: true
     tmpfs:

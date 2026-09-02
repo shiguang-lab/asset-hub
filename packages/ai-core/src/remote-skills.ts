@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { createSkill, type InlineSkill } from "@mastra/core/skills";
 import { BlobStore, type SkillVersionTree, type StorageBlobEntry } from "@mastra/core/storage";
 import { CompositeVersionedSkillSource, Workspace } from "@mastra/core/workspace";
 
@@ -46,6 +47,11 @@ export interface MastraRemoteSkillWorkspace {
   manifest: AgentSkillManifest;
 }
 
+export interface MastraRemoteInlineSkills {
+  skills: InlineSkill[];
+  manifest: AgentSkillManifest;
+}
+
 /** Resolve immutable Skill Gateway manifests into Mastra's read-only virtual workspace. */
 export async function createMastraRemoteSkillWorkspace(
   config: MastraRemoteSkillConfig,
@@ -69,6 +75,78 @@ export async function createMastraRemoteSkillWorkspace(
   });
   await workspace.init();
   return { workspace, manifest };
+}
+
+/**
+ * Resolve remote Skill packages into Mastra Agent-level skills.
+ *
+ * Agent-level skills keep Mastra's skill/skill_search/skill_read tools and
+ * multi-file references, but do not attach a Workspace (filesystem, sandbox,
+ * command and LSP tools). This is the safer mode for strict JSON/HTML output.
+ */
+export async function createMastraRemoteInlineSkills(
+  config: MastraRemoteSkillConfig,
+): Promise<MastraRemoteInlineSkills> {
+  const manifest = await resolveAgentSkillManifest(config);
+  const blobStore = new SkillGatewayBlobStore(config, manifest);
+  const skills = await Promise.all(
+    manifest.skills
+      .filter((skill) => skill.enabled)
+      .map(async (skill) => {
+        const entries = skill.versionTree.entries;
+        const skillMarkdown = await readSkillEntry(blobStore, entries["SKILL.md"]);
+        const parsed = parseSkillMarkdown(skillMarkdown, skill.name);
+        const references: Record<string, string> = {};
+        for (const [path, entry] of Object.entries(entries)) {
+          if (path === "SKILL.md") continue;
+          references[path] = await readSkillEntry(blobStore, entry);
+        }
+        return createSkill({
+          name: safeSkillPackageName(skill.name).toLowerCase().slice(0, 64),
+          description: parsed.description,
+          instructions: parsed.instructions,
+          references,
+          metadata: {
+            source: "skill-gateway",
+            version: skill.version,
+            digest: skill.digest,
+            originalName: skill.name,
+          },
+        });
+      }),
+  );
+  return { skills, manifest };
+}
+
+async function readSkillEntry(
+  blobStore: SkillGatewayBlobStore,
+  entry: SkillManifestEntry | undefined,
+): Promise<string> {
+  if (!entry) throw new Error("skill entry is missing from version tree");
+  const blob = await blobStore.get(entry.blobHash);
+  if (!blob) throw new Error(`skill blob not found: ${entry.blobHash}`);
+  return blob.content;
+}
+
+function parseSkillMarkdown(
+  markdown: string,
+  fallbackName: string,
+): {
+  description: string;
+  instructions: string;
+} {
+  const match = markdown.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
+  if (!match) {
+    return {
+      description: `Use the ${fallbackName} skill when it is relevant to the task.`,
+      instructions: markdown.trim(),
+    };
+  }
+  const frontmatter = match[1] ?? "";
+  const description =
+    frontmatter.match(/^description:\s*["']?(.+?)["']?\s*$/m)?.[1]?.trim() ??
+    `Use the ${fallbackName} skill when it is relevant to the task.`;
+  return { description, instructions: (match[2] ?? "").trim() };
 }
 
 /** Read-only Mastra BlobStore backed by task-bound Skill Gateway download grants. */

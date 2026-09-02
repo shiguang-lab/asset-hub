@@ -66,6 +66,13 @@ describe("presentation HTML visual QA", () => {
     expect(issues.some((item) => item.severity === "error")).toBe(true);
   });
 
+  it("accepts custom SVG chart markers when the element carries numeric source data", () => {
+    const issues = validatePresentationHtmlVisualQuality(
+      `<section data-sg-page="data" data-sg-id="p1"><h2>供应商</h2><svg data-sg-kind="chart" data-sg-chart="horizontal-bar" data-sg-source="频次：23, 17, 12"></svg></section>`,
+    );
+    expect(issues.map((item) => item.code)).not.toContain("HTML_CHART_DATA_MISSING");
+  });
+
   it("flags text-only pages and repeated layouts", () => {
     const pages = Array.from(
       { length: 5 },

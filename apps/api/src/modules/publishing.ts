@@ -280,7 +280,7 @@ export function registerPublishing(app: FastifyInstance): void {
   });
 }
 
-async function buildAndAttachRelease(
+export async function buildAndAttachRelease(
   ctx: AppContext,
   workspaceId: string,
   publishId: string,

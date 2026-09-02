@@ -35,7 +35,6 @@ html[data-sg-runtime-ready="1"][data-sg-mode="slide"] [data-sg-page] {
   box-sizing: border-box !important;
 }
 html[data-sg-mode="slide"][data-sg-runtime-ready="1"] [data-sg-page] { display: none; }
-html[data-sg-mode="slide"][data-sg-runtime-ready="1"] [data-sg-page].sg-active { display: flex; }
 /* Legacy compatibility only: old artifacts used data-sg-enter as a platform
    animation protocol. New AI-authored animations do not use this attribute. */
 [data-sg-enter] {
@@ -43,6 +42,9 @@ html[data-sg-mode="slide"][data-sg-runtime-ready="1"] [data-sg-page].sg-active {
   visibility: visible !important;
   transform: none !important;
   animation: none !important;
+}
+.sg-speaker-notes {
+  display: none !important;
 }
 @media print {
   html, body { width: 1920px; height: auto; overflow: visible; }
@@ -59,20 +61,29 @@ html[data-sg-mode="slide"][data-sg-runtime-ready="1"] [data-sg-page].sg-active {
 /**
  * Static-state override used only by the editor and render/slice workers.
  * Playback never enables data-sg-static, so AI-authored CSS animations remain
- * untouched in the final HTML. The legacy data-sg-enter rule is only a safety
- * net for artifacts created before animations became fully AI-authored.
+ * untouched in the final HTML. The editor first seeks finite animations to
+ * their terminal state and commits the computed styles, then this rule keeps
+ * later edits from restarting animations or transitions. The legacy
+ * data-sg-enter rule is only a safety net for old artifacts.
  */
 export const SG_STATICIZE_CSS = /* css */ `
 html[data-sg-static="1"] [data-sg-page],
 html[data-sg-static="1"] [data-sg-page] *,
 html[data-sg-static="1"] [data-sg-page] *::before,
 html[data-sg-static="1"] [data-sg-page] *::after {
-  animation-delay: -999999s !important;
-  animation-duration: 1ms !important;
+  animation-duration: 0s !important;
+  animation-delay: 0s !important;
   animation-iteration-count: 1 !important;
   animation-fill-mode: forwards !important;
-  animation-play-state: paused !important;
+  animation-play-state: running !important;
   transition: none !important;
+  /* AI-authored animation classes often carry an inline opacity:0 while
+     waiting for their keyframes to run. Static review must capture the
+     composed end state, even when the renderer also prefers reduced motion;
+     inline styles otherwise win over the reduced-motion rule and leave
+     charts/sections invisible in audit screenshots. */
+  opacity: 1 !important;
+  visibility: visible !important;
 }
 html[data-sg-static="1"] [data-sg-page] [data-sg-enter] {
   opacity: 1 !important;
@@ -93,7 +104,10 @@ export const SG_RUNTIME_CSS = /* css */ `
   --sg-radius-md: 16px;
   --sg-radius-lg: 24px;
   --sg-font-title: 64px;
-  --sg-font-body: 18px;
+  /* Body copy has to stay legible when a 1920×1080 stage is shown full screen.
+     Anything below 22px is what the render audit rejects as too small, and the
+     template renderer must not ship text that the AI path would fail. */
+  --sg-font-body: 22px;
   --sg-transition: 0.6s cubic-bezier(0.22, 1, 0.36, 1);
 }
 * { box-sizing: border-box; }
@@ -122,12 +136,9 @@ body {
 [data-sg-x] { position: absolute; left: var(--sg-x, 0%); top: var(--sg-y, 0%); width: var(--sg-w, auto); height: var(--sg-h, auto); z-index: var(--sg-z, auto); transform: rotate(var(--sg-rot, 0deg)); transform-origin: center center; }
 /* 隐藏属性：data-sg-hidden="on" 时元素完全不显示（编辑预览与播放一致） */
 [data-sg-hidden="on"] { display: none !important; }
-[data-sg-page].sg-active { display: flex; }
-
 /* Slide 模式：每页撑满视口 */
 html[data-sg-mode="slide"][data-sg-runtime-ready="1"] [data-sg-page] { height: 1080px; min-height: 1080px; overflow: hidden; }
 html[data-sg-mode="slide"][data-sg-runtime-ready="1"] [data-sg-page] { display: none; }
-html[data-sg-mode="slide"][data-sg-runtime-ready="1"] [data-sg-page].sg-active { display: flex; }
 
 /* Scroll 模式：连续滚动 */
 html[data-sg-mode="scroll"] [data-sg-page] { display: flex; height: auto; min-height: 1080px; }
@@ -296,10 +307,10 @@ img { max-width: 100%; height: auto; }
 /* ---- 图表 ---- */
 .sg-chart { width: 100%; min-height: 300px; }
 .sg-data-table-wrap { overflow: hidden; border: 1px solid color-mix(in srgb, var(--sg-text-secondary) 20%, transparent); background: color-mix(in srgb, var(--sg-surface) 72%, transparent); }
-.sg-data-table { width: 100%; border-collapse: collapse; font-size: 14px; font-variant-numeric: tabular-nums; }
+.sg-data-table { width: 100%; border-collapse: collapse; font-size: 16px; font-variant-numeric: tabular-nums; }
 .sg-data-table th, .sg-data-table td { padding: 12px 14px; text-align: right; border-bottom: 1px solid color-mix(in srgb, var(--sg-text-secondary) 16%, transparent); white-space: nowrap; }
 .sg-data-table th:first-child, .sg-data-table td:first-child { text-align: left; }
-.sg-data-table th { color: var(--sg-text-secondary); font-size: 12px; letter-spacing: .04em; }
+.sg-data-table th { color: var(--sg-text-secondary); font-size: 14px; letter-spacing: .04em; }
 .sg-data-table td { color: var(--sg-text-primary); }
 .sg-data-table tbody tr:last-child td { border-bottom: 0; }
 
@@ -478,6 +489,15 @@ export const SG_RUNTIME_JS = /* js */ `
     var mode = opts.mode || "slide";
     var pages = Array.prototype.slice.call(document.querySelectorAll("[data-sg-page]"));
     if (!pages.length) return;
+    // Preserve the display mode authored by each page. Setting every page to
+    // flex changes normal-flow pages into horizontal flex rows (and can make
+    // a title consume the whole stage), which is especially visible in
+    // AI-authored HTML pages that intentionally use block/grid composition.
+    pages.forEach(function (page) {
+      if (page.__sgAuthoredDisplay) return;
+      var authored = window.getComputedStyle(page).display;
+      page.__sgAuthoredDisplay = authored === "none" ? "block" : authored;
+    });
     document.documentElement.setAttribute("data-sg-mode", mode);
     document.documentElement.setAttribute("data-sg-runtime-ready", "1");
     var current = 0;
@@ -498,7 +518,15 @@ export const SG_RUNTIME_JS = /* js */ `
       pages.forEach(function (p, idx) {
         p.classList.toggle("sg-active", idx === current);
         p.setAttribute("aria-hidden", idx === current ? "false" : "true");
-        p.style.setProperty("display", idx === current ? "flex" : "none", "important");
+        p.style.setProperty(
+          "display",
+          idx === current
+            ? mode === "slide"
+              ? p.__sgAuthoredDisplay || "block"
+              : "flex"
+            : "none",
+          "important",
+        );
       });
       var activePage = pages[current];
       var refreshCharts = function () { SG.resizeCharts(activePage); };

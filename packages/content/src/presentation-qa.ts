@@ -143,7 +143,13 @@ function checkPage(page: HtmlPage, previousContentLayout: string): PresentationH
 
   for (const chartMatch of page.body.matchAll(/data-sg-chart=["']([^"']*)["']/gi)) {
     const config = decodeHtml(chartMatch[1] ?? "");
-    if (!/["']?data["']?\s*:\s*\[[^\]]+\]/i.test(config)) {
+    const elementStart = page.body.lastIndexOf("<", chartMatch.index ?? 0);
+    const elementEnd = page.body.indexOf(">", chartMatch.index ?? 0);
+    const element = page.body.slice(elementStart, elementEnd >= 0 ? elementEnd + 1 : undefined);
+    const source = decodeHtml(element.match(/data-sg-source=["']([^"']+)["']/i)?.[1] ?? "");
+    const hasStructuredData = /["']?data["']?\s*:\s*\[[^\]]+\]/i.test(config);
+    const hasReferencedData = source.length > 0 && /\d/.test(source);
+    if (!hasStructuredData && !hasReferencedData) {
       issues.push(
         issue(page, "HTML_CHART_DATA_MISSING", `页面 ${page.id} 图表没有真实数据`, "error"),
       );

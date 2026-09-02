@@ -778,6 +778,42 @@ export const useKnowledgeStyles = createStyles(({ css }) => ({
   font-size: 9px;
 }
 
+@media (min-width: 1021px) {
+  .sg-knowledge-page {
+    display: flex;
+    min-height: calc(100vh - 60px - var(--sg-page-gutter) - var(--sg-page-gutter));
+    min-height: calc(100dvh - 60px - var(--sg-page-gutter) - var(--sg-page-gutter));
+    flex-direction: column;
+  }
+  .sg-knowledge-workspace {
+    min-height: 0;
+    flex: 1 1 auto;
+    align-items: stretch;
+  }
+  .sg-knowledge-main {
+    display: flex;
+    min-height: 0;
+    flex-direction: column;
+  }
+  .sg-knowledge-list,
+  .sg-knowledge-grid,
+  .sg-knowledge-empty {
+    flex: 1 0 auto;
+  }
+  .sg-knowledge-empty,
+  .sg-knowledge-detail,
+  .sg-knowledge-detail-empty {
+    min-height: 0;
+  }
+  .sg-knowledge-detail-empty {
+    height: 100%;
+    box-sizing: border-box;
+  }
+  .sg-knowledge-grid {
+    align-content: start;
+  }
+}
+
 @media (max-width: 1450px) {
   .sg-knowledge-workspace {
     grid-template-columns: minmax(0, 1fr) 320px;

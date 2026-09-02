@@ -91,13 +91,32 @@ export function ensurePresentationPageIds(html: string): string {
         setAttr(node, "id", pageId);
         changed = true;
       }
+      // Author CSS conventionally scopes page rules as `.page-N`. The native
+      // id only serves `#page-N` selectors, so the same identity is mirrored
+      // as a class token or those rules silently never match.
+      if (pageId && addClassToken(node, pageId)) changed = true;
     });
   }
   return changed ? serializePresentationHtml(tree as never) : html;
 }
 
+/** hast stores `class` as a camelCase `className` array; legacy `class` strings may also appear. */
+function classTokens(node: Node): string[] {
+  const value = node.properties?.className ?? node.properties?.["class"];
+  if (Array.isArray(value)) return value.map((token) => String(token));
+  if (typeof value === "string") return value.split(/\s+/).filter(Boolean);
+  return [];
+}
+
 function className(node: Node): string {
-  return attr(node, "className") ?? attr(node, "class") ?? "";
+  return classTokens(node).join(" ");
+}
+
+function addClassToken(node: Node, token: string): boolean {
+  const tokens = classTokens(node);
+  if (tokens.includes(token)) return false;
+  node.properties = { ...(node.properties ?? {}), className: [...tokens, token] };
+  return true;
 }
 
 function inferKind(node: Node): string | null {
@@ -126,6 +145,18 @@ function inferKind(node: Node): string | null {
 export function instrumentPresentationHtml(html: string): InstrumentedPresentation {
   const tree = parsePresentationHtml(html) as unknown as Node & { children?: Node[] };
   const manifest: PresentationEditManifest = { version: 1, pages: [], elements: [] };
+  // Repair outputs frequently echo `data-sg-id` values copied from the section
+  // they were asked to fix. Re-assigning ids around those echoes must skip them
+  // (and duplicate echoes must be renumbered) or two elements end up sharing
+  // one identity and the annotation stage can no longer tell them apart.
+  const usedElementIds = new Set<string>();
+  for (const root of tree.children ?? []) {
+    walk(root, (node) => {
+      const id = attr(node, "dataSgId");
+      if (id) usedElementIds.add(id);
+    });
+  }
+  const seenElementIds = new Set<string>();
   let changed = false;
   let pageIndex = 0;
   for (const root of tree.children ?? []) {
@@ -134,6 +165,7 @@ export function instrumentPresentationHtml(html: string): InstrumentedPresentati
       const pageId = attr(node, "dataSgId") || `page-ai-${pageIndex + 1}`;
       if (!attr(node, "dataSgId")) {
         setAttr(node, "dataSgId", pageId);
+        usedElementIds.add(pageId);
         changed = true;
       }
       // Generated page-scoped CSS commonly targets `#page-N`.  The SG
@@ -146,6 +178,9 @@ export function instrumentPresentationHtml(html: string): InstrumentedPresentati
         setAttr(node, "id", pageId);
         changed = true;
       }
+      // `.page-N` class selectors are just as common in author CSS; mirroring
+      // the identity as a class token keeps those rules live too.
+      if (addClassToken(node, pageId)) changed = true;
       manifest.pages.push({
         id: pageId,
         index: pageIndex,
@@ -156,9 +191,25 @@ export function instrumentPresentationHtml(html: string): InstrumentedPresentati
         if (child === node || SKIP_TAGS.has(child.tagName ?? "")) return;
         const kind = inferKind(child);
         if (!kind) return;
-        const id =
-          attr(child, "dataSgId") || `el-ai-${currentPage + 1}-${manifest.elements.length + 1}`;
-        if (!attr(child, "dataSgId")) {
+        let id = attr(child, "dataSgId") || "";
+        if (id && seenElementIds.has(id)) {
+          // A later element already claimed this id (an echoed duplicate);
+          // hand out a fresh one so identities stay unique.
+          id = "";
+        } else if (id) {
+          seenElementIds.add(id);
+        }
+        if (!id) {
+          let number = manifest.elements.length + 1;
+          id = `el-ai-${currentPage + 1}-${number}`;
+          while (usedElementIds.has(id)) {
+            number += 1;
+            id = `el-ai-${currentPage + 1}-${number}`;
+          }
+          usedElementIds.add(id);
+        }
+        seenElementIds.add(id);
+        if (attr(child, "dataSgId") !== id) {
           setAttr(child, "dataSgId", id);
           changed = true;
         }

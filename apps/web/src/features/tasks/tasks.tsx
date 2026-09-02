@@ -1,4 +1,4 @@
-import { Avatar, Empty, Scrollbar, StatusBadge, useToast } from "@shiguang/ui";
+import { Avatar, Empty, Loading, Scrollbar, StatusBadge, useToast } from "@shiguang/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button, Input, Modal, Select, Switch } from "antd";
 import { createStyles } from "antd-style";
@@ -230,7 +230,7 @@ export function TasksPage() {
   const [scheduleName, setScheduleName] = useState("");
   const [scheduleGoal, setScheduleGoal] = useState("");
   const [scheduleCron, setScheduleCron] = useState("daily 09:00");
-  const { data, refetch, isFetching } = useQuery<{ items: Task[]; total: number }>({
+  const { data, refetch, isFetching, isLoading } = useQuery<{ items: Task[]; total: number }>({
     queryKey: ["tasks", "center"],
     queryFn: () => api("/tasks", { params: { limit: 100 } }),
     refetchInterval: (result) =>
@@ -382,7 +382,9 @@ export function TasksPage() {
             </button>
           </div>
           <div className="sg-task-list">
-            {visibleTasks.length === 0 ? (
+            {isLoading ? (
+              <Loading loading minHeight={300} />
+            ) : visibleTasks.length === 0 ? (
               <div className="sg-task-empty">
                 <ListChecks size={34} />
                 <strong>没有匹配的任务</strong>

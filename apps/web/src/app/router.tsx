@@ -21,6 +21,7 @@ import { PresentationNewPage } from "../features/presentations/presentation-new.
 import {
   PresentationEditorPage,
   PresentationPlayerPage,
+  PresentationSnapshotPlayerPage,
   PresentationsPage,
 } from "../features/presentations/presentations.js";
 import { ProfilePage } from "../features/profile/profile.js";
@@ -61,6 +62,7 @@ export const router = createBrowserRouter([
       { path: "presentations/generate/:taskId", element: <PresentationNewPage /> },
       { path: "presentations/:id", element: <PresentationEditorPage /> },
       { path: "presentations/:id/play", element: <PresentationPlayerPage /> },
+      { path: "presentations/snapshot/:taskId", element: <PresentationSnapshotPlayerPage /> },
       { path: "templates", element: <TemplatesPage /> },
       { path: "notifications", element: <NotificationsPage /> },
       { path: "billing", element: <BillingPage /> },

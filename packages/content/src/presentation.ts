@@ -10,8 +10,8 @@
  * 该模块供 api（发布打包）与 web（编辑预览沙箱）共用。
  */
 
-import { SG_FIXED_STAGE_CSS, SG_RUNTIME_CSS, SG_RUNTIME_JS } from "./presentation-runtime.js";
 import { SG_PRESENTATION_PLAYER_JS } from "./presentation-player.js";
+import { SG_FIXED_STAGE_CSS, SG_RUNTIME_CSS, SG_RUNTIME_JS } from "./presentation-runtime.js";
 
 /** 渲染输入的宽松结构类型：与 contracts 的 PresentationDocument 兼容，同时允许编辑器侧更宽松的形状。 */
 export interface PresentationRenderBlock {
@@ -57,6 +57,10 @@ export interface PresentationRuntimeOptions {
  */
 export function stripPresentationPlatformShell(html: string): string {
   let result = html;
+  // Older foundation generations could leak a development-only preview layer
+  // outside the page slot. The comment is part of the accidental model output,
+  // so remove the whole marked region when serving existing artifacts too.
+  result = result.replace(/<!--\s*设计系统预览[\s\S]*?<!--\s*预览结束\s*-->/gi, "");
   result = result.replace(
     /<script\b[^>]*(?:data-sg-platform-runtime|data-sg-presentation-player)[^>]*>[\s\S]*?<\/script>/gi,
     "",
@@ -68,8 +72,14 @@ export function stripPresentationPlatformShell(html: string): string {
   );
   result = result.replace(/<div\b[^>]*id=["']sg-progress["'][^>]*>[\s\S]*?<\/div>/gi, "");
   result = result.replace(/<div\b[^>]*id=["']sg-page-no["'][^>]*>[\s\S]*?<\/div>/gi, "");
-  result = result.replace(/<div\b[^>]*class=["'][^"']*\bsg-nav\b[^"']*["'][^>]*>[\s\S]*?<\/div>/gi, "");
-  result = result.replace(/<nav\b[^>]*class=["'][^"']*\bsg-nav\b[^"']*["'][^>]*>[\s\S]*?<\/nav>/gi, "");
+  result = result.replace(
+    /<div\b[^>]*class=["'][^"']*\bsg-nav\b[^"']*["'][^>]*>[\s\S]*?<\/div>/gi,
+    "",
+  );
+  result = result.replace(
+    /<nav\b[^>]*class=["'][^"']*\bsg-nav\b[^"']*["'][^>]*>[\s\S]*?<\/nav>/gi,
+    "",
+  );
   result = result.replace(/<nav\b[^>]*data-sg-player-downloads[^>]*>[\s\S]*?<\/nav>/gi, "");
   return result;
 }
@@ -83,9 +93,26 @@ function ensurePresentationPageIds(html: string): string {
   return html.replace(
     /<section\b([^>]*\bdata-sg-page(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+))?[^>]*)>/gi,
     (full, attrs: string) => {
-      if (/(?:^|\s)id\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/i.test(attrs)) return full;
-      const match = attrs.match(/\bdata-sg-id\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/i);
-      return match ? `<section${attrs} id=${match[1]}>` : full;
+      const idMatch = attrs.match(/\bdata-sg-id\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/i);
+      const pageMatch = attrs.match(/\bdata-sg-page\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/i);
+      const rawPageId = (idMatch ?? pageMatch)?.[1];
+      if (!rawPageId) return full;
+      const pageId = rawPageId.replace(/^["']|["']$/g, "");
+      if (!pageId) return full;
+      let next = full;
+      if (!/(?:^|\s)id\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/i.test(attrs)) {
+        next = `<section${attrs} id="${pageId}">`;
+      }
+      // Author CSS scopes page rules as `.page-N` just as often as `#page-N`;
+      // mirror the stable identity as a class token or those rules never match.
+      const classAttr = next.match(/\sclass\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i);
+      if (!classAttr) return next.replace(/<section\b/i, `<section class="${pageId}"`);
+      const existing = (classAttr[1] ?? classAttr[2] ?? classAttr[3] ?? "")
+        .split(/\s+/)
+        .filter(Boolean);
+      if (existing.includes(pageId)) return next;
+      const merged = [...existing, pageId].join(" ");
+      return next.replace(classAttr[0], ` class="${merged}"`);
     },
   );
 }
@@ -110,10 +137,7 @@ export function ensurePresentationRuntimeHtml(
   // favicon because root assets on the product domain pass through login.
   const favicon = `<link rel="icon" type="image/svg+xml" href="${PRESENTATION_FAVICON}">`;
   if (/<link\b[^>]*rel\s*=\s*["'](?:shortcut\s+)?icon["'][^>]*>/i.test(result)) {
-    result = result.replace(
-      /<link\b[^>]*rel\s*=\s*["'](?:shortcut\s+)?icon["'][^>]*>/gi,
-      favicon,
-    );
+    result = result.replace(/<link\b[^>]*rel\s*=\s*["'](?:shortcut\s+)?icon["'][^>]*>/gi, favicon);
   } else {
     result = result.includes("</head>")
       ? result.replace("</head>", `${favicon}</head>`)
@@ -169,21 +193,30 @@ export function renderPresentationAccessHtml(
     downloadLabel?: string;
   } = {},
 ): string {
-  let result = ensurePresentationRuntimeHtml(stripPresentationPlatformShell(html), { player: "full" });
+  let result = ensurePresentationRuntimeHtml(stripPresentationPlatformShell(html), {
+    player: "full",
+  });
   if (options.downloadHref) {
     const link = `<a class="sg-publish-download" href="${escapeAttr(options.downloadHref)}">${escapeHtml(options.downloadLabel ?? "下载演示")}</a>`;
     const panel = `<nav class="sg-publish-downloads" data-sg-player-downloads hidden aria-hidden="true">${link}</nav>`;
-    result = result.includes("</body>") ? result.replace("</body>", `${panel}</body>`) : `${result}${panel}`;
+    result = result.includes("</body>")
+      ? result.replace("</body>", `${panel}</body>`)
+      : `${result}${panel}`;
   }
-  const robots = options.visibility === "public"
-    ? '<meta name="robots" content="index,follow">'
-    : '<meta name="robots" content="noindex,nofollow">';
+  const robots =
+    options.visibility === "public"
+      ? '<meta name="robots" content="index,follow">'
+      : '<meta name="robots" content="noindex,nofollow">';
   if (!/name=["']robots["']/i.test(result)) {
-    result = result.includes("</head>") ? result.replace("</head>", `${robots}</head>`) : `${robots}${result}`;
+    result = result.includes("</head>")
+      ? result.replace("</head>", `${robots}</head>`)
+      : `${robots}${result}`;
   }
   if (options.allowCopy === false) {
     const protection = `<style data-sg-publish-copy-protection>body{-webkit-user-select:none;user-select:none}</style><script data-sg-publish-copy-protection>document.addEventListener("copy",function(e){e.preventDefault()});document.addEventListener("cut",function(e){e.preventDefault()});document.addEventListener("contextmenu",function(e){e.preventDefault()});</script>`;
-    result = result.includes("</body>") ? result.replace("</body>", `${protection}</body>`) : `${result}${protection}`;
+    result = result.includes("</body>")
+      ? result.replace("</body>", `${protection}</body>`)
+      : `${result}${protection}`;
   }
   return result;
 }

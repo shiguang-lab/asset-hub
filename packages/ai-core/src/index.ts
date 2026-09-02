@@ -1,5 +1,6 @@
 import { Agent } from "@mastra/core/agent";
 import type { MessageListInput } from "@mastra/core/agent/message-list";
+import type { AgentSkillsInput } from "@mastra/core/skills";
 import type { Workspace } from "@mastra/core/workspace";
 import {
   loadMcpGatewayConfig,
@@ -11,7 +12,7 @@ import { z } from "zod";
 
 import { createMastraModel, type ResolvedModelRoute } from "./mastra-model.js";
 import { connectMcpServers } from "./mcp.js";
-import { type AgentSkillManifest, createMastraRemoteSkillWorkspace } from "./remote-skills.js";
+import { type AgentSkillManifest, createMastraRemoteInlineSkills } from "./remote-skills.js";
 
 export * from "./mastra-model.js";
 export * from "./mcp.js";
@@ -25,8 +26,10 @@ export type ModelQuality = "economy" | "balanced" | "best";
  */
 export const MODEL_AGENT_KEY = "asset-hub";
 export const MAX_MODEL_OUTPUT_TOKENS = 32_768;
-export const DEFAULT_MODEL_OUTPUT_TOKENS = 16_384;
-
+// Keep every model node at the gateway's maximum unless a caller explicitly
+// asks for a smaller response. Long planning/review traces can otherwise
+// consume the budget before the structured result is emitted.
+export const DEFAULT_MODEL_OUTPUT_TOKENS = 32_768;
 /* ------------------------------------------------------------------ */
 /* Chat completion client                                               */
 /* ------------------------------------------------------------------ */
@@ -70,12 +73,27 @@ export interface ChatCompletionRequest {
   responseFormat?: "text" | "json_object";
   quality?: ModelQuality;
   taskId?: string;
+  /**
+   * Optional logical node key used by the global Model Gateway.  The gateway
+   * resolves an exact (agentKey, taskKey) binding before the agent default,
+   * allowing independent workflow nodes to use different models.
+   */
+  modelTaskKey?: string;
   tools?: ChatTool[];
   thinkingMode?: "enabled" | "disabled" | "auto";
   fallbackToLocal?: boolean;
   signal?: AbortSignal;
-  /** Mastra Workspace 提供按需 Skill 发现与读取，不展开 Skill 全文。 */
-  workspace?: Workspace;
+  /** Mastra Workspace 提供文件/沙箱能力；通常由显式工具调用方使用。 */
+  /** 传 null 可显式关闭 AiService 默认 Workspace。 */
+  workspace?: Workspace | null;
+  /** Mastra Agent-level Skills；无需 Workspace 即可保留 Skill 工具。 */
+  skills?: AgentSkillsInput;
+  /** 生成链路选择；默认 Mastra，direct 仅用于兼容旧 OpenAI 工具调用。 */
+  agentMode?: "mastra" | "direct";
+  /** Mastra Agent 最大模型步骤数；严格产物生成应使用 direct 或 1。 */
+  maxSteps?: number;
+  /** Zod schema for Mastra structured/experimental output. */
+  structuredOutput?: z.ZodType;
 }
 
 export interface ChatCompletionResponse {
@@ -126,7 +144,7 @@ const completionSchema = z.object({
 export class ModelGatewayClient {
   constructor(private readonly config: ModelGatewayConfig) {}
 
-  private async resolve(taskId: string): Promise<ResolvedModelRoute | null> {
+  private async resolve(taskId: string, modelTaskKey?: string): Promise<ResolvedModelRoute | null> {
     if (!this.config.baseUrl) throw new Error("MODEL_GATEWAY_URL is not configured");
     const url = new URL("/internal/model-config/resolve", this.config.baseUrl);
     const res = await fetch(url, {
@@ -135,7 +153,7 @@ export class ModelGatewayClient {
         "content-type": "application/json",
         authorization: `Bearer ${this.config.apiKey ?? ""}`,
       },
-      body: JSON.stringify({ agentKey: MODEL_AGENT_KEY, taskKey: "", taskId }),
+      body: JSON.stringify({ agentKey: MODEL_AGENT_KEY, taskKey: modelTaskKey ?? "", taskId }),
     });
     if (!res.ok) {
       const body = await res.text().catch(() => "");
@@ -145,22 +163,39 @@ export class ModelGatewayClient {
   }
 
   async complete(request: ChatCompletionRequest): Promise<ChatCompletionResponse> {
-    if (request.tools?.length) return this.completeDirect(request);
+    // 默认走 Mastra；直连仅保留给显式 direct 模式或尚未迁移的 OpenAI 工具调用方。
+    if (
+      request.agentMode === "direct" ||
+      (request.tools?.length && request.agentMode !== "mastra")
+    ) {
+      return this.completeDirect(request);
+    }
     if (!this.config.baseUrl) throw new Error("MODEL_GATEWAY_URL is not configured");
     const taskId = request.taskId ?? `task_${crypto.randomUUID()}`;
-    const runtime = await this.resolve(taskId);
+    const runtime = await this.resolve(taskId, request.modelTaskKey);
     if (!runtime) {
       throw new Error(`global Model Gateway has no route for agentKey=${MODEL_AGENT_KEY}`);
     }
     const agent = this.createAgent(request, runtime, taskId);
+    // Mastra exposes mutually-exclusive overloads for structured/non-structured output,
+    // while this request type selects the schema at runtime. Keep the runtime branch
+    // explicit and narrow the call at this boundary instead of weakening the public API.
     const output = await agent.generate(toMastraMessages(request.messages), {
-      maxSteps: request.workspace ? 4 : 1,
+      // Agent 工具循环必须有上限；严格 HTML 产物由调用方使用 direct 单步链路。
+      maxSteps: request.maxSteps ?? (request.skills || request.workspace ? 4 : 1),
       abortSignal: request.signal,
+      ...(request.structuredOutput
+        ? { structuredOutput: { schema: request.structuredOutput }, toolChoice: "none" as const }
+        : {}),
       modelSettings: {
         temperature: request.temperature ?? 0.7,
-        maxOutputTokens: clampMaxTokens(request.maxTokens ?? DEFAULT_MODEL_OUTPUT_TOKENS, this.config.maxOutputTokens),
+        maxOutputTokens: clampMaxTokens(
+          request.maxTokens ?? DEFAULT_MODEL_OUTPUT_TOKENS,
+          this.config.maxOutputTokens,
+        ),
       },
-    });
+      // biome-ignore lint/suspicious/noExplicitAny: Mastra's runtime-selected structured-output overload cannot be represented by the union request type.
+    } as any);
     return {
       text: output.text,
       usage: {
@@ -176,7 +211,7 @@ export class ModelGatewayClient {
       throw new Error("MODEL_GATEWAY_URL is not configured");
     }
     const taskId = request.taskId ?? `task_${crypto.randomUUID()}`;
-    const runtime = await this.resolve(taskId);
+    const runtime = await this.resolve(taskId, request.modelTaskKey);
     if (!runtime) {
       throw new Error(`global Model Gateway has no route for agentKey=${MODEL_AGENT_KEY}`);
     }
@@ -198,7 +233,10 @@ export class ModelGatewayClient {
           model: runtime.model ?? this.config.model,
           messages: request.messages,
           temperature: request.temperature ?? 0.7,
-          max_tokens: clampMaxTokens(request.maxTokens ?? DEFAULT_MODEL_OUTPUT_TOKENS, this.config.maxOutputTokens),
+          max_tokens: clampMaxTokens(
+            request.maxTokens ?? DEFAULT_MODEL_OUTPUT_TOKENS,
+            this.config.maxOutputTokens,
+          ),
           ...(request.thinkingMode && request.thinkingMode !== "auto"
             ? { thinking: { type: request.thinkingMode } }
             : {}),
@@ -250,9 +288,15 @@ export class ModelGatewayClient {
     }
     if (!this.config.baseUrl) throw new Error("MODEL_GATEWAY_URL is not configured");
     const taskId = request.taskId ?? `task_${crypto.randomUUID()}`;
-    const runtime = await this.resolve(taskId);
+    const runtime = await this.resolve(taskId, request.modelTaskKey);
     if (!runtime) {
       throw new Error(`global Model Gateway has no route for agentKey=${MODEL_AGENT_KEY}`);
+    }
+    if (
+      request.agentMode === "direct" ||
+      (request.tools?.length && request.agentMode !== "mastra")
+    ) {
+      return this.completeDirectStream(request, runtime, taskId, onUpdate);
     }
     const controller = new AbortController();
     const abortFromRequest = () => controller.abort(request.signal?.reason);
@@ -281,23 +325,43 @@ export class ModelGatewayClient {
     let text = "";
     try {
       const agent = this.createAgent(request, runtime, taskId);
+      // See the generate() call above: the schema is runtime-selected, but Mastra's
+      // overloads are static and mutually exclusive.
       const output = await agent.stream(toMastraMessages(request.messages), {
-        maxSteps: request.workspace ? 4 : 1,
+        // Agent 工具循环必须有上限；严格 HTML 产物由调用方使用 direct 单步链路。
+        maxSteps: request.maxSteps ?? (request.skills || request.workspace ? 4 : 1),
         abortSignal: controller.signal,
+        ...(request.structuredOutput
+          ? { structuredOutput: { schema: request.structuredOutput }, toolChoice: "none" as const }
+          : {}),
         modelSettings: {
           temperature: request.temperature ?? 0.7,
-          maxOutputTokens: clampMaxTokens(request.maxTokens ?? DEFAULT_MODEL_OUTPUT_TOKENS, this.config.maxOutputTokens),
+          maxOutputTokens: clampMaxTokens(
+            request.maxTokens ?? DEFAULT_MODEL_OUTPUT_TOKENS,
+            this.config.maxOutputTokens,
+          ),
         },
-      });
+        // biome-ignore lint/suspicious/noExplicitAny: Mastra's runtime-selected structured-output overload cannot be represented by the union request type.
+      } as any);
       let finishReason: string | undefined;
       let receivedFirstByte = false;
       for await (const chunk of output.fullStream) {
-        const typedChunk = chunk as { type?: string; payload?: { text?: string; finishReason?: string }; finishReason?: string };
+        const typedChunk = chunk as {
+          type?: string;
+          text?: string;
+          payload?: { text?: string; finishReason?: string };
+          finishReason?: string;
+        };
         const payload = typedChunk.payload;
         if (typedChunk.type === "finish" || typedChunk.type === "finish-step") {
           finishReason = typedChunk.finishReason ?? payload?.finishReason ?? finishReason;
         }
-        const delta = typeof payload?.text === "string" ? payload.text : "";
+        const delta =
+          typeof typedChunk.text === "string"
+            ? typedChunk.text
+            : typeof payload?.text === "string"
+              ? payload.text
+              : "";
         const activity =
           chunk.type === "reasoning-delta"
             ? "reasoning"
@@ -311,12 +375,17 @@ export class ModelGatewayClient {
         armIdleTimeout();
         if (activity === "content") text += delta;
         await onUpdate({
-          delta: activity === "content" ? delta : "",
+          // Preserve reasoning deltas for the execution stream. The canonical
+          // `text` value remains content-only so structured-output parsing is
+          // unaffected, while clients can render the live thinking trace.
+          delta: activity === "content" || activity === "reasoning" ? delta : "",
           text,
           activity,
           receivedChars: text.length + (activity === "reasoning" ? delta.length : 0),
         });
       }
+      const structuredObject = request.structuredOutput ? await output.object : undefined;
+      if (structuredObject !== undefined) text = JSON.stringify(structuredObject);
       const usage = await output.totalUsage;
       return {
         text,
@@ -328,12 +397,175 @@ export class ModelGatewayClient {
         ...(finishReason ? { finishReason } : {}),
       };
     } catch (error) {
-      await Promise.resolve(onUpdate({
-        delta: "",
+      await Promise.resolve(
+        onUpdate({
+          delta: "",
+          text,
+          activity: "failed",
+          receivedChars: text.length,
+        }),
+      ).catch(() => undefined);
+      if (controller.signal.aborted && controller.signal.reason instanceof Error) {
+        throw controller.signal.reason;
+      }
+      throw error;
+    } finally {
+      request.signal?.removeEventListener("abort", abortFromRequest);
+      if (firstByteTimer) clearTimeout(firstByteTimer);
+      if (idleTimer) clearTimeout(idleTimer);
+      clearTimeout(totalTimer);
+    }
+  }
+
+  private async completeDirectStream(
+    request: ChatCompletionRequest,
+    runtime: ResolvedModelRoute,
+    taskId: string,
+    onUpdate: ChatStreamHandler,
+  ): Promise<ChatCompletionResponse> {
+    if (!this.config.baseUrl) throw new Error("MODEL_GATEWAY_URL is not configured");
+    const url = new URL("/v1/chat/completions", runtime.baseUrl ?? this.config.baseUrl);
+    const controller = new AbortController();
+    const abortFromRequest = () => controller.abort(request.signal?.reason);
+    if (request.signal?.aborted) abortFromRequest();
+    else request.signal?.addEventListener("abort", abortFromRequest, { once: true });
+    let firstByteTimer: ReturnType<typeof setTimeout> | undefined;
+    let idleTimer: ReturnType<typeof setTimeout> | undefined;
+    const totalTimer = setTimeout(
+      () => controller.abort(new Error("模型生成超过任务总时长限制")),
+      this.config.streamTotalTimeoutMs,
+    );
+    const armFirstByteTimeout = () => {
+      firstByteTimer = setTimeout(
+        () => controller.abort(new Error("等待模型首个输出超时")),
+        this.config.streamFirstByteTimeoutMs,
+      );
+    };
+    const armIdleTimeout = () => {
+      if (idleTimer) clearTimeout(idleTimer);
+      idleTimer = setTimeout(
+        () => controller.abort(new Error("模型流式输出长时间没有新内容")),
+        this.config.streamIdleTimeoutMs,
+      );
+    };
+    armFirstByteTimeout();
+    let text = "";
+    let receivedChars = 0;
+    let inputTokens = 0;
+    let outputTokens = 0;
+    let finishReason: string | undefined;
+    let receivedFirstByte = false;
+    const processEvent = async (rawEvent: string) => {
+      const data = rawEvent
+        .split(/\r?\n/)
+        .filter((line) => line.startsWith("data:"))
+        .map((line) => line.slice(5).trimStart())
+        .join("\n")
+        .trim();
+      if (!data || data === "[DONE]") return;
+      let parsed: {
+        choices?: Array<{
+          delta?: {
+            content?: string | null;
+            reasoning_content?: string | null;
+            reasoning?: string | null;
+          };
+          finish_reason?: string | null;
+        }>;
+        usage?: { prompt_tokens?: number; completion_tokens?: number };
+      };
+      try {
+        parsed = JSON.parse(data) as typeof parsed;
+      } catch {
+        // 网关可能在一帧中携带非 JSON 注释，忽略它并等待下一帧。
+        return;
+      }
+      inputTokens = parsed.usage?.prompt_tokens ?? inputTokens;
+      outputTokens = parsed.usage?.completion_tokens ?? outputTokens;
+      const choice = parsed.choices?.[0];
+      finishReason = choice?.finish_reason ?? finishReason;
+      const reasoning = choice?.delta?.reasoning_content ?? choice?.delta?.reasoning ?? "";
+      const delta = choice?.delta?.content ?? "";
+      if (reasoning) {
+        receivedChars += reasoning.length;
+        if (!receivedFirstByte) {
+          receivedFirstByte = true;
+          if (firstByteTimer) clearTimeout(firstByteTimer);
+        }
+        armIdleTimeout();
+        // Keep reasoning text in the stream event. `text` intentionally stays
+        // content-only because it is later parsed as the model response.
+        await onUpdate({ delta: reasoning, text, activity: "reasoning", receivedChars });
+      }
+      if (delta) {
+        text += delta;
+        receivedChars += delta.length;
+        if (!receivedFirstByte) {
+          receivedFirstByte = true;
+          if (firstByteTimer) clearTimeout(firstByteTimer);
+        }
+        armIdleTimeout();
+        await onUpdate({ delta, text, activity: "content", receivedChars });
+      } else if (!reasoning && (choice || parsed.usage)) {
+        armIdleTimeout();
+        await onUpdate({ delta: "", text, activity: "heartbeat", receivedChars });
+      }
+    };
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-opc-task-id": taskId,
+          ...(runtime.apiKey ? { authorization: `Bearer ${runtime.apiKey}` } : {}),
+        },
+        body: JSON.stringify({
+          model: runtime.model ?? this.config.model,
+          messages: request.messages,
+          temperature: request.temperature ?? 0.7,
+          max_tokens: clampMaxTokens(
+            request.maxTokens ?? DEFAULT_MODEL_OUTPUT_TOKENS,
+            this.config.maxOutputTokens,
+          ),
+          stream: true,
+          stream_options: { include_usage: true },
+          ...(request.thinkingMode && request.thinkingMode !== "auto"
+            ? { thinking: { type: request.thinkingMode } }
+            : {}),
+          ...(request.responseFormat === "json_object"
+            ? { response_format: { type: "json_object" } }
+            : {}),
+        }),
+        signal: controller.signal,
+      });
+      if (!res.ok) {
+        const body = await res.text().catch(() => "");
+        throw new Error(`global Model Gateway ${res.status}: ${body.slice(0, 300)}`);
+      }
+      if (!res.body) throw new Error("global Model Gateway returned an empty stream");
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const events = buffer.split(/\r?\n\r?\n/);
+        buffer = events.pop() ?? "";
+        for (const event of events) await processEvent(event);
+      }
+      buffer += decoder.decode();
+      if (buffer.trim()) await processEvent(buffer);
+      return {
         text,
-        activity: "failed",
-        receivedChars: text.length,
-      })).catch(() => undefined);
+        usage: { inputTokens, outputTokens },
+        provider: "global-model-gateway",
+        ...(finishReason ? { finishReason } : {}),
+      };
+    } catch (error) {
+      await Promise.resolve(onUpdate({ delta: "", text, activity: "failed", receivedChars })).catch(
+        () => undefined,
+      );
       if (controller.signal.aborted && controller.signal.reason instanceof Error) {
         throw controller.signal.reason;
       }
@@ -355,13 +587,14 @@ export class ModelGatewayClient {
     return new Agent({
       id: `asset-hub-${taskId.replace(/[^a-zA-Z0-9._-]/g, "-").slice(0, 96)}`,
       name: "Asset Hub Agent",
-      instructions: systemInstructions(request.messages),
+      instructions: systemInstructions(request),
       model: createMastraModel(runtime, {
         taskId,
         fallbackBaseUrl: this.config.baseUrl,
         thinkingMode: request.thinkingMode,
       }),
       ...(request.workspace ? { workspace: request.workspace } : {}),
+      ...(request.skills ? { skills: request.skills } : {}),
     });
   }
 }
@@ -371,13 +604,13 @@ function clampMaxTokens(value: number, configuredCeiling = MAX_MODEL_OUTPUT_TOKE
   return Math.min(Math.floor(value), MAX_MODEL_OUTPUT_TOKENS, Math.max(1, configuredCeiling));
 }
 
-function systemInstructions(messages: ChatMessage[]): string {
-  const system = messages
+function systemInstructions(request: ChatCompletionRequest): string {
+  const system = request.messages
     .filter((message) => message.role === "system")
     .map((message) => chatContentAsText(message.content))
     .filter(Boolean)
     .join("\n\n");
-  return `${system || "Follow the user's request accurately."}${messages.some((message) => message.role === "system" && message.content && chatContentAsText(message.content).includes("严格 JSON")) ? "\nReturn valid JSON only; do not wrap it in Markdown fences." : ""}`;
+  return `${system || "Follow the user's request accurately."}${request.responseFormat === "json_object" ? "\nReturn valid JSON only; do not wrap it in Markdown fences." : ""}`;
 }
 
 function toMastraMessages(messages: ChatMessage[]): MessageListInput {
@@ -581,7 +814,9 @@ export class AiService {
     private readonly options: {
       forceLocal?: boolean;
       quality?: ModelQuality;
-      workspace?: Workspace;
+      workspace?: Workspace | null;
+      skills?: AgentSkillsInput;
+      agentMode?: "mastra" | "direct";
     } = {},
   ) {
     this.gateway = createModelClient();
@@ -606,9 +841,15 @@ export class AiService {
     try {
       return await this.gateway.complete({
         ...request,
-        ...(request.workspace || !this.options.workspace
+        ...(request.workspace === null
+          ? { workspace: undefined }
+          : request.workspace || !this.options.workspace
+            ? {}
+            : { workspace: this.options.workspace }),
+        ...(request.skills || !this.options.skills ? {} : { skills: this.options.skills }),
+        ...(request.agentMode || !this.options.agentMode
           ? {}
-          : { workspace: this.options.workspace }),
+          : { agentMode: this.options.agentMode }),
         quality: request.quality ?? this.options.quality ?? "balanced",
       });
     } catch (err) {
@@ -643,9 +884,15 @@ export class AiService {
       return await this.gateway.completeStream(
         {
           ...request,
-          ...(request.workspace || !this.options.workspace
+          ...(request.workspace === null
+            ? { workspace: undefined }
+            : request.workspace || !this.options.workspace
+              ? {}
+              : { workspace: this.options.workspace }),
+          ...(request.skills || !this.options.skills ? {} : { skills: this.options.skills }),
+          ...(request.agentMode || !this.options.agentMode
             ? {}
-            : { workspace: this.options.workspace }),
+            : { agentMode: this.options.agentMode }),
           quality: request.quality ?? this.options.quality ?? "balanced",
         },
         onUpdate,
@@ -672,6 +919,7 @@ export class AiService {
     const res = await this.complete({
       ...request,
       responseFormat: "json_object",
+      structuredOutput: schema,
     });
     const raw = res.text
       .trim()
@@ -693,8 +941,14 @@ export class AiService {
     schema: z.ZodType<T>,
     onUpdate: ChatStreamHandler,
   ): Promise<{ data: T; provider: string; usage: { inputTokens: number; outputTokens: number } }> {
-    const res = await this.completeStream({ ...request, responseFormat: "json_object" }, onUpdate);
-    const raw = res.text.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+    const res = await this.completeStream(
+      { ...request, responseFormat: "json_object", structuredOutput: schema },
+      onUpdate,
+    );
+    const raw = res.text
+      .trim()
+      .replace(/^```(?:json)?\s*/i, "")
+      .replace(/\s*```$/, "");
     let parsed: unknown;
     try {
       parsed = JSON.parse(raw);
@@ -708,7 +962,9 @@ export class AiService {
 export const createAiService = (options?: {
   forceLocal?: boolean;
   quality?: ModelQuality;
-  workspace?: Workspace;
+  workspace?: Workspace | null;
+  skills?: AgentSkillsInput;
+  agentMode?: "mastra" | "direct";
 }): AiService => new AiService(options);
 
 /* ------------------------------------------------------------------ */
@@ -718,9 +974,10 @@ export const createAiService = (options?: {
 export interface CapabilityContext {
   agentId: string;
   skills: Array<{ name: string; version: string }>;
+  agentSkills: AgentSkillsInput;
   skillManifest?: AgentSkillManifest;
-  /** Mastra 原生 Skill Workspace；Agent 通过工具按需读取相关内容。 */
-  workspace?: Workspace;
+  /** 保留给显式 Workspace 调用方；演示生成使用 agentSkills。 */
+  workspace?: Workspace | null;
   mcpServers: Array<{
     name: string;
     url: string;
@@ -733,8 +990,8 @@ export interface CapabilityContext {
 }
 
 /**
- * 将 Skill Gateway manifest 挂载为 Mastra Workspace，同时加载 MCP manifest。
- * Skill 正文不会被下载并拼入 system prompt；只有 Agent 选择相关 Skill 时才会读取 blob。
+ * 将 Skill Gateway manifest 转成 Mastra Agent-level Skills，同时加载 MCP manifest。
+ * Agent-level Skills 保留 skill/skill_search/skill_read，但不会注入文件系统、sandbox 或 LSP。
  */
 export async function loadCapabilityContext(
   agentId: string,
@@ -745,7 +1002,7 @@ export async function loadCapabilityContext(
 
   const [remoteSkills, mcpServers] = await Promise.all([
     skill.baseUrl && skill.token && taskId
-      ? createMastraRemoteSkillWorkspace({
+      ? createMastraRemoteInlineSkills({
           agentId,
           taskId,
           skillGatewayUrl: skill.baseUrl,
@@ -763,14 +1020,11 @@ export async function loadCapabilityContext(
   return {
     agentId,
     skills,
+    agentSkills: remoteSkills?.skills ?? [],
     mcpServers,
     summary,
-    ...(remoteSkills
-      ? { workspace: remoteSkills.workspace, skillManifest: remoteSkills.manifest }
-      : {}),
-    dispose: async () => {
-      await remoteSkills?.workspace.destroy();
-    },
+    ...(remoteSkills ? { skillManifest: remoteSkills.manifest } : {}),
+    dispose: async () => undefined,
   };
 }
 
@@ -815,7 +1069,7 @@ function buildCapabilitySummary(
 ): string {
   const lines: string[] = ["可用动态能力："];
   for (const s of skills) {
-    lines.push(`- Skill「${s.name}」(${s.version})，通过 Mastra Workspace 按需读取`);
+    lines.push(`- Skill「${s.name}」(${s.version})，通过 Mastra Agent 按需读取`);
   }
   for (const m of mcpServers) {
     lines.push(`- MCP 工具服务「${m.name}」(${m.url})`);

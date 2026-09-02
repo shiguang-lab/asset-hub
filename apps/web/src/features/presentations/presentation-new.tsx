@@ -1,11 +1,13 @@
 import { useToast } from "@shiguang/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Button, Card, Input, Select } from "antd";
+import { Button, Card, Input, Select, Tooltip, Typography } from "antd";
 import {
+  ArrowLeft,
   BrainCircuit,
   Check,
   Circle,
   CircleX,
+  Eye,
   FileText,
   Layers3,
   LoaderCircle,
@@ -18,10 +20,12 @@ import {
   WandSparkles,
   X,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { type Asset, api, type Task } from "../../entities/api.js";
+import { type Asset, api, type Task, type TaskStreamEvent } from "../../entities/api.js";
+import { ChatStreamChunk } from "../../shared/chat-stream-chunk.js";
 import { usePresentationsStyles } from "../../styles/presentations.js";
+import { latestPlanningStream } from "./presentation-planning-stream.js";
 
 const profiles = [
   { value: "research", label: "研究分析" },
@@ -88,6 +92,18 @@ interface PresentationCheckpoint {
   renderSummary?: string;
   renderIssueCount?: number;
   repairApplied?: boolean;
+  repairPages?: number[];
+  repairingPages?: number[];
+  verifyingPages?: number[];
+  repairFailedPages?: number[];
+  repairedPages?: number[];
+  renderingPages?: number[];
+  renderedPages?: number[];
+  reviewingPages?: number[];
+  reviewedPages?: number[];
+  compilingPages?: number[];
+  compiledPages?: number[];
+  repairPass?: number;
   stoppedAtPhase?: GenerationPhase;
   failureStage?: string;
   failureDetails?: Record<string, unknown>;
@@ -138,6 +154,99 @@ function activityLabel(activity?: GenerationActivity): string {
   return "等待模型响应";
 }
 
+type PageProgressKind = "pending" | "processing" | "done";
+
+function pageProgress(input: {
+  checkpoint: PresentationCheckpoint;
+  phase: GenerationPhase;
+  pageNumber: number;
+  pageCount: number;
+  generatedCount: number;
+}): { kind: PageProgressKind; label: string; repair: boolean } {
+  const { checkpoint, phase, pageNumber, pageCount, generatedCount } = input;
+  const repairPages = checkpoint.repairPages ?? [];
+  const repairingPages = checkpoint.repairingPages ?? [];
+  const verifyingPages = checkpoint.verifyingPages ?? [];
+  const repairFailedPages = checkpoint.repairFailedPages ?? [];
+  const repairedPages = checkpoint.repairedPages ?? [];
+  if (phase === "repairing") {
+    if (repairingPages.includes(pageNumber)) {
+      return { kind: "processing", label: "修复中", repair: true };
+    }
+    if (verifyingPages.includes(pageNumber)) {
+      return { kind: "processing", label: "复检中", repair: true };
+    }
+    if (repairedPages.includes(pageNumber)) {
+      return { kind: "done", label: "修复完成", repair: true };
+    }
+    if (repairFailedPages.includes(pageNumber)) {
+      return { kind: "pending", label: "待重新修复", repair: true };
+    }
+    if (repairPages.includes(pageNumber) && !repairedPages.includes(pageNumber)) {
+      return { kind: "pending", label: "待修复", repair: true };
+    }
+  }
+
+  if (phase === "rendering") {
+    if (pageNumber <= generatedCount) return { kind: "done", label: "已生成", repair: false };
+    if (pageNumber === generatedCount + 1 && generatedCount < pageCount) {
+      return { kind: "processing", label: "生成中", repair: false };
+    }
+    return { kind: "pending", label: "待生成", repair: false };
+  }
+
+  const renderedPages = checkpoint.renderedPages ?? [];
+  const renderingPages = checkpoint.renderingPages ?? [];
+  if (phase === "visualizing") {
+    if (renderingPages.includes(pageNumber)) {
+      return { kind: "processing", label: "渲染中", repair: false };
+    }
+    if (renderedPages.includes(pageNumber)) {
+      return { kind: "done", label: "已渲染", repair: false };
+    }
+    return { kind: "pending", label: "待渲染", repair: false };
+  }
+
+  const reviewedPages = checkpoint.reviewedPages ?? [];
+  const reviewingPages = checkpoint.reviewingPages ?? [];
+  if (phase === "reviewing") {
+    if (reviewingPages.includes(pageNumber)) {
+      return { kind: "processing", label: "审查中", repair: false };
+    }
+    if (reviewedPages.includes(pageNumber)) {
+      return { kind: "done", label: "已审查", repair: false };
+    }
+    return { kind: "pending", label: "待审查", repair: false };
+  }
+
+  const compiledPages = checkpoint.compiledPages ?? [];
+  const compilingPages = checkpoint.compilingPages ?? [];
+  if (phase === "compiling") {
+    if (compilingPages.includes(pageNumber)) {
+      return { kind: "processing", label: "编译中", repair: false };
+    }
+    if (compiledPages.includes(pageNumber)) {
+      return { kind: "done", label: "已编译", repair: false };
+    }
+    return { kind: "pending", label: "待编译", repair: false };
+  }
+
+  const phaseIndex = phaseOrder.findIndex((item) => item.id === phase);
+  const visualizingIndex = phaseOrder.findIndex((item) => item.id === "visualizing");
+  const reviewingIndex = phaseOrder.findIndex((item) => item.id === "reviewing");
+  const compilingIndex = phaseOrder.findIndex((item) => item.id === "compiling");
+  if (phaseIndex > compilingIndex) {
+    return { kind: "done", label: "已编译", repair: false };
+  }
+  if (phaseIndex > reviewingIndex) {
+    return { kind: "done", label: "已审查", repair: false };
+  }
+  if (phaseIndex > visualizingIndex) {
+    return { kind: "done", label: "已渲染", repair: false };
+  }
+  return { kind: "pending", label: "等待前序阶段", repair: false };
+}
+
 export function PresentationNewPage() {
   const { styles } = usePresentationsStyles();
   const { taskId } = useParams<{ taskId?: string }>();
@@ -167,6 +276,24 @@ export function PresentationNewPage() {
       return status === "completed" || status === "failed" || status === "cancelled"
         ? false
         : 2_000;
+    },
+  });
+  const taskStream = useQuery({
+    queryKey: ["presentation-generation-stream", taskId],
+    queryFn: () =>
+      api<{ taskId: string; events: TaskStreamEvent[] }>(`/tasks/${taskId}/stream`, {
+        params: { limit: 2000 },
+      }),
+    enabled: Boolean(taskId),
+    refetchInterval: () => {
+      const status = task.data?.status;
+      const checkpoint = asCheckpoint(task.data);
+      return status === "completed" ||
+        status === "failed" ||
+        status === "cancelled" ||
+        checkpoint.plan
+        ? false
+        : 1_000;
     },
   });
 
@@ -234,6 +361,7 @@ export function PresentationNewPage() {
         <GenerationWorkspace
           taskId={taskId}
           task={task.data}
+          streamEvents={taskStream.data?.events ?? []}
           loading={task.isLoading}
           loadError={
             task.isError
@@ -374,6 +502,7 @@ export function PresentationNewPage() {
 function GenerationWorkspace({
   taskId,
   task,
+  streamEvents,
   loading,
   loadError,
   cancelling,
@@ -385,6 +514,7 @@ function GenerationWorkspace({
 }: {
   taskId: string;
   task?: Task;
+  streamEvents: TaskStreamEvent[];
   loading: boolean;
   loadError: string | null;
   cancelling: boolean;
@@ -394,7 +524,13 @@ function GenerationWorkspace({
   onRetry: () => void;
   onEdit: () => void;
 }) {
+  const navigate = useNavigate();
   const checkpoint = asCheckpoint(task);
+  const planningStream = useMemo(
+    () => latestPlanningStream(streamEvents, checkpoint.startedAt),
+    [checkpoint.startedAt, streamEvents],
+  );
+  const planningStreamRef = useRef<HTMLDivElement>(null);
   const terminal = Boolean(
     loadError || (task && ["completed", "failed", "cancelled"].includes(task.status)),
   );
@@ -407,6 +543,7 @@ function GenerationWorkspace({
   const progress = task?.progress ?? 0;
   const pageTitles = checkpoint.pageTitles ?? [];
   const planSlides = checkpoint.plan?.slides ?? [];
+  const outputPageCount = phase === "rendering" ? pageTitles.length : planSlides.length;
   const errorMessage =
     loadError ?? checkpoint.errorMessage ?? task?.error ?? "任务执行失败，请重试。";
   const errorCode = checkpoint.errorCode ?? task?.error?.match(/^\[([^\]]+)\]/)?.[1];
@@ -420,6 +557,42 @@ function GenerationWorkspace({
     checkpoint.failureDetails && typeof checkpoint.failureDetails.retry === "object"
       ? (checkpoint.failureDetails.retry as Record<string, unknown>)
       : null;
+  const planningIsStreaming = !terminal && phase === "planning" && !checkpoint.plan;
+
+  // The deck exists once generation moves past the rendering stage (or the run
+  // finished). The snapshot entry on the "生成页面" stage node stays available
+  // from then on — not only when the task failed. Rendering "done" is included
+  // because the snapshot blob is written right after the real render, so the
+  // entry should appear as soon as that stage completes.
+  const renderingIndex = phaseOrder.findIndex((item) => item.id === "rendering");
+  const canViewSnapshot = Boolean(
+    taskId &&
+      (currentIndex > renderingIndex ||
+        (phase === "rendering" && checkpoint.activity === "done") ||
+        progress >= 100 ||
+        (failed && currentIndex === renderingIndex)),
+  );
+
+  const snapshotQuery = useQuery<{
+    schema: string;
+    html: string;
+    updatedAt: string;
+  }>({
+    queryKey: ["presentation-snapshot", taskId],
+    queryFn: () => api(`/tasks/${taskId}/presentation-snapshot`),
+    enabled: canViewSnapshot,
+    retry: 2,
+    // The review-resume blob is written by the worker right after the real
+    // render finishes, so the very first probe can race ahead of it and 404.
+    // Keep polling until the html snapshot actually exists, then stop.
+    refetchInterval: (query) => (query.state.data?.html ? false : 5_000),
+  });
+
+  useEffect(() => {
+    const streamElement = planningStreamRef.current;
+    if (!streamElement || !planningStream) return;
+    streamElement.scrollTop = streamElement.scrollHeight;
+  }, [planningStream]);
 
   return (
     <main className="sg-pg-workspace">
@@ -447,7 +620,9 @@ function GenerationWorkspace({
           )}
           {(failed || cancelled) && (
             <>
-              <Button onClick={onEdit}>修改要求</Button>
+              <Button icon={<ArrowLeft size={15} />} onClick={onEdit}>
+                返回
+              </Button>
               {retryable && (
                 <Button
                   type="primary"
@@ -455,7 +630,7 @@ function GenerationWorkspace({
                   loading={retrying}
                   onClick={onRetry}
                 >
-                  使用原要求重试
+                  重试
                 </Button>
               )}
             </>
@@ -463,7 +638,9 @@ function GenerationWorkspace({
         </div>
       </header>
 
-      <section className={`sg-pg-progress-card ${failed || cancelled ? "is-error" : ""}`}>
+      <section
+        className={`sg-pg-progress-card ${failed || cancelled ? "is-error" : ""} ${!terminal ? "is-active" : ""}`}
+      >
         <div className="sg-pg-progress-copy">
           <div className={`sg-pg-live ${failed || cancelled ? "is-error" : ""}`}>
             {failed || cancelled ? (
@@ -492,9 +669,17 @@ function GenerationWorkspace({
         </div>
         <div className="sg-pg-progress-meta">
           <span>
-            {failed || cancelled
-              ? `流程已停止${errorSummary ? ` · ${errorSummary}` : ""}`
-              : activityLabel(checkpoint.activity)}
+            {failed || cancelled ? "流程已停止" : activityLabel(checkpoint.activity)}
+            {failed || cancelled ? (
+              <Tooltip title={errorSummary} placement="topLeft">
+                <Typography.Text
+                  className="sg-pg-progress-error-text"
+                  ellipsis={{ tooltip: false }}
+                >
+                  {errorSummary}
+                </Typography.Text>
+              </Tooltip>
+            ) : null}
           </span>
           <span>
             {checkpoint.receivedChars?.toLocaleString() ?? 0} 字符 ·{" "}
@@ -566,6 +751,16 @@ function GenerationWorkspace({
                               : "等待前序阶段"}
                     </small>
                   </div>
+                  {item.id === "rendering" && snapshotQuery.data?.html && (
+                    <button
+                      type="button"
+                      className="sg-pg-snapshot-link"
+                      onClick={() => navigate(`/presentations/snapshot/${taskId}`)}
+                    >
+                      <Eye size={13} />
+                      查看生成快照
+                    </button>
+                  )}
                 </li>
               );
             })}
@@ -581,12 +776,24 @@ function GenerationWorkspace({
                   ? "阶段异常"
                   : cancelled
                     ? "任务已取消"
-                    : pageTitles.length
-                      ? "页面正在逐页成形"
+                    : outputPageCount
+                      ? phase === "rendering"
+                        ? "页面正在逐页成形"
+                        : phase === "visualizing"
+                          ? "页面正在真实渲染"
+                          : phase === "reviewing"
+                            ? "页面正在接受视觉审查"
+                            : phase === "compiling"
+                              ? "页面正在编译编辑能力"
+                              : "页面已进入后处理"
                       : "等待页面输出"}
               </h2>
             </div>
-            <small>{failed || cancelled ? "生成已停止" : `${pageTitles.length} 页已闭合`}</small>
+            <small>
+              {failed || cancelled
+                ? "生成已停止"
+                : `${outputPageCount} 页${phase === "rendering" ? "已闭合" : "已进入当前阶段"}`}
+            </small>
           </div>
           {failed || cancelled ? (
             <div className="sg-pg-output-error">
@@ -596,7 +803,14 @@ function GenerationWorkspace({
                 </div>
                 <div>
                   <strong>{cancelled ? "任务已取消" : "生成阶段未完成"}</strong>
-                  <p>{errorSummary}</p>
+                  <Tooltip title={errorSummary} placement="topLeft">
+                    <Typography.Paragraph
+                      className="sg-pg-error-summary"
+                      ellipsis={{ rows: 3, tooltip: false }}
+                    >
+                      {errorSummary}
+                    </Typography.Paragraph>
+                  </Tooltip>
                 </div>
               </div>
               <dl>
@@ -629,18 +843,64 @@ function GenerationWorkspace({
                 )}
               </dl>
             </div>
-          ) : pageTitles.length ? (
+          ) : (phase === "rendering" ? pageTitles.length : planSlides.length) ? (
             <div className="sg-pg-page-list">
-              {pageTitles.map((pageTitle, index) => (
-                <article key={`${index}-${pageTitle}`}>
-                  <div className="sg-pg-page-number">{String(index + 1).padStart(2, "0")}</div>
-                  <div>
-                    <strong>{pageTitle}</strong>
-                    <span>{planSlides[index]?.visualType ?? "自由画布"}</span>
-                  </div>
-                  <Check size={15} />
-                </article>
-              ))}
+              {(phase === "rendering" ? planSlides.slice(0, pageTitles.length) : planSlides).map(
+                (slide, index) =>
+                  (() => {
+                    const pageNumber = index + 1;
+                    const pageTitle = slide.title ?? pageTitles[index] ?? `第 ${pageNumber} 页`;
+                    const progressState = pageProgress({
+                      checkpoint,
+                      phase,
+                      pageNumber,
+                      pageCount: planSlides.length,
+                      generatedCount: pageTitles.length,
+                    });
+                    return (
+                      <article
+                        key={`${index}-${pageTitle}`}
+                        className={[
+                          progressState.repair ? "is-repair-target" : "",
+                          progressState.kind === "processing" ? "is-page-processing" : "",
+                          progressState.kind === "done" ? "is-page-done" : "",
+                        ]
+                          .filter(Boolean)
+                          .join(" ")}
+                      >
+                        <div className="sg-pg-page-number">
+                          {String(index + 1).padStart(2, "0")}
+                        </div>
+                        <div>
+                          <strong>{pageTitle}</strong>
+                          <span>{planSlides[index]?.visualType ?? "自由画布"}</span>
+                        </div>
+                        <div className="sg-pg-page-status">
+                          {progressState.kind === "processing" ? (
+                            <>
+                              <LoaderCircle className="sg-spin" size={14} />
+                              <span>{progressState.label}</span>
+                            </>
+                          ) : progressState.kind === "pending" ? (
+                            <>
+                              {progressState.repair ? (
+                                <WandSparkles size={14} />
+                              ) : (
+                                <Circle size={13} />
+                              )}
+                              <span>{progressState.label}</span>
+                            </>
+                          ) : (
+                            <>
+                              <Check size={14} />
+                              <span>{progressState.label}</span>
+                            </>
+                          )}
+                        </div>
+                      </article>
+                    );
+                  })(),
+              )}
             </div>
           ) : (
             <div className="sg-pg-output-empty">
@@ -655,10 +915,93 @@ function GenerationWorkspace({
           <div className="sg-pg-section-head">
             <div>
               <span>创意计划</span>
-              <h2>{checkpoint.plan ? "AI 已确定叙事方向" : "正在形成创意计划"}</h2>
+              <h2>
+                {checkpoint.plan
+                  ? "AI 已确定叙事方向"
+                  : planningStream
+                    ? "正在流式形成创意计划"
+                    : "正在形成创意计划"}
+              </h2>
             </div>
+            {!checkpoint.plan && planningStream && (
+              <small>
+                {(planningStream.reasoning.length + planningStream.content.length).toLocaleString()}{" "}
+                字符
+              </small>
+            )}
           </div>
-          {checkpoint.plan ? (
+          {planningStream ? (
+            <div
+              ref={planningStreamRef}
+              className="sg-pg-plan-stream"
+              role="log"
+              aria-live="polite"
+              aria-label="AI 创意计划的思考过程和正文"
+            >
+              <div className="sg-pg-plan-stream-status">
+                {planningIsStreaming ? (
+                  <LoaderCircle className="sg-spin" size={14} />
+                ) : (
+                  <Check size={14} />
+                )}
+                <span>{planningIsStreaming ? "AI 正在深度规划" : "深度规划已完成"}</span>
+              </div>
+              <ChatStreamChunk
+                reasoningContent={planningStream.reasoning}
+                textContent={planningStream.content}
+                streaming={planningIsStreaming}
+              />
+              {checkpoint.plan && (
+                <dl>
+                  <div>
+                    <dt>核心信息</dt>
+                    <dd>{checkpoint.plan.coreMessage}</dd>
+                  </div>
+                  <div>
+                    <dt>目标受众</dt>
+                    <dd>{checkpoint.plan.audience}</dd>
+                  </div>
+                  <div>
+                    <dt>叙事路径</dt>
+                    <dd>{checkpoint.plan.narrative}</dd>
+                  </div>
+                  <div>
+                    <dt>视觉方向</dt>
+                    <dd>{checkpoint.plan.visualDirection ?? checkpoint.plan.style}</dd>
+                  </div>
+                  {checkpoint.plan.selectedStyle && (
+                    <div>
+                      <dt>选定设计系统</dt>
+                      <dd>
+                        {checkpoint.plan.selectedStyle}
+                        {checkpoint.plan.density
+                          ? ` · ${checkpoint.plan.density === "speaker-led" ? "现场讲述" : "异步阅读"}`
+                          : ""}
+                      </dd>
+                    </div>
+                  )}
+                  {checkpoint.plan.designSystem?.visualThesis && (
+                    <div>
+                      <dt>视觉论点</dt>
+                      <dd>{checkpoint.plan.designSystem.visualThesis}</dd>
+                    </div>
+                  )}
+                  {checkpoint.renderSummary && (
+                    <div>
+                      <dt>浏览器渲染</dt>
+                      <dd>{checkpoint.renderSummary}</dd>
+                    </div>
+                  )}
+                  {checkpoint.reviewSummary && (
+                    <div>
+                      <dt>审查结论</dt>
+                      <dd>{checkpoint.reviewSummary}</dd>
+                    </div>
+                  )}
+                </dl>
+              )}
+            </div>
+          ) : checkpoint.plan ? (
             <dl>
               <div>
                 <dt>核心信息</dt>

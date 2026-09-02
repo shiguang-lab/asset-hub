@@ -19,6 +19,8 @@ describe("instrumentPresentationHtml", () => {
     const result = instrumentPresentationHtml(
       `<section data-sg-page="data-story" data-sg-id="page-4"><style>#page-4 .metric { display:grid }</style><div class="metric">内容</div></section>`,
     );
-    expect(result.html).toContain('<section data-sg-page="data-story" data-sg-id="page-4" id="page-4"');
+    expect(result.html).toContain(
+      '<section data-sg-page="data-story" data-sg-id="page-4" id="page-4"',
+    );
   });
 });

@@ -7,10 +7,10 @@ import {
   removePage as astRemovePage,
   setTheme as astSetTheme,
   ensurePresentationRuntimeHtml,
-  SG_STATICIZE_CSS,
   listEditableElements,
   listPages,
   parsePresentationHtml,
+  SG_STATICIZE_CSS,
   serializePresentationHtml,
   setDataAttribute,
   THEME_PRESETS,
@@ -18,7 +18,7 @@ import {
   updateLinkHref,
   updateTextContent,
 } from "@shiguang/content";
-import { Empty, Scrollbar, useToast } from "@shiguang/ui";
+import { Empty, Loading, Scrollbar, useToast } from "@shiguang/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Button,
@@ -1073,7 +1073,7 @@ const SG_EDIT_BRIDGE = `<script>
     ".sg-rotate{position:absolute;width:14px;height:14px;border-radius:50%;background:#fff;border:1.5px solid var(--sg-primary,#7c5cff);z-index:99997;cursor:grab;box-shadow:0 1px 4px rgba(0,0,0,0.2)}",
     ".sg-rotate::before{content:'';position:absolute;left:50%;top:14px;width:1.5px;height:18px;background:var(--sg-primary,#7c5cff);transform:translateX(-50%)}",
     ".sg-nav,.sg-progress,.sg-page-no{display:none !important}",
-    "html[data-sg-static='1'] [data-sg-page],html[data-sg-static='1'] [data-sg-page] *,html[data-sg-static='1'] [data-sg-page] *::before,html[data-sg-static='1'] [data-sg-page] *::after{animation-delay:-999999s!important;animation-duration:1ms!important;animation-iteration-count:1!important;animation-fill-mode:forwards!important;animation-play-state:paused!important;transition:none!important}",
+    "html[data-sg-static='1'] [data-sg-page],html[data-sg-static='1'] [data-sg-page] *,html[data-sg-static='1'] [data-sg-page] *::before,html[data-sg-static='1'] [data-sg-page] *::after{animation-duration:0s!important;animation-delay:0s!important;animation-iteration-count:1!important;animation-fill-mode:forwards!important;animation-play-state:running!important;transition:none!important}",
     "html[data-sg-static='1'] [data-sg-page] [data-sg-enter]{opacity:1!important;visibility:visible!important;transform:none!important}",
     "[data-sg-page]{display:flex}",
     "[data-sg-page] ~ [data-sg-page]{display:none}"
@@ -1103,6 +1103,38 @@ const SG_EDIT_BRIDGE = `<script>
   var currentPage = function () {
     return document.querySelector("[data-sg-page].sg-active") || document.querySelector("[data-sg-page]");
   };
+
+  // Run finite CSS/WAAPI animations to their end and persist the computed
+  // styles in this editor-only document. This keeps the authored HTML intact
+  // while avoiding the blank initial state left by animation:none.
+  function freezeAnimations(page) {
+    if (!page || !page.getAnimations) return;
+    var animations = page.getAnimations({ subtree: true });
+    animations.forEach(function (animation) {
+      var effect = animation.effect;
+      var timing = effect && effect.getComputedTiming ? effect.getComputedTiming() : null;
+      if (!timing || !Number.isFinite(timing.endTime)) {
+        try { animation.pause(); } catch (_) {}
+        return;
+      }
+      try {
+        animation.finish();
+        if (animation.commitStyles) animation.commitStyles();
+        animation.cancel();
+      } catch (_) {
+        // Pseudo-elements and a few browser-managed effects cannot be
+        // committed; leaving their zero-duration fill is the safest fallback.
+      }
+    });
+  }
+
+  function settleEditorPage() {
+    var page = currentPage();
+    if (!page) return;
+    requestAnimationFrame(function () {
+      requestAnimationFrame(function () { freezeAnimations(page); });
+    });
+  }
 
   /* ---------- 工具函数：百分比换算 / 包围盒 / 吸附参考线 / 缩放手柄 ---------- */
   var SNAP = 6; // 吸附阈值（页面像素）
@@ -1481,6 +1513,7 @@ const SG_EDIT_BRIDGE = `<script>
     } else if (d.type === "navigate") {
       showPage(d.pageId || null);
       clearHandles(); clearGuides();
+      settleEditorPage();
     } else if (d.type === "cancel-edit") {
       if (editingEl) { editingEl.textContent = editingEl.getAttribute("data-sg-text-origin") || ""; commitEdit(); }
     }
@@ -1490,8 +1523,11 @@ const SG_EDIT_BRIDGE = `<script>
   var initialPage = window.__sgEditorInitialPage || null;
   function applyInitialPage() { showPage(initialPage); }
   applyInitialPage();
+  settleEditorPage();
   document.addEventListener("DOMContentLoaded", applyInitialPage);
+  document.addEventListener("DOMContentLoaded", settleEditorPage);
   setTimeout(applyInitialPage, 0);
+  setTimeout(settleEditorPage, 0);
   var initialSyncTimer = setInterval(applyInitialPage, 100);
   setTimeout(function () { clearInterval(initialSyncTimer); }, 2000);
 })();
@@ -1511,8 +1547,11 @@ function buildPreviewSrcDoc(html: string, initialPageId: string | null = null): 
 /** 缩略图 srcDoc：保留完整 HTML、Runtime 和脚本，只切换当前页，保证与主画布共享渲染链。 */
 function buildThumbnailSrcDoc(html: string, pageIndex: number): string {
   const source = ensurePresentationRuntimeHtml(html);
+  // The thumbnail iframe is already sized to the sidebar card. Keep the
+  // document in that viewport so SG Runtime performs exactly one stage fit;
+  // applying another 960px canvas scale here makes dense pages unreadable.
   const thumbStyle = `<style data-sg-thumbnail-style>${SG_STATICIZE_CSS}
-html,body{width:960px!important;height:540px!important;margin:0!important;padding:0!important;overflow:hidden!important}
+html,body{width:100%!important;height:100%!important;margin:0!important;padding:0!important;overflow:hidden!important}
 [data-sg-page]{transform-origin:0 0!important}
 </style>`;
   const thumbScript = `<script data-sg-thumbnail-script>(function(){
@@ -1538,7 +1577,7 @@ html,body{width:960px!important;height:540px!important;margin:0!important;paddin
     : `${withStyle}${thumbScript}`;
 }
 
-function buildPlaybackSrcDoc(html: string): string {
+export function buildPlaybackSrcDoc(html: string): string {
   const source = ensurePresentationRuntimeHtml(html, { player: "engine" });
   // Hide only the platform's embedded controls. Animation CSS belongs to the
   // AI-authored HTML and remains untouched in playback.
@@ -1610,7 +1649,7 @@ export function PresentationsPage() {
       return [];
     }
   });
-  const { data } = useQuery<Asset[]>({
+  const { data, isLoading: presentationsLoading } = useQuery<Asset[]>({
     queryKey: ["assets", "presentation"],
     queryFn: loadPresentations,
   });
@@ -1726,13 +1765,17 @@ export function PresentationsPage() {
           </div>
         </div>
         <div className="sg-presentation-heading-actions">
+          <Button type="primary" onClick={() => navigate("/presentations/new")}>
+            <Plus size={14} />
+            新建
+          </Button>
           <Button onClick={() => navigate("/presentations/new?source=document")}>
             <Import size={14} />
-            导入文档生成演示
+            导入
           </Button>
           <Button onClick={() => setTab("trash")}>
             <Trash2 size={14} />
-            演示回收站
+            回收站
           </Button>
         </div>
       </section>
@@ -1849,7 +1892,9 @@ export function PresentationsPage() {
             />
           </section>
 
-          {pageItems.length === 0 ? (
+          {presentationsLoading ? (
+            <Loading loading minHeight={300} />
+          ) : pageItems.length === 0 ? (
             <div className="sg-presentation-empty">
               <Empty
                 title={tab === "trash" ? "回收站为空" : "没有匹配的演示"}
@@ -1859,7 +1904,7 @@ export function PresentationsPage() {
                 action={
                   tab !== "trash" ? (
                     <Button type="primary" onClick={() => navigate("/presentations/new")}>
-                      新建在线演示
+                      新建
                     </Button>
                   ) : undefined
                 }
@@ -2937,31 +2982,30 @@ export function PresentationEditorPage() {
   );
 }
 
-export function PresentationPlayerPage() {
-  const { id } = useParams<{ id: string }>();
-  const navigate = useNavigate();
+export function PresentationPlayback({
+  html,
+  title,
+  onExit,
+}: {
+  html: string;
+  title: string;
+  onExit?: () => void;
+}) {
   const { styles } = usePlayerStyles();
   const frameRef = useRef<HTMLIFrameElement>(null);
-  const { data } = useQuery<{ asset: Asset; html: string }>({
-    queryKey: ["presentation", id],
-    queryFn: () => api(`/presentations/${id}`),
-  });
   const [pageNo, setPageNo] = useState<{ index: number; total: number }>({ index: 0, total: 0 });
   const [navOpen, setNavOpen] = useState(false);
   const [frameReady, setFrameReady] = useState(false);
   const playerPages = useMemo(() => {
-    if (!data?.html) return [];
+    if (!html) return [];
     try {
-      return listPages(parsePresentationHtml(data.html));
+      return listPages(parsePresentationHtml(html));
     } catch {
       return [];
     }
-  }, [data?.html]);
+  }, [html]);
   const totalPages = playerPages.length || pageNo.total;
-  const playbackSource = useMemo(
-    () => (data?.html ? buildPlaybackSrcDoc(data.html) : ""),
-    [data?.html],
-  );
+  const playbackSource = useMemo(() => (html ? buildPlaybackSrcDoc(html) : ""), [html]);
 
   const goTo = useCallback(
     (index: number) => {
@@ -2979,7 +3023,7 @@ export function PresentationPlayerPage() {
       if (e.key === "Escape") {
         e.preventDefault();
         if (navOpen) setNavOpen(false);
-        else navigate(-1);
+        else onExit?.();
       } else if (e.key === "ArrowRight" || e.key === "PageDown" || e.key === " ") {
         e.preventDefault();
         goTo(pageNo.index + 1);
@@ -3006,7 +3050,7 @@ export function PresentationPlayerPage() {
       window.removeEventListener("keydown", onKey);
       window.removeEventListener("message", onMessage);
     };
-  }, [goTo, navOpen, navigate, pageNo.index, playerPages.length, totalPages]);
+  }, [goTo, navOpen, onExit, pageNo.index, playerPages.length, totalPages]);
 
   useEffect(() => {
     if (playerPages.length <= 0) return;
@@ -3018,7 +3062,7 @@ export function PresentationPlayerPage() {
 
   useEffect(() => setFrameReady(false), [playbackSource]);
 
-  if (!data) return <Empty title="加载中…" />;
+  if (!html) return <Empty title="加载中…" />;
 
   const progress = totalPages > 0 ? ((pageNo.index + 1) / totalPages) * 100 : 0;
 
@@ -3030,7 +3074,7 @@ export function PresentationPlayerPage() {
         <iframe
           ref={frameRef}
           className={`sg-player-frame ${styles.frame}`}
-          title={data.asset.title}
+          title={title}
           sandbox="allow-scripts allow-forms allow-popups allow-modals"
           srcDoc={playbackSource}
           onLoad={() => {
@@ -3173,5 +3217,39 @@ export function PresentationPlayerPage() {
         </aside>
       )}
     </div>
+  );
+}
+
+export function PresentationPlayerPage() {
+  const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
+  const { data } = useQuery<{ asset: Asset; html: string }>({
+    queryKey: ["presentation", id],
+    queryFn: () => api(`/presentations/${id}`),
+  });
+  return (
+    <PresentationPlayback
+      html={data?.html ?? ""}
+      title={data?.asset.title ?? "演示"}
+      onExit={() => navigate(-1)}
+    />
+  );
+}
+
+export function PresentationSnapshotPlayerPage() {
+  const { taskId } = useParams<{ taskId: string }>();
+  const navigate = useNavigate();
+  const { data } = useQuery<{ html: string; updatedAt?: string }>({
+    queryKey: ["presentation-snapshot-player", taskId],
+    queryFn: () => api(`/tasks/${taskId}/presentation-snapshot`),
+    enabled: Boolean(taskId),
+    retry: 2,
+  });
+  return (
+    <PresentationPlayback
+      html={data?.html ?? ""}
+      title="生成页面快照"
+      onExit={() => navigate(-1)}
+    />
   );
 }

@@ -682,11 +682,9 @@ export const usePresentationsStyles = createStyles(({ css }) => ({
   position: relative;
   display: block;
   width: 100%;
-  aspect-ratio: 16 / 9;
   margin: 4px 0;
   padding: 0;
   overflow: hidden;
-  container-type: size;
   border: 2px solid transparent;
   border-radius: 6px;
   background: #0d0c10;
@@ -702,13 +700,13 @@ export const usePresentationsStyles = createStyles(({ css }) => ({
 }
 .sg-slide-thumb-frame {
   display: block;
-  width: 960px;
-  height: 540px;
+  /* Let the iframe viewport drive SG Runtime's single stage scale. */
+  width: 100%;
+  height: auto;
+  aspect-ratio: 16 / 9;
   border: 0;
   pointer-events: none;
   background: #fff;
-  transform: scale(calc(100cqw / 960px));
-  transform-origin: top left;
 }
 .sg-slide-thumb-no {
   position: absolute;
@@ -795,6 +793,11 @@ export const usePresentationsStyles = createStyles(({ css }) => ({
   color: var(--sg-muted);
   font-size: 12px;
   text-align: center;
+}
+/* 失败快照预览：在固定宽度 Modal 内按宽度等比填满，不受页面级高度约束 */
+.sg-pg-snapshot-stage {
+  max-width: 100%;
+  min-height: 480px;
 }
 /* 空状态：无页面时的引导卡片 */
 .sg-slide-empty {
@@ -1281,6 +1284,7 @@ export const usePresentationsStyles = createStyles(({ css }) => ({
 }
 .sg-pg-progress-copy,
 .sg-pg-progress-meta {
+  min-width: 0;
   justify-content: space-between;
   gap: 16px;
 }
@@ -1306,12 +1310,29 @@ export const usePresentationsStyles = createStyles(({ css }) => ({
   background: var(--sg-bg-3);
 }
 .sg-pg-progress-track i {
+  position: relative;
   display: block;
   height: 100%;
+  overflow: hidden;
   border-radius: inherit;
   background: linear-gradient(90deg, #7544f5, #ab7cff);
   box-shadow: 0 0 15px rgba(124, 60, 255, 0.35);
   transition: width 0.45s ease;
+}
+.sg-pg-progress-card.is-active .sg-pg-progress-track i::after {
+  position: absolute;
+  inset: 0;
+  content: "";
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.08) 28%,
+    rgba(255, 255, 255, 0.72) 50%,
+    rgba(255, 255, 255, 0.08) 72%,
+    transparent 100%
+  );
+  transform: translateX(-100%);
+  animation: sg-pg-progress-active 1.65s ease-in-out infinite;
 }
 .sg-pg-progress-card.is-error .sg-pg-progress-track i {
   background: linear-gradient(90deg, #dc4c4c, #f87171);
@@ -1322,10 +1343,28 @@ export const usePresentationsStyles = createStyles(({ css }) => ({
   font-size: 11px;
   font-variant-numeric: tabular-nums;
 }
+.sg-pg-progress-meta > span:last-child {
+  flex: none;
+  white-space: nowrap;
+}
 .sg-pg-progress-card.is-error .sg-pg-progress-meta > span:first-child {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 0;
+  flex: 1 1 0%;
   min-width: 0;
   overflow: hidden;
   color: #f87171;
+}
+.sg-pg-progress-error-text {
+  display: block;
+  width: 0;
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  color: inherit !important;
+  cursor: help;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1381,6 +1420,8 @@ export const usePresentationsStyles = createStyles(({ css }) => ({
   gap: 12px;
 }
 .sg-pg-output-error-heading > div:last-child {
+  width: 0;
+  flex: 1 1 auto;
   min-width: 0;
 }
 .sg-pg-output-error-heading strong {
@@ -1388,12 +1429,16 @@ export const usePresentationsStyles = createStyles(({ css }) => ({
   color: var(--sg-fg);
   font-size: 15px;
 }
-.sg-pg-output-error-heading p {
+.sg-pg-output-error-heading .sg-pg-error-summary {
+  display: -webkit-box;
+  max-width: 100%;
   margin: 7px 0 0;
   color: var(--sg-muted);
   font-size: 12px;
   line-height: 1.65;
+  overflow: hidden;
   overflow-wrap: anywhere;
+  cursor: help;
 }
 .sg-pg-output-error dl {
   display: grid;
@@ -1457,7 +1502,7 @@ export const usePresentationsStyles = createStyles(({ css }) => ({
   position: relative;
   display: grid;
   min-height: 55px;
-  grid-template-columns: 20px 21px minmax(0, 1fr);
+  grid-template-columns: 20px 21px minmax(0, 1fr) auto;
   align-items: center;
   gap: 8px;
   color: var(--sg-muted);
@@ -1510,24 +1555,91 @@ export const usePresentationsStyles = createStyles(({ css }) => ({
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* "生成页面" 节点右侧的快照入口：生成阶段完成（deck 已成型）后常驻可用 */
+.sg-pg-snapshot-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border: 1px solid var(--sg-border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--sg-muted);
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    color 0.15s ease,
+    border-color 0.15s ease,
+    background 0.15s ease;
+}
+.sg-pg-snapshot-link:hover {
+  border-color: #a98bff;
+  background: rgba(124, 92, 255, 0.08);
+  color: #a98bff;
+}
 .sg-pg-page-list {
   display: grid;
   min-height: 0;
   flex: 1 1 auto;
+  grid-auto-rows: 56px;
+  align-content: start;
   gap: 7px;
   margin-top: 13px;
   overflow: auto;
 }
 .sg-pg-page-list article {
   display: grid;
-  grid-template-columns: 40px minmax(0, 1fr) 18px;
+  grid-template-columns: 40px minmax(0, 1fr) auto;
   align-items: center;
   gap: 10px;
-  min-height: 56px;
+  height: 56px;
   padding: 8px 11px 8px 8px;
   border: 1px solid var(--sg-border);
   border-radius: 7px;
   background: var(--sg-bg);
+}
+.sg-pg-page-list article.is-repairing {
+  background: linear-gradient(90deg, rgba(164, 127, 255, 0.13), var(--sg-bg));
+}
+.sg-pg-page-list article.is-page-processing {
+  background: linear-gradient(90deg, rgba(164, 127, 255, 0.1), var(--sg-bg));
+}
+.sg-pg-page-list article.is-page-done {
+  border-color: rgba(87, 196, 154, 0.26);
+}
+.sg-pg-page-status {
+  display: inline-flex;
+  min-width: 45px;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  color: #57c49a;
+  font-size: 10px;
+  white-space: nowrap;
+}
+.sg-pg-page-status span {
+  color: inherit;
+  font-size: inherit;
+}
+.sg-pg-page-list article.is-repair-target .sg-pg-page-status {
+  color: #a47fff;
+}
+.sg-pg-page-list article.is-repairing .sg-pg-page-status {
+  color: #c7adff;
+  font-weight: 650;
+}
+.sg-pg-page-list article.is-page-processing .sg-pg-page-status {
+  color: #c7adff;
+  font-weight: 650;
+}
+.sg-pg-page-list article.is-page-done .sg-pg-page-status {
+  color: #57c49a;
+}
+.sg-pg-page-list article.is-repairing .sg-pg-page-number {
+  color: #e1d6ff;
+  background: linear-gradient(145deg, rgba(164, 127, 255, 0.38), rgba(164, 127, 255, 0.12)), var(--sg-bg-3);
 }
 .sg-pg-page-list article > svg {
   color: #57c49a;
@@ -1621,6 +1733,67 @@ export const usePresentationsStyles = createStyles(({ css }) => ({
   word-break: break-word;
   white-space: normal;
 }
+.sg-pg-plan-stream {
+  position: relative;
+  min-height: 0;
+  flex: 1 1 auto;
+  margin-top: 10px;
+  padding: 12px 4px 18px 0;
+  overflow: auto;
+  scrollbar-gutter: stable;
+}
+.sg-pg-plan-stream-status {
+  position: sticky;
+  top: -12px;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 12px;
+  padding: 7px 0 9px;
+  color: #a98bff;
+  background: linear-gradient(var(--sg-bg-2) 72%, transparent);
+  font-size: 10px;
+}
+.sg-pg-plan-stream pre {
+  margin: 0;
+  color: var(--sg-fg-2);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.sg-pg-plan-stream-block {
+  margin-bottom: 14px;
+  padding: 10px 12px 12px;
+  border: 1px solid rgba(169, 139, 255, 0.16);
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.12);
+}
+.sg-pg-plan-stream-block--reasoning {
+  border-color: rgba(169, 139, 255, 0.24);
+  background: rgba(124, 60, 255, 0.055);
+}
+.sg-pg-plan-stream-block-head {
+  margin-bottom: 7px;
+  color: #a98bff;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+.sg-pg-stream-cursor {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 2px;
+  vertical-align: -0.12em;
+  border-radius: 1px;
+  background: #a98bff;
+  animation: sg-pg-cursor-blink 0.8s steps(2, jump-none) infinite;
+}
 .sg-pg-plan-skeleton {
   display: grid;
   min-height: 0;
@@ -1639,6 +1812,33 @@ export const usePresentationsStyles = createStyles(({ css }) => ({
 @keyframes sg-pg-shimmer {
   to {
     background-position: -220% 0;
+  }
+}
+@keyframes sg-pg-progress-active {
+  0% {
+    transform: translateX(-100%);
+    opacity: 0;
+  }
+  18% {
+    opacity: 1;
+  }
+  82% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+}
+@keyframes sg-pg-cursor-blink {
+  50% {
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sg-pg-progress-card.is-active .sg-pg-progress-track i::after,
+  .sg-pg-stream-cursor {
+    animation: none;
   }
 }
 
@@ -1712,7 +1912,7 @@ export const usePresentationsStyles = createStyles(({ css }) => ({
     align-items: flex-start;
   }
   .sg-presentation-heading-actions {
-    display: none;
+    flex-wrap: wrap;
   }
   .sg-presentation-title h1 {
     font-size: 21px;

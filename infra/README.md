@@ -53,7 +53,8 @@ docker compose -f postgres.yml ps
 
 ## 生产应用部署
 
-六个应用使用仓库根目录的多阶段 `Dockerfile` 构建，并由
+六个应用使用仓库根目录多阶段 `Dockerfile` 的独立运行时 target，由 GitHub Actions 构建
+并发布到 `ghcr.io/shiguang-lab/asset-hub-*`；NAS 只拉取镜像，并由
 `infra/compose/production.yml` 统一编排：
 
 - `web`：静态 SPA，NAS 调试端口 `3700`；
@@ -72,16 +73,19 @@ Markdown 发布页不再生成静态 HTML 作为最终入口：`public-gateway` 
 服务端通过网关读取 `index.md`，使用共享 `@shiguang/markdown-viewer`（XMarkdown）渲染，
 并在浏览器端提供目录折叠、代码块/Mermaid 交互、下载和复制链接能力。
 
-NAS 部署目录约定为 `/home/yanxianliang/asset-hub`。把生产集成凭据放入仓库
-根目录 `.env` 后执行：
+NAS 部署目录约定为 `/home/yanxianliang/asset-hub`。把生产集成凭据放入部署目录的
+`app.env`（源码目录本地运行仍可使用仓库根目录 `.env`），并在
+`infra/compose/runtime.env` 中设置要部署的 `IMAGE_TAG` 后执行：
 
 ```bash
 cd infra/compose
 ./deploy.sh
 ```
 
-首次执行会生成权限为 `0600` 的 `runtime.env`，保存服务间令牌和镜像版本。
-后续部署保留该文件，避免滚动更新时令牌意外变化。共享网关路由模板见
+首次执行会生成权限为 `0600` 的 `runtime.env`，保存服务间令牌和镜像版本；脚本会执行
+`docker compose pull`，不会在 NAS 本地构建。后续部署保留该文件，避免滚动更新时令牌意外变化。
+GHCR 私有包需先在 NAS 执行一次 `docker login ghcr.io`，凭据使用 Orbit 部署侧提供的账号/token。
+完整的首次部署、更新和回滚说明见 [`compose/NAS-DEPLOY.md`](./compose/NAS-DEPLOY.md)。共享网关路由模板见
 `/Users/yanxianliang/shiguang/deploy/access-gateway/Caddyfile`，由统一部署仓库维护。
 Asset Hub 应用部署不会修改 Caddy；网关配置变更应通过统一的
 `shiguang/deploy/access-gateway/deploy.sh` 发布。

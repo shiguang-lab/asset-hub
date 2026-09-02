@@ -1,22 +1,22 @@
+import { renderPresentationAccessHtml, rewriteAssetLinks } from "@shiguang/content";
 import { cookies } from "next/headers";
-import { rewriteAssetLinks, renderPresentationAccessHtml } from "@shiguang/content";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-export async function GET(
-  _request: Request,
-  { params }: { params: Promise<{ slug: string }> },
-) {
+export async function GET(_request: Request, { params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
   const gateway = process.env.PUBLIC_GATEWAY_INTERNAL_URL ?? "http://public-gateway:3004";
   const cookieHeader = (await cookies()).toString();
-  const response = await fetch(
-    `${gateway}/p/${encodeURIComponent(slug)}/presentation-content`,
-    { headers: cookieHeader ? { cookie: cookieHeader } : undefined, cache: "no-store" },
-  );
+  const response = await fetch(`${gateway}/p/${encodeURIComponent(slug)}/presentation-content`, {
+    headers: cookieHeader ? { cookie: cookieHeader } : undefined,
+    cache: "no-store",
+  });
   if (response.status === 401) {
-    return new Response("需要访问密码", { status: 401, headers: { "content-type": "text/plain; charset=utf-8" } });
+    return new Response("需要访问密码", {
+      status: 401,
+      headers: { "content-type": "text/plain; charset=utf-8" },
+    });
   }
   if (!response.ok) return new Response("演示不存在", { status: response.status });
   const content = (await response.json()) as {
@@ -50,7 +50,10 @@ export async function GET(
         "style-src 'self' 'unsafe-inline' https:",
         "img-src 'self' data: blob: https:",
         "font-src 'self' data: https:",
-        "connect-src 'none'",
+        // Cloudflare Browser RUM posts to /cdn-cgi/rum on this same origin.
+        // Keep the share document network-isolated from third parties while
+        // allowing that first-party telemetry request.
+        "connect-src 'self'",
         "frame-src 'none'",
         "frame-ancestors 'none'",
         "form-action 'none'",

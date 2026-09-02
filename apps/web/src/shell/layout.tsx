@@ -199,7 +199,6 @@ const CONTEXT_CREATE_ACTIONS: Array<{
   { match: /^\/knowledge(?:\/|$)/, label: "新建知识库", target: "/knowledge/new" },
   { match: /^\/research(?:\/|$)/, label: "新建调研", target: "/research/new" },
   { match: /^\/tasks(?:\/|$)/, label: "新建任务", target: "/tasks/new" },
-  { match: /^\/presentations(?:\/|$)/, label: "新建在线演示", target: "/presentations/new" },
 ];
 
 function accountInitial(displayName: string): string {

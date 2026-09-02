@@ -7,6 +7,7 @@ import {
   validatePresentationDocumentQuality,
   validatePresentationHtml,
 } from "./presentation.js";
+import { instrumentPresentationHtml } from "./presentation-instrument.js";
 import { SG_STATICIZE_CSS } from "./presentation-runtime.js";
 
 const doc = {
@@ -39,7 +40,7 @@ describe("renderPresentationHtml", () => {
     expect(html).toContain('data-sg-id="b1"');
     expect(html).toContain('data-sg-kind="chart"');
     expect(html).toContain("sg-layout-hero-center");
-    expect(html).not.toContain('data-sg-presentation-player');
+    expect(html).not.toContain("data-sg-presentation-player");
     expect(html).not.toContain("SG.presentation({");
   });
 
@@ -133,8 +134,12 @@ describe("ensurePresentationRuntimeHtml", () => {
     expect(once).toContain("width: 1920px");
     expect(once).not.toContain('classList.add("sg-enter-active")');
     expect(once).not.toContain('classList.remove("sg-enter-active")');
+    expect(once).toContain("__sgAuthoredDisplay");
+    expect(once).not.toContain("[data-sg-page].sg-active { display: flex; }");
     expect(once).toContain("SG.presentation");
-    expect(once).toContain('<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,');
+    expect(once).toContain(
+      '<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,',
+    );
     expect(twice.match(/data-sg-platform-stage/g)).toHaveLength(1);
     expect(twice.match(/data-sg-platform-runtime/g)).toHaveLength(1);
   });
@@ -143,6 +148,22 @@ describe("ensurePresentationRuntimeHtml", () => {
     const source = `<!doctype html><html><head><style>#page-4 .metric{display:grid}</style></head><body><section data-sg-page="data" data-sg-id="page-4"><div class="metric">内容</div></section></body></html>`;
     const result = ensurePresentationRuntimeHtml(source);
     expect(result).toContain('data-sg-id="page-4" id="page-4"');
+  });
+
+  it("mirrors the page identity as a class so .page-N author CSS matches the section", () => {
+    const bare = `<!doctype html><html><head></head><body><section data-sg-page="page-2" data-sg-id="page-2"><h1>标题</h1></section></body></html>`;
+    expect(ensurePresentationRuntimeHtml(bare)).toContain('class="page-2"');
+
+    const withClass = `<!doctype html><html><head></head><body><section data-sg-page="page-3" data-sg-id="page-3" class="cover dark"><h1>标题</h1></section></body></html>`;
+    const result = ensurePresentationRuntimeHtml(withClass);
+    expect(result).toContain('class="cover dark page-3"');
+  });
+
+  it("resolves the mirrored class from data-sg-page when data-sg-id is absent", () => {
+    const source = `<!doctype html><html><head></head><body><section data-sg-page="page-7"><h1>标题</h1></section></body></html>`;
+    const result = ensurePresentationRuntimeHtml(source);
+    expect(result).toContain('id="page-7"');
+    expect(result).toContain('class="page-7"');
   });
 
   it("upgrades an existing platform runtime instead of preserving stale chart behavior", () => {
@@ -161,35 +182,75 @@ describe("ensurePresentationRuntimeHtml", () => {
     const engine = ensurePresentationRuntimeHtml(source, { player: "engine" });
     expect(full).toContain('data-sg-player-ui="true"');
     expect(engine).toContain('data-sg-player-ui="false"');
-    expect(ensurePresentationRuntimeHtml(full, { player: "full" }).match(/data-sg-presentation-player/g)).toHaveLength(1);
+    expect(
+      ensurePresentationRuntimeHtml(full, { player: "full" }).match(/data-sg-presentation-player/g),
+    ).toHaveLength(1);
   });
 
   it("composes the current access shell around source HTML", () => {
-    const source = '<!doctype html><html><head></head><body><section data-sg-page="title"><h1>标题</h1></section></body></html>';
+    const source =
+      '<!doctype html><html><head></head><body><section data-sg-page="title"><h1>标题</h1></section></body></html>';
     const result = renderPresentationAccessHtml(source, {
       visibility: "unlisted",
       allowCopy: true,
       downloadHref: "/s/demo/download",
     });
-    expect(result).toContain('data-sg-presentation-player');
-    expect(result).toContain('data-sg-player-downloads hidden');
+    expect(result).toContain("data-sg-presentation-player");
+    expect(result).toContain("data-sg-player-downloads hidden");
     expect(result).toContain('href="/s/demo/download"');
   });
 
   it("strips legacy platform shell before re-composition", () => {
-    const legacy = '<html><body><div id="sg-progress"></div><section data-sg-page="title"></section><script data-sg-platform-runtime>SG.presentation()</script></body></html>';
+    const legacy =
+      '<html><body><div id="sg-progress"></div><section data-sg-page="title"></section><script data-sg-platform-runtime>SG.presentation()</script></body></html>';
     const source = stripPresentationPlatformShell(legacy);
     expect(source).not.toContain("sg-progress");
     expect(source).not.toContain("data-sg-platform-runtime");
   });
+
+  it("strips leaked foundation preview overlays before publishing", () => {
+    const legacy = `<html><body><!-- 设计系统预览（仅用于开发阶段验证，运行时会被移除） --><div style="position:absolute;inset:0">浮层内容</div><!-- 预览结束 --><section data-sg-page="title"><h1>标题</h1></section></body></html>`;
+    const source = stripPresentationPlatformShell(legacy);
+    expect(source).not.toContain("设计系统预览");
+    expect(source).not.toContain("浮层内容");
+    expect(source).toContain('data-sg-page="title"');
+  });
+});
+
+describe("instrumentPresentationHtml", () => {
+  it("mirrors the page identity as id and class so #page-N and .page-N CSS both match", () => {
+    const html = `<section data-sg-page="page-3" data-sg-id="page-3"><h1 class="headline">标题</h1><p>正文内容</p></section>`;
+    const result = instrumentPresentationHtml(html);
+    expect(result.html).toContain('id="page-3"');
+    expect(result.html).toContain('class="page-3"');
+    // Existing page elements are instrumented without losing their classes.
+    expect(result.html).toContain('class="headline"');
+  });
+
+  it("renumbers echoed duplicate data-sg-id values instead of keeping collisions", () => {
+    const html = `<section data-sg-page="page-2" data-sg-id="page-2"><h1 data-sg-id="el-ai-2-5">一</h1><p data-sg-id="el-ai-2-5">重复</p><p>新增</p></section>`;
+    const result = instrumentPresentationHtml(html);
+    const ids = [...result.html.matchAll(/data-sg-id="(el-ai-\d+-\d+)"/g)].map((match) => match[1]);
+    expect(ids.length).toBe(3);
+    expect(new Set(ids).size).toBe(ids.length);
+    // The first echo keeps its identity; only the duplicate is renumbered.
+    expect(ids[0]).toBe("el-ai-2-5");
+  });
 });
 
 describe("SG_STATICIZE_CSS", () => {
-  it("pins AI-authored animations to their final frame for editing and slicing", () => {
-    expect(SG_STATICIZE_CSS).toContain("animation-delay: -999999s");
-    expect(SG_STATICIZE_CSS).toContain("animation-iteration-count: 1");
-    expect(SG_STATICIZE_CSS).toContain("animation-fill-mode: forwards");
-    expect(SG_STATICIZE_CSS).toContain("animation-play-state: paused");
+  it("seeks authored animations to their terminal state before freezing edits", () => {
+    expect(SG_STATICIZE_CSS).toContain("animation-duration: 0s !important");
+    expect(SG_STATICIZE_CSS).toContain("animation-delay: 0s !important");
+    expect(SG_STATICIZE_CSS).toContain("animation-fill-mode: forwards !important");
+    expect(SG_STATICIZE_CSS).toContain("animation-play-state: running !important");
+    expect(SG_STATICIZE_CSS).toContain("opacity: 1 !important");
+    expect(SG_STATICIZE_CSS).toContain("visibility: visible !important");
+    expect(SG_STATICIZE_CSS).toContain("transform: none !important");
+    expect(SG_STATICIZE_CSS.split("html[data-sg-static=\"1\"] [data-sg-page] [data-sg-enter]")[0]).not.toContain(
+      "transform: none !important",
+    );
+    expect(SG_STATICIZE_CSS).not.toContain("animation: none !important");
     expect(SG_STATICIZE_CSS).toContain("transition: none");
   });
 });
