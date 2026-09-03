@@ -693,6 +693,8 @@ body .sg-public-width-popover .sg-public-actions-menu.ant-menu .ant-menu-item-ex
   --sg-markdown-table-header-bg: #1b202a;
   --sg-markdown-table-hover-bg: #171d27;
   --sg-markdown-diagram-text: #cbd3df;
+  --sg-markdown-diagram-line: #a7b2c4;
+  --sg-markdown-diagram-structure-line: #9a82ee;
   color: var(--sg-fg-2);
   font-size: 15px;
   line-height: 1.8;
@@ -746,6 +748,24 @@ body .sg-public-width-popover .sg-public-actions-menu.ant-menu .ant-menu-item-ex
   fill: var(--sg-markdown-diagram-text) !important;
   /* biome-ignore lint/complexity/noImportantStyles: Mermaid injects higher-specificity color rules into each generated SVG. */
   color: var(--sg-markdown-diagram-text) !important;
+}
+.sg-public-markdown.sg-markdown-content svg .messageLine0,
+.sg-public-markdown.sg-markdown-content svg .messageLine1 {
+  /* biome-ignore lint/complexity/noImportantStyles: Mermaid injects higher-specificity stroke rules into each generated SVG. */
+  stroke: var(--sg-markdown-diagram-line) !important;
+}
+.sg-public-markdown.sg-markdown-content svg marker path {
+  /* biome-ignore lint/complexity/noImportantStyles: Mermaid injects higher-specificity stroke rules into each generated SVG. */
+  stroke: var(--sg-markdown-diagram-line) !important;
+}
+.sg-public-markdown.sg-markdown-content svg marker path:not([fill="none"]) {
+  /* biome-ignore lint/complexity/noImportantStyles: Mermaid injects higher-specificity fill rules into each generated SVG. */
+  fill: var(--sg-markdown-diagram-line) !important;
+}
+.sg-public-markdown.sg-markdown-content svg .actor-line,
+.sg-public-markdown.sg-markdown-content svg .loopLine {
+  /* biome-ignore lint/complexity/noImportantStyles: Mermaid injects higher-specificity stroke rules into each generated SVG. */
+  stroke: var(--sg-markdown-diagram-structure-line) !important;
 }
 .sg-public-markdown pre {
   scrollbar-width: thin;
