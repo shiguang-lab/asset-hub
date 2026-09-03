@@ -8,7 +8,7 @@ export const MARKDOWN_SURFACE_STYLES = `
   --sg-markdown-code-fg: #aeb7c4;
   --sg-markdown-code-border: var(--sg-border, rgba(148, 163, 184, .28));
   --sg-markdown-inline-code-bg: var(--sg-bg-3, #202632);
-  --sg-markdown-inline-code-fg: #aeb7c4;
+  --sg-markdown-inline-code-fg: #b8aed8;
   --sg-markdown-inline-code-border: #303a49;
   --code-bg-color: var(--sg-markdown-code-bg);
   --code-text-color: var(--sg-markdown-code-fg);
