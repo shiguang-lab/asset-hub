@@ -689,6 +689,10 @@ body .sg-public-width-popover .sg-public-actions-menu.ant-menu .ant-menu-item-ex
   --sg-markdown-inline-code-bg: #202632;
   --sg-markdown-inline-code-fg: #aeb7c4;
   --sg-markdown-inline-code-border: #303a49;
+  --sg-markdown-table-border: #465368;
+  --sg-markdown-table-header-bg: #1b202a;
+  --sg-markdown-table-hover-bg: #171d27;
+  --sg-markdown-diagram-text: #cbd3df;
   color: var(--sg-fg-2);
   font-size: 15px;
   line-height: 1.8;
@@ -715,6 +719,33 @@ body .sg-public-width-popover .sg-public-actions-menu.ant-menu .ant-menu-item-ex
 .sg-public-markdown h4 {
   margin-top: 20px;
   font-size: 16px;
+}
+.sg-public-markdown.sg-markdown-content table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.sg-public-markdown.sg-markdown-content th,
+.sg-public-markdown.sg-markdown-content td {
+  border: 1px solid var(--sg-markdown-table-border);
+}
+.sg-public-markdown.sg-markdown-content thead,
+.sg-public-markdown.sg-markdown-content th {
+  background: var(--sg-markdown-table-header-bg);
+}
+.sg-public-markdown.sg-markdown-content tbody tr:hover td {
+  background: var(--sg-markdown-table-hover-bg);
+}
+.sg-public-markdown.sg-markdown-content svg .messageText,
+.sg-public-markdown.sg-markdown-content svg .messageText > tspan,
+.sg-public-markdown.sg-markdown-content svg .loopText,
+.sg-public-markdown.sg-markdown-content svg .loopText > tspan,
+.sg-public-markdown.sg-markdown-content svg .noteText,
+.sg-public-markdown.sg-markdown-content svg .noteText > tspan,
+.sg-public-markdown.sg-markdown-content svg .sequenceNumber {
+  /* biome-ignore lint/complexity/noImportantStyles: Mermaid injects higher-specificity color rules into each generated SVG. */
+  fill: var(--sg-markdown-diagram-text) !important;
+  /* biome-ignore lint/complexity/noImportantStyles: Mermaid injects higher-specificity color rules into each generated SVG. */
+  color: var(--sg-markdown-diagram-text) !important;
 }
 .sg-public-markdown pre {
   scrollbar-width: thin;
