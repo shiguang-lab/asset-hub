@@ -43,7 +43,6 @@ export const useDocumentTreeStyles = createStyles(({ css }) => ({
 .sg-docs-tree-more,
 .sg-docs-tree-toggle {
   display: grid;
-  width: 26px;
   height: 26px;
   flex: none;
   place-items: center;
@@ -53,6 +52,13 @@ export const useDocumentTreeStyles = createStyles(({ css }) => ({
   color: var(--sg-muted);
   background: transparent;
   cursor: pointer;
+}
+.sg-docs-tree-heading button,
+.sg-docs-tree-more {
+  width: 26px;
+}
+.sg-docs-tree-toggle {
+  width: 20px;
 }
 .sg-docs-tree-heading button:hover,
 .sg-docs-tree-more:hover,
