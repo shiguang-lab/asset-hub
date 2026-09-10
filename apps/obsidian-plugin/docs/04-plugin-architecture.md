@@ -160,7 +160,7 @@ interface PluginSettings {
   apiUrl:           string;   // https://doc.shiguanglab.com/api/v1
 
   // 同步
-  syncRoot:         string;   // 默认「资产中心」
+  syncRoot:         string;   // 默认「拾光资产中心」
   syncEnabled:      boolean;
   autoSyncInterval: number;   // 分钟，默认 5，0 = 关闭
   syncOnStartup:    boolean;  // 默认 true
@@ -191,7 +191,7 @@ interface PluginSettings {
               提示：令牌以明文存于 data.json，请勿将插件目录提交到公开仓库
 
 同步
-  同步根目录       [资产中心          ]
+  同步根目录       [拾光资产中心      ]
   启用同步         [✓]
   启动时同步       [✓]
   自动同步间隔     [5 分钟            ]   0 = 关闭定时同步
