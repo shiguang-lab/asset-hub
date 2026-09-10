@@ -26,7 +26,12 @@ const INDEX_BACKUP_FILE = "sync-index.corrupt.json";
 const EVENT_DEBOUNCE_MS = 2_000;
 
 export default class AssetHubPlugin extends Plugin {
-  private settings!: PluginSettings;
+  /**
+   * `Plugin` has shipped `settings?: unknown` since 1.13 so plugins can type
+   * their own; narrow the type here instead of redeclaring the property, which
+   * would reset it to `undefined` on construction.
+   */
+  declare settings: PluginSettings;
   private auth: AuthState | null = null;
   private logger!: Logger;
 
