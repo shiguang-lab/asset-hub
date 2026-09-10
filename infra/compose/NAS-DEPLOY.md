@@ -37,7 +37,8 @@ docker login ghcr.io
 
 ## 更新与回滚
 
-提交到 `main` 会发布 `latest` 和 `sha-<12位提交>`；推送 `vX.Y.Z` 会额外发布版本 tag。
+只有推送版本 tag（`vX.Y.Z`）才会触发 Actions 构建发布，`main` 分支的普通提交不会产出镜像。
+一个 tag 会为每个镜像同时发布 `X.Y.Z`、`vX.Y.Z`、`sha-<12位提交>` 和 `latest` 四个 tag。
 更新 NAS 上的 `IMAGE_TAG` 后执行：
 
 ```bash

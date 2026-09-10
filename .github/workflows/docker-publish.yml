@@ -1,16 +1,9 @@
 name: Publish Asset Hub images
 
+# 只在推送版本 tag 时构建并发布镜像；main 分支的普通提交不再触发发布。
 on:
   push:
-    branches: [main]
-    tags: ["v*", "v*-*"]
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: Image tag to publish (for example 0.1.0 or latest)
-        required: false
-        default: latest
-        type: string
+    tags: ["v*"]
 
 permissions:
   contents: read
@@ -67,28 +60,22 @@ jobs:
         id: meta
         shell: bash
         env:
-          EVENT_NAME: ${{ github.event_name }}
-          REF_TYPE: ${{ github.ref_type }}
           REF_NAME: ${{ github.ref_name }}
-          INPUT_TAG: ${{ inputs.tag }}
           IMAGE_NAME: ${{ env.IMAGE_NAMESPACE }}/${{ matrix.image }}
         run: |
           set -euo pipefail
-          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
-            primary="${INPUT_TAG:-latest}"
-          elif [[ "$REF_TYPE" == "tag" ]]; then
-            primary="${REF_NAME#v}"
-          else
-            primary="latest"
+          version="${REF_NAME#v}"
+          if [[ -z "$version" ]]; then
+            echo "Tag '$REF_NAME' carries no version; expected the form vX.Y.Z." >&2
+            exit 1
           fi
 
           {
             echo "tags<<EOF"
-            echo "$IMAGE_NAME:$primary"
+            echo "$IMAGE_NAME:$version"
+            echo "$IMAGE_NAME:$REF_NAME"
             echo "$IMAGE_NAME:sha-${GITHUB_SHA::12}"
-            if [[ "$REF_TYPE" == "tag" ]]; then
-              echo "$IMAGE_NAME:$REF_NAME"
-            fi
+            echo "$IMAGE_NAME:latest"
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
@@ -103,6 +90,7 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: |
             org.opencontainers.image.title=Shiguang Asset Hub (${{ matrix.image }})
+            org.opencontainers.image.version=${{ github.ref_name }}
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
           cache-from: type=gha,scope=asset-hub-${{ matrix.target }}
