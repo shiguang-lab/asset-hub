@@ -122,17 +122,15 @@ function respond(response: ServerResponse, status: number, body: string): void {
  * cannot inject markup into a page served on a loopback origin.
  */
 function successPage(): string {
-  return PAGE.replace("{{TITLE}}", "授权成功").replace(
-    "{{BODY}}",
-    "已获得知序资产中心的访问授权，可以关闭此页面并返回 Obsidian。",
-  );
+  return renderPage("授权成功", "已获得知序资产中心的访问授权，可以关闭此页面并返回 Obsidian。");
 }
 
 function failurePage(): string {
-  return PAGE.replace("{{TITLE}}", "授权未完成").replace(
-    "{{BODY}}",
-    "授权未能完成，请返回 Obsidian 重新发起登录。",
-  );
+  return renderPage("授权未完成", "授权未能完成，请返回 Obsidian 重新发起登录。");
+}
+
+function renderPage(title: string, body: string): string {
+  return PAGE.replaceAll("{{TITLE}}", title).replaceAll("{{BODY}}", body);
 }
 
 const PAGE = `<!doctype html>

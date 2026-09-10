@@ -46,7 +46,7 @@ export class OAuthClient {
     const url = `${this.baseUrl()}/.well-known/oauth-authorization-server`;
     const response = await requestUrl({
       url,
-      headers: { Accept: "application/json", "Cache-Control": "no-cache" },
+      headers: { Accept: "application/json" },
       throw: false,
     });
     if (response.status !== 200) {
