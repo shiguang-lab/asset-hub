@@ -41,7 +41,10 @@
   - `.github/workflows/obsidian-plugin-release.yml`：装依赖 → **断言 tag 版本 == `manifest.json` version**（不一致就失败，Obsidian 靠这个认更新）→ 测试 → 构建 → `gh release create` 挂 `main.js`/`manifest.json`/`styles.css`。
 - 插件 `main.js` 是构建产物，已 gitignore（`apps/obsidian-plugin/.gitignore`），**不要入库**；分发走 Release 附件或本地 `deploy:local`。
 - 新增 workspace 包后必须同步三处，否则 tag 构建会挂：①`pnpm install --lockfile-only` 更新 lockfile importer；②Dockerfile `node-deps` 阶段补 `COPY <pkg>/package.json`（该阶段逐个列举 workspace 清单，`apps/*` 的 glob 不生效）；③若新包引入 `strict-peer-dependencies` 不满足的 peer，加 `pnpm.peerDependencyRules.allowedVersions`（`obsidian` 精确锁 CodeMirror peer 就是这种情况，实际不打包故放行）。
-- `pnpm/action-setup@v4` **不要写 `version:`**，仓库 `packageManager` 字段已声明 pnpm 版本，同时写会报「Multiple versions of pnpm specified」。
+- `pnpm/action-setup` **不要写 `version:`**，仓库 `packageManager` 字段已声明 pnpm 版本，同时写会报「Multiple versions of pnpm specified」。
+- **action 大版本必须 ≥ 各仓库的「Node 24 分界版本」**，否则报 Node 20 弃用告警（GitHub 2025-09-19 起）。实测分界：`actions/checkout` v5、`actions/setup-node` v5、`pnpm/action-setup` v5、`docker/login-action` v4、`docker/setup-buildx-action` v4、`docker/setup-qemu-action` v4、`docker/build-push-action` v7（v7 起 `node24`）。当前锁定：v7 / v7 / v6 / v4 / v4 / v4 / v7。
+- `actions/setup-node@v5+` 的自动缓存只对 npm 生效（v5 曾对 `packageManager` 全量自动缓存，v6 收紧为仅 npm），pnpm 必须显式 `cache: pnpm`，且该步要排在 `pnpm/action-setup` 之后。
+- **已发布的 tag 不能再重指**：`obsidian-plugin-release.yml` 最后一步是无 `--clobber` 的 `gh release create`，同名 release 已存在会直接失败。
 - 本地安装插件到 vault：`OBSIDIAN_VAULT_PATH=<vault> node scripts/deploy-local.mjs`（拷 main.js/manifest.json/styles.css 到 `.obsidian/plugins/asset-hub-sync/`）。本机 vault 是 `/Users/yanxianliang/overseas/pd-atlas`。
 - biome 要显式排除构建产物：`apps/obsidian-plugin/main.js` 与 `**/.next`；否则 `biome check .` 会被打包产物灌进 9 万条噪音。
 
