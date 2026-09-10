@@ -35,7 +35,7 @@ FROM node-source AS api-build
 RUN pnpm --filter @shiguang/api... build
 RUN pnpm --filter @shiguang/api deploy --prod --legacy /out/api
 RUN test -f /out/api/dist/main.js && \
-    test -f /out/api/node_modules/@shiguang/database/migrations/0001_init.sql
+    test -n "$(ls -A /out/api/node_modules/@shiguang/database/migrations/*.sql)"
 
 FROM node:${NODE_VERSION}-alpine AS api
 RUN apk add --no-cache ca-certificates dumb-init tzdata

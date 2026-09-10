@@ -105,6 +105,24 @@ export type NotifyType = z.infer<typeof notifyTypeSchema>;
 /* Core entities                                                        */
 /* ------------------------------------------------------------------ */
 
+/**
+ * 文档在工作空间内的逻辑路径，同时驱动 Web 目录树与 Obsidian 文件夹。
+ *
+ * 约定：正斜杠分隔、不含扩展名（由 `type` 推导）、无前后斜杠、禁止 `.` 与 `..` 段。
+ * 统一规范化为 NFC —— macOS 上传的中文路径是 NFD 分解形式，若不统一，同一个目录
+ * 会在服务端变成两条不同的 path。
+ */
+export const assetPathSchema = z
+  .string()
+  .max(512, "路径长度不得超过 512 字符")
+  .refine((v) => !v.startsWith("/") && !v.endsWith("/"), "路径不得以斜杠开头或结尾")
+  .refine((v) => !v.includes("//"), "路径不得包含空段")
+  .refine(
+    (v) => !v.split("/").some((seg) => seg === "." || seg === ".."),
+    "路径不得包含 . 或 .. 段",
+  )
+  .transform((v) => v.normalize("NFC"));
+
 export const assetSchema = z.object({
   id: assetIdSchema,
   workspaceId: workspaceIdSchema,
@@ -112,6 +130,7 @@ export const assetSchema = z.object({
   ownerDisplayName: z.string().optional(),
   type: assetTypeSchema,
   title: z.string(),
+  path: z.string().default(""),
   description: z.string().default(""),
   visibility: visibilitySchema.default("private"),
   status: assetStatusSchema.default("normal"),
@@ -883,7 +902,10 @@ export const progressEventSchema = z.object({
       receivedChars: z.number().int().nonnegative().optional(),
       finishReason: z.string().nullable().optional(),
       usage: z
-        .object({ inputTokens: z.number().int().nonnegative(), outputTokens: z.number().int().nonnegative() })
+        .object({
+          inputTokens: z.number().int().nonnegative(),
+          outputTokens: z.number().int().nonnegative(),
+        })
         .optional(),
     })
     .optional(),
@@ -900,7 +922,12 @@ export const taskStreamEventSchema = z.object({
   delta: z.string().default(""),
   receivedChars: z.number().int().nonnegative().nullable(),
   finishReason: z.string().nullable(),
-  usage: z.object({ inputTokens: z.number().int().nonnegative(), outputTokens: z.number().int().nonnegative() }).nullable(),
+  usage: z
+    .object({
+      inputTokens: z.number().int().nonnegative(),
+      outputTokens: z.number().int().nonnegative(),
+    })
+    .nullable(),
   createdAt: z.string(),
 });
 export type TaskStreamEvent = z.infer<typeof taskStreamEventSchema>;
@@ -932,11 +959,28 @@ export const listAssetsQuerySchema = z.object({
   cursor: z.string().optional(),
   limit: z.coerce.number().min(1).max(100).default(20),
   includeDeleted: queryBooleanSchema.optional(),
+  /** 增量同步：仅返回 updated_at 严格大于该时刻的资产。 */
+  since: z.string().optional(),
+  /** 目录树筛选：按路径前缀匹配（不含末尾斜杠）。 */
+  pathPrefix: z.string().optional(),
 });
 
 export const createAssetInputSchema = z.object({
   type: assetTypeSchema,
   title: z.string().min(1),
+  path: assetPathSchema.optional(),
+  description: z.string().optional(),
+  visibility: visibilitySchema.optional(),
+  content: z.record(z.string(), z.unknown()).optional(),
+});
+
+/**
+ * 资产元数据更新入参。此前该 schema 内联在路由里，提取出来以便 `path` 在
+ * contracts 层获得统一校验与类型。
+ */
+export const updateAssetInputSchema = z.object({
+  title: z.string().min(1).optional(),
+  path: assetPathSchema.optional(),
   description: z.string().optional(),
   visibility: visibilitySchema.optional(),
   content: z.record(z.string(), z.unknown()).optional(),

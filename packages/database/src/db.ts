@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { nextId } from "@shiguang/contracts";
@@ -56,10 +56,54 @@ export interface OpenDatabaseOptions {
   storage?: ObjectStore;
 }
 
+export function migrationsDir(): string {
+  return resolve(dirname(fileURLToPath(import.meta.url)), "../migrations");
+}
+
+/**
+ * 按文件名顺序执行 `migrations/*.sql`，已执行的跳过。
+ *
+ * `0001_init.sql` 全文使用 `IF NOT EXISTS`，对既有库重复执行是安全的，因此它同样
+ * 纳入本机制而无需特殊分支；首次运行时 `schema_migrations` 尚不存在，故先单独建表。
+ *
+ * 每个迁移在独立事务内执行，失败即回滚，避免留下半应用的 schema。
+ */
+export async function applyMigrations(pool: Pool, dir = migrationsDir()): Promise<string[]> {
+  await pool.query(
+    `CREATE TABLE IF NOT EXISTS schema_migrations (
+       name TEXT PRIMARY KEY,
+       applied_at TEXT NOT NULL
+     )`,
+  );
+  const files = (await readdir(dir)).filter((f) => f.endsWith(".sql")).sort();
+  const applied: string[] = [];
+  for (const file of files) {
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      const done = await client.query("SELECT name FROM schema_migrations WHERE name = $1", [file]);
+      if (done.rowCount === 0) {
+        await client.query(await readFile(resolve(dir, file), "utf8"));
+        await client.query("INSERT INTO schema_migrations (name, applied_at) VALUES ($1, $2)", [
+          file,
+          new Date().toISOString(),
+        ]);
+        applied.push(file);
+      }
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      throw new Error(`迁移 ${file} 执行失败: ${(error as Error).message}`, { cause: error });
+    } finally {
+      client.release();
+    }
+  }
+  return applied;
+}
+
 export async function openDatabase(o: OpenDatabaseOptions): Promise<Db> {
   const pool = new Pool({ connectionString: o.url });
-  const p = resolve(dirname(fileURLToPath(import.meta.url)), "../migrations/0001_init.sql");
-  await pool.query(await readFile(p, "utf8"));
+  await applyMigrations(pool);
   const db = new Db(pool);
   const row = await db.prepare("SELECT value FROM schema_meta WHERE key = 'schema_version'").get();
   if (!row)

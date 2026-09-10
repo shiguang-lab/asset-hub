@@ -31,9 +31,9 @@ import {
   type ShortLink,
   type SourceStatus,
   type Task,
-  type TaskStreamEvent,
   type TaskStatus,
   type TaskStep,
+  type TaskStreamEvent,
   type Template,
   type UserProfile,
   type Workspace,
@@ -87,6 +87,20 @@ function mergeProvenance(
   return merged;
 }
 
+/**
+ * 把 `uq_assets_path` 的唯一约束冲突转成带 code 的错误，供路由层映射为 409。
+ * 其余错误原样抛出。
+ */
+function translatePathConflict(error: unknown): unknown {
+  const pg = error as { code?: string; constraint?: string };
+  if (pg?.code === "23505" && pg.constraint === "uq_assets_path") {
+    const err = new Error("路径冲突：该目录下已存在同名文档") as Error & { code?: string };
+    err.code = "ASSET_PATH_CONFLICT";
+    return err;
+  }
+  return error;
+}
+
 function mapAsset(r: Row): Asset {
   const ownerDisplayName = str(r.owner_display_name).trim();
   return {
@@ -96,6 +110,7 @@ function mapAsset(r: Row): Asset {
     ...(ownerDisplayName ? { ownerDisplayName } : {}),
     type: str(r.type) as AssetType,
     title: str(r.title),
+    path: str(r.path),
     description: str(r.description),
     visibility: str(r.visibility) as Asset["visibility"],
     status: str(r.status) as Asset["status"],
@@ -396,7 +411,17 @@ export class Store {
       q?: string;
       status?: string;
       visibility?: string;
+      /** 回收站视图：仅返回已软删的资产。 */
       includeDeleted?: boolean;
+      /**
+       * 软删范围。`includeDeleted` 表达的是「只看回收站」，增量同步需要的却是
+       * 「活跃 + 已删一起返回」，两者语义不同，故单列此项；未指定时仅返回活跃资产。
+       */
+      deletedScope?: "active" | "deleted" | "all";
+      /** 增量同步：仅返回 updated_at 严格大于该时刻的资产。 */
+      since?: string;
+      /** 目录树筛选：路径前缀（不含末尾斜杠），同时匹配该目录自身与其子孙。 */
+      pathPrefix?: string;
       limit: number;
       after?: string;
       subject?: string;
@@ -419,9 +444,10 @@ export class Store {
       );
       params.push(opts.subject, opts.subject);
     }
-    if (opts.includeDeleted) {
+    const deletedScope = opts.deletedScope ?? (opts.includeDeleted ? "deleted" : "active");
+    if (deletedScope === "deleted") {
       clauses.push("a.deleted_at IS NOT NULL");
-    } else {
+    } else if (deletedScope === "active") {
       clauses.push("a.deleted_at IS NULL");
       if (opts.status && opts.status !== "all") {
         clauses.push("a.status = ?");
@@ -431,6 +457,15 @@ export class Store {
     if (opts.type) {
       clauses.push("a.type = ?");
       params.push(opts.type);
+    }
+    if (opts.since) {
+      clauses.push("a.updated_at > ?");
+      params.push(opts.since);
+    }
+    if (opts.pathPrefix) {
+      // 同时命中目录自身与其子孙；LIKE 前缀模式可走 idx_assets_path_prefix。
+      clauses.push("(a.path = ? OR a.path LIKE ?)");
+      params.push(opts.pathPrefix, `${opts.pathPrefix}/%`);
     }
     if (opts.visibility && opts.visibility !== "all") {
       clauses.push("a.visibility = ?");
@@ -586,6 +621,7 @@ export class Store {
     input: {
       type: AssetType;
       title: string;
+      path?: string;
       description?: string;
       visibility?: Asset["visibility"];
       sourceType?: Asset["sourceType"];
@@ -597,24 +633,29 @@ export class Store {
     const id = nextId("ast");
     const versionId = nextId("av");
     const info = contentVersionInfo(input.content);
-    await this.db
-      .prepare(
-        `INSERT INTO assets (id, workspace_id, owner_subject, type, title, description, visibility, status, source_type, current_version_id, lock_version, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 'normal', ?, ?, 1, ?, ?)`,
-      )
-      .run(
-        id,
-        actor.workspaceId,
-        actor.subject,
-        input.type,
-        input.title,
-        input.description ?? "",
-        input.visibility ?? "private",
-        input.sourceType ?? "manual",
-        versionId,
-        now,
-        now,
-      );
+    try {
+      await this.db
+        .prepare(
+          `INSERT INTO assets (id, workspace_id, owner_subject, type, title, path, description, visibility, status, source_type, current_version_id, lock_version, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'normal', ?, ?, 1, ?, ?)`,
+        )
+        .run(
+          id,
+          actor.workspaceId,
+          actor.subject,
+          input.type,
+          input.title,
+          input.path ?? "",
+          input.description ?? "",
+          input.visibility ?? "private",
+          input.sourceType ?? "manual",
+          versionId,
+          now,
+          now,
+        );
+    } catch (error) {
+      throw translatePathConflict(error);
+    }
     await this.db
       .prepare(
         `INSERT INTO asset_versions (id, asset_id, sequence, change_kind, content_hash, size, media_type, metadata_json, created_at)
@@ -632,6 +673,7 @@ export class Store {
     input: {
       type: AssetType;
       title: string;
+      path?: string;
       description?: string;
       visibility?: Asset["visibility"];
       sourceType?: Asset["sourceType"];
@@ -661,6 +703,12 @@ export class Store {
       changeKind?: AssetVersion["changeKind"];
       metadata?: Record<string, unknown>;
       title?: string;
+      /**
+       * 与正文一并更新路径。合并进同一条 UPDATE 是刻意的：外部客户端（如 Obsidian
+       * 插件）常在一次请求里同时改名、移动并保存正文，若拆成两次写入会让 lock_version
+       * 自增两次，客户端拿到的 ETag 立刻失效。
+       */
+      path?: string;
       expectedLockVersion?: number;
     } = {},
   ): Promise<{ asset: Asset; version: AssetVersion }> {
@@ -692,11 +740,15 @@ export class Store {
         now,
       );
     await this.persistContent(assetId, versionId, content);
-    await this.db
-      .prepare(
-        `UPDATE assets SET current_version_id = ?, lock_version = lock_version + 1, updated_at = ?, title = ?, status = CASE WHEN status = 'error' THEN 'normal' ELSE status END WHERE id = ?`,
-      )
-      .run(versionId, now, opts.title ?? asset.title, assetId);
+    try {
+      await this.db
+        .prepare(
+          `UPDATE assets SET current_version_id = ?, lock_version = lock_version + 1, updated_at = ?, title = ?, path = ?, status = CASE WHEN status = 'error' THEN 'normal' ELSE status END WHERE id = ?`,
+        )
+        .run(versionId, now, opts.title ?? asset.title, opts.path ?? asset.path, assetId);
+    } catch (error) {
+      throw translatePathConflict(error);
+    }
     const updated = (await this.getAsset(actor.workspaceId, assetId)) as Asset;
     const version = (await this.getVersion(versionId)) as AssetVersion;
     return { asset: updated, version };
@@ -705,7 +757,7 @@ export class Store {
   async updateAssetMeta(
     actor: ActorContext,
     assetId: string,
-    patch: Partial<Pick<Asset, "title" | "description" | "visibility" | "status">>,
+    patch: Partial<Pick<Asset, "title" | "path" | "description" | "visibility" | "status">>,
     expectedLockVersion?: number,
   ): Promise<Asset | null> {
     const asset = await this.getAsset(actor.workspaceId, assetId);
@@ -716,18 +768,23 @@ export class Store {
       throw err;
     }
     const now = nowIso();
-    await this.db
-      .prepare(
-        `UPDATE assets SET title = ?, description = ?, visibility = ?, status = ?, lock_version = lock_version + 1, updated_at = ? WHERE id = ?`,
-      )
-      .run(
-        patch.title ?? asset.title,
-        patch.description ?? asset.description,
-        patch.visibility ?? asset.visibility,
-        patch.status ?? asset.status,
-        now,
-        assetId,
-      );
+    try {
+      await this.db
+        .prepare(
+          `UPDATE assets SET title = ?, path = ?, description = ?, visibility = ?, status = ?, lock_version = lock_version + 1, updated_at = ? WHERE id = ?`,
+        )
+        .run(
+          patch.title ?? asset.title,
+          patch.path ?? asset.path,
+          patch.description ?? asset.description,
+          patch.visibility ?? asset.visibility,
+          patch.status ?? asset.status,
+          now,
+          assetId,
+        );
+    } catch (error) {
+      throw translatePathConflict(error);
+    }
     return await this.getAsset(actor.workspaceId, assetId);
   }
 
@@ -1108,7 +1165,13 @@ export class Store {
       delta: str(row.delta),
       receivedChars: row.received_chars === null ? null : num(row.received_chars),
       finishReason: row.finish_reason === null ? null : str(row.finish_reason),
-      usage: row.usage_json === null ? null : parse<{ inputTokens: number; outputTokens: number }>(row.usage_json, { inputTokens: 0, outputTokens: 0 }),
+      usage:
+        row.usage_json === null
+          ? null
+          : parse<{ inputTokens: number; outputTokens: number }>(row.usage_json, {
+              inputTokens: 0,
+              outputTokens: 0,
+            }),
       createdAt: str(row.created_at),
     };
   }
@@ -1132,14 +1195,27 @@ export class Store {
     }
     params.push(Math.min(Math.max(opts.limit ?? 500, 1), 2000));
     const rows = (await this.db
-      .prepare(`SELECT * FROM task_stream_events WHERE ${clauses.join(" AND ")} ORDER BY sequence ASC LIMIT ?`)
+      .prepare(
+        `SELECT * FROM task_stream_events WHERE ${clauses.join(" AND ")} ORDER BY sequence ASC LIMIT ?`,
+      )
       .all(...params)) as Row[];
     return rows.map((row) => ({
-      id: str(row.id), taskId: str(row.task_id), runId: str(row.run_id), sequence: num(row.sequence),
-      phase: str(row.phase), activity: str(row.activity) as TaskStreamEvent["activity"], delta: str(row.delta),
+      id: str(row.id),
+      taskId: str(row.task_id),
+      runId: str(row.run_id),
+      sequence: num(row.sequence),
+      phase: str(row.phase),
+      activity: str(row.activity) as TaskStreamEvent["activity"],
+      delta: str(row.delta),
       receivedChars: row.received_chars === null ? null : num(row.received_chars),
       finishReason: row.finish_reason === null ? null : str(row.finish_reason),
-      usage: row.usage_json === null ? null : parse<{ inputTokens: number; outputTokens: number }>(row.usage_json, { inputTokens: 0, outputTokens: 0 }),
+      usage:
+        row.usage_json === null
+          ? null
+          : parse<{ inputTokens: number; outputTokens: number }>(row.usage_json, {
+              inputTokens: 0,
+              outputTokens: 0,
+            }),
       createdAt: str(row.created_at),
     }));
   }
