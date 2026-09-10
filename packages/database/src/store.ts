@@ -101,6 +101,12 @@ function translatePathConflict(error: unknown): unknown {
   return error;
 }
 
+function folderError(code: string, message: string): Error {
+  const error = new Error(message) as Error & { code?: string };
+  error.code = code;
+  return error;
+}
+
 function mapAsset(r: Row): Asset {
   const ownerDisplayName = str(r.owner_display_name).trim();
   return {
@@ -403,6 +409,116 @@ export class Store {
   }
 
   /* ---------------- assets ---------------- */
+
+  async listDocumentFolders(workspaceId: string): Promise<Array<{ path: string }>> {
+    const rows = await this.db
+      .prepare("SELECT path FROM document_folders WHERE workspace_id = ? ORDER BY path")
+      .all(workspaceId);
+    return rows.map((row) => ({ path: str(row.path) }));
+  }
+
+  async createDocumentFolder(actor: ActorContext, path: string): Promise<{ path: string }> {
+    const existing = await this.db
+      .prepare(
+        `SELECT 1 FROM document_folders
+         WHERE workspace_id = ? AND (path = ? OR path LIKE ?)
+         UNION ALL
+         SELECT 1 FROM assets
+         WHERE workspace_id = ? AND deleted_at IS NULL AND path LIKE ? LIMIT 1`,
+      )
+      .get(actor.workspaceId, path, `${path}/%`, actor.workspaceId, `${path}/%`);
+    if (existing) throw folderError("DOCUMENT_FOLDER_CONFLICT", "该位置已存在同名目录");
+    const now = nowIso();
+    try {
+      await this.db
+        .prepare(
+          `INSERT INTO document_folders (workspace_id, path, created_by, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?)`,
+        )
+        .run(actor.workspaceId, path, actor.subject, now, now);
+    } catch (error) {
+      if ((error as { code?: string }).code === "23505") {
+        throw folderError("DOCUMENT_FOLDER_CONFLICT", "该位置已存在同名目录");
+      }
+      throw error;
+    }
+    return { path };
+  }
+
+  async renameDocumentFolder(workspaceId: string, from: string, to: string): Promise<void> {
+    const client = await this.db.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const source = await client.query(
+        `SELECT 1 FROM document_folders
+         WHERE workspace_id = $1 AND (path = $2 OR path LIKE $2 || '/%')
+         UNION ALL
+         SELECT 1 FROM assets
+         WHERE workspace_id = $1 AND deleted_at IS NULL AND path LIKE $2 || '/%'
+         LIMIT 1`,
+        [workspaceId, from],
+      );
+      if (source.rowCount === 0) throw folderError("DOCUMENT_FOLDER_NOT_FOUND", "目录不存在");
+      const destination = await client.query(
+        `SELECT 1 FROM document_folders
+         WHERE workspace_id = $1 AND path = $2 AND path <> $3
+         UNION ALL
+         SELECT 1 FROM assets
+         WHERE workspace_id = $1 AND deleted_at IS NULL AND path LIKE $2 || '/%'
+           AND path NOT LIKE $3 || '/%'
+         LIMIT 1`,
+        [workspaceId, to, from],
+      );
+      if ((destination.rowCount ?? 0) > 0) {
+        throw folderError("DOCUMENT_FOLDER_CONFLICT", "该位置已存在同名目录");
+      }
+      const now = nowIso();
+      await client.query(
+        `UPDATE document_folders
+         SET path = $3 || substring(path FROM char_length($2) + 1), updated_at = $4
+         WHERE workspace_id = $1 AND (path = $2 OR path LIKE $2 || '/%')`,
+        [workspaceId, from, to, now],
+      );
+      await client.query(
+        `UPDATE assets
+         SET path = $3 || substring(path FROM char_length($2) + 1),
+             lock_version = lock_version + 1,
+             updated_at = $4
+         WHERE workspace_id = $1 AND deleted_at IS NULL AND path LIKE $2 || '/%'`,
+        [workspaceId, from, to, now],
+      );
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      if ((error as { code?: string }).code === "23505") {
+        throw folderError("DOCUMENT_FOLDER_CONFLICT", "目标目录存在同名目录或文档");
+      }
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async deleteDocumentFolder(workspaceId: string, path: string): Promise<void> {
+    const nested = await this.db
+      .prepare(
+        `SELECT 1 FROM document_folders
+         WHERE workspace_id = ? AND path LIKE ? LIMIT 1`,
+      )
+      .get(workspaceId, `${path}/%`);
+    const document = await this.db
+      .prepare(
+        `SELECT 1 FROM assets
+         WHERE workspace_id = ? AND deleted_at IS NULL AND path LIKE ? LIMIT 1`,
+      )
+      .get(workspaceId, `${path}/%`);
+    if (nested || document) {
+      throw folderError("DOCUMENT_FOLDER_NOT_EMPTY", "目录包含文档或子目录，请先移走内容");
+    }
+    await this.db
+      .prepare("DELETE FROM document_folders WHERE workspace_id = ? AND path = ?")
+      .run(workspaceId, path);
+  }
 
   async listAssets(
     workspaceId: string,

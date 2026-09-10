@@ -3,6 +3,7 @@ import { registerAssets } from "./assets.js";
 import { registerBilling } from "./billing.js";
 import { registerComments } from "./comments.js";
 import { registerDatasets } from "./datasets.js";
+import { registerDocumentFolders } from "./document-folders.js";
 import { registerHome } from "./home.js";
 import { registerIntegrations } from "./integrations.js";
 import { registerKnowledge } from "./knowledge.js";
@@ -16,6 +17,7 @@ import { registerWorkspace } from "./workspace.js";
 export function registerModules(app: FastifyInstance): void {
   registerHome(app);
   registerAssets(app);
+  registerDocumentFolders(app);
   registerKnowledge(app);
   registerTasks(app);
   registerDatasets(app);

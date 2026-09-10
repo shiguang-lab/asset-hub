@@ -7,6 +7,7 @@ import {
   folderSubtreeIds,
   isInFolder,
   leafFromTitle,
+  mergeFolderTree,
   moveToFolderPath,
   normalizeFolderPath,
   rewriteFolderPrefix,
@@ -146,6 +147,21 @@ describe("deriveFolderTree", () => {
   it("同名段但不同层级的目录互不干扰", () => {
     const tree = deriveFolderTree([{ path: "产品/产品/A" }]);
     expect(tree.map((folder) => folder.id)).toEqual(["产品", "产品/产品"]);
+  });
+});
+
+describe("mergeFolderTree", () => {
+  it("保留空目录并补齐父目录", () => {
+    expect(mergeFolderTree([], ["产品/待整理"]).map((folder) => folder.id)).toEqual([
+      "产品",
+      "产品/待整理",
+    ]);
+  });
+
+  it("合并文档投影时不产生重复目录", () => {
+    expect(mergeFolderTree([{ path: "产品/PRD" }], ["产品"]).map((folder) => folder.id)).toEqual([
+      "产品",
+    ]);
   });
 });
 

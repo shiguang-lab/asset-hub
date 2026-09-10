@@ -103,9 +103,23 @@ export const useDocumentTreeStyles = createStyles(({ css }) => ({
   background: var(--sg-border);
 }
 .sg-docs-tree-subheading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 30px;
   padding: 2px 9px 7px;
   color: var(--sg-muted);
   font-size: 11px;
+}
+.sg-docs-tree-subheading .ant-btn {
+  width: 26px;
+  min-width: 26px;
+  height: 26px;
+  padding: 0;
+  color: var(--sg-muted);
+}
+.sg-docs-tree-subheading .ant-btn:hover {
+  color: var(--sg-accent);
 }
 .sg-docs-tree-row {
   min-width: 0;

@@ -83,6 +83,45 @@ export function toProblem(err: unknown, requestId?: string): ProblemDetails {
       recoveries: ["rename", "choose_other_folder"],
     };
   }
+  if (err instanceof Error) {
+    const code = (err as Error & { code?: string }).code;
+    if (code === "DOCUMENT_FOLDER_CONFLICT") {
+      return {
+        type: "https://docs.shiguanglab.com/problems/document-folder-conflict",
+        title: "目录冲突",
+        status: 409,
+        code,
+        detail: err.message,
+        instance: requestId ? `/requests/${requestId}` : undefined,
+        requestId,
+        recoveries: ["rename"],
+      };
+    }
+    if (code === "DOCUMENT_FOLDER_NOT_EMPTY") {
+      return {
+        type: "https://docs.shiguanglab.com/problems/document-folder-not-empty",
+        title: "目录非空",
+        status: 409,
+        code,
+        detail: err.message,
+        instance: requestId ? `/requests/${requestId}` : undefined,
+        requestId,
+        recoveries: ["move_contents"],
+      };
+    }
+    if (code === "DOCUMENT_FOLDER_NOT_FOUND") {
+      return {
+        type: "https://docs.shiguanglab.com/problems/document-folder-not-found",
+        title: "目录不存在",
+        status: 404,
+        code,
+        detail: err.message,
+        instance: requestId ? `/requests/${requestId}` : undefined,
+        requestId,
+        recoveries: ["reload"],
+      };
+    }
+  }
   return {
     type: "about:blank",
     title: "Internal error",

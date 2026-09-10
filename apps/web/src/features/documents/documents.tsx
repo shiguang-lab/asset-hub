@@ -43,13 +43,13 @@ import {
 } from "../../shared/document-folder-migration.js";
 import {
   type DocumentFolder,
-  deriveFolderTree,
   fileNameOf,
   folderDisplayPath,
   folderPathOf,
   isInFolder,
   joinFolderPath,
   leafFromTitle,
+  mergeFolderTree,
   normalizeFolderPath,
   ROOT_FOLDER_ID,
   rewriteFolderPrefix,
@@ -347,7 +347,9 @@ export function DocumentsPage() {
   const [treePanelOpen, setTreePanelOpen] = useState(false);
   const [expandedFolderIds, setExpandedFolderIds] = useState<string[]>([]);
   const [openFolderMenuId, setOpenFolderMenuId] = useState<string | null>(null);
-  const [folderDialog, setFolderDialog] = useState<{ folderId: string } | null>(null);
+  const [folderDialog, setFolderDialog] = useState<
+    { mode: "create"; parentPath: string } | { mode: "rename"; folderId: string } | null
+  >(null);
   const [moveDialog, setMoveDialog] = useState<{
     documentId: string;
     documentTitle: string;
@@ -401,6 +403,11 @@ export function DocumentsPage() {
     queryFn: () => loadDocumentAssets(true),
   });
 
+  const { data: persistedFolders } = useQuery<{ items: Array<{ path: string }> }>({
+    queryKey: ["document-folders"],
+    queryFn: () => api("/document-folders"),
+  });
+
   const batchMutation = useMutation({
     mutationFn: (input: { action: "delete" | "restore"; ids: string[] }) =>
       api("/assets:batch", { method: "POST", body: input }),
@@ -423,8 +430,14 @@ export function DocumentsPage() {
   const all = useMemo(() => (demoMode ? DEMO_DOCUMENTS : (docs?.items ?? [])), [demoMode, docs]);
   const deleted = useMemo(() => trashed?.items ?? [], [trashed]);
   const listLoading = filter === "trash" ? trashedLoading : documentsLoading;
-  // 目录树是 `path` 的投影：目录不是独立实体，因此也不会残留空目录。
-  const folders = useMemo(() => deriveFolderTree(all), [all]);
+  const folders = useMemo(
+    () =>
+      mergeFolderTree(
+        all,
+        (persistedFolders?.items ?? []).map((folder) => folder.path),
+      ),
+    [all, persistedFolders],
+  );
   const folderScope = toFolderScope(activeFolderId);
   // 在当前目录下新建文档：新建时就把 `path` 定下来，文档不会凭空落到根目录。
   const newDocumentHref = folderScope
@@ -550,10 +563,7 @@ export function DocumentsPage() {
     toast("success", favoriteIds.includes(id) ? "已取消收藏" : "已加入收藏");
   };
 
-  /**
-   * 目录没有独立接口：移动、改名、删除都归结为改写相关文档的 `path`。
-   * 逐条提交而非并发，单条失败不影响其余，最后统一汇报。
-   */
+  /** 文档移动仍以 `path` 为同步真源；目录 CRUD 由独立接口持久化空目录。 */
   const assignPaths = useCallback(
     async (
       updates: Array<{ id: string; lockVersion: number; path: string }>,
@@ -619,36 +629,33 @@ export function DocumentsPage() {
     toast("success", folderPath ? `已移动到「${folderPath}」` : "已移到全部文档");
   };
 
-  const renameFolder = async (from: string, to: string) => {
-    const updates = pathUpdatesFor(from, to);
-    if (updates.length === 0) {
-      toast("info", "目录下暂无文档，无需改名");
-      return;
-    }
-    const failures = await assignPaths(updates);
-    if (failures.length > 0) {
-      toast("error", `${failures.length} 篇文档改名失败：${failures[0]}`);
-      return;
-    }
-    if (activeFolderId === from) setActiveFolderId(to);
-    else if (isInFolder(activeFolderId, from)) {
-      setActiveFolderId(rewriteFolderPrefix(activeFolderId, from, to) ?? ROOT_FOLDER_ID);
-    }
-    expandAncestors(to);
-    toast("success", `目录已重命名为「${fileNameOf(to)}」`);
+  const refreshFolders = () => {
+    void queryClient.invalidateQueries({ queryKey: ["document-folders"] });
+    void queryClient.invalidateQueries({ queryKey: ["assets", "document"] });
   };
 
-  /** 删除目录 = 把它下面的文档整体上提到父目录；目录随之从树中消失。 */
-  const removeFolder = async (from: string, to: string) => {
-    const updates = pathUpdatesFor(from, to);
-    const failures = updates.length > 0 ? await assignPaths(updates) : [];
-    if (failures.length > 0) {
-      toast("error", `${failures.length} 篇文档未能移出：${failures[0]}`);
-      return;
+  const createFolder = async (path: string) => {
+    try {
+      await api("/document-folders", { method: "POST", body: { path } });
+      refreshFolders();
+      expandAncestors(path);
+      setExpandedFolderIds((current) => [...new Set([...current, folderPathOf(path)])]);
+      toast("success", `目录「${fileNameOf(path)}」已创建`);
+    } catch (error) {
+      toast("error", error instanceof Error ? error.message : "目录创建失败");
     }
-    setExpandedFolderIds((current) => current.filter((id) => !isInFolder(id, from)));
-    if (isInFolder(activeFolderId, from)) setActiveFolderId(to || ROOT_FOLDER_ID);
-    toast("success", to ? `目录已删除，文档已移到「${to}」` : "目录已删除，文档已移到全部文档");
+  };
+
+  const removeFolder = async (path: string) => {
+    try {
+      await api("/document-folders", { method: "DELETE", params: { path } });
+      refreshFolders();
+      setExpandedFolderIds((current) => current.filter((id) => id !== path));
+      if (activeFolderId === path) setActiveFolderId(folderPathOf(path) || ROOT_FOLDER_ID);
+      toast("success", `目录「${fileNameOf(path)}」已删除`);
+    } catch (error) {
+      toast("error", error instanceof Error ? error.message : "目录删除失败");
+    }
   };
 
   const openMoveDialog = (document: Asset) => {
@@ -719,30 +726,59 @@ export function DocumentsPage() {
 
   const openRenameFolder = (folder: DocumentFolder) => {
     setNewFolderName(folder.name);
-    setFolderDialog({ folderId: folder.id });
+    setFolderDialog({ mode: "rename", folderId: folder.id });
+  };
+
+  const openCreateFolder = (parentPath = "") => {
+    setNewFolderName("");
+    setFolderDialog({ mode: "create", parentPath });
   };
 
   const saveFolder = async () => {
     const name = normalizeFolderPath(newFolderName);
     if (!name || !folderDialog) return;
-    const from = folderDialog.folderId;
+    if (name.includes("/")) {
+      toast("error", "目录名称不能包含斜杠");
+      return;
+    }
+    const from = folderDialog.mode === "rename" ? folderDialog.folderId : "";
+    const parent =
+      folderDialog.mode === "create"
+        ? folderDialog.parentPath
+        : folderPathOf(folderDialog.folderId);
+    const target = joinFolderPath(parent, name);
     setFolderDialog(null);
     setNewFolderName("");
-    await renameFolder(from, joinFolderPath(folderPathOf(from), name));
+    if (folderDialog.mode === "create") {
+      await createFolder(target);
+      return;
+    }
+    try {
+      await api("/document-folders", { method: "PATCH", body: { from, to: target } });
+      refreshFolders();
+      if (activeFolderId === from) setActiveFolderId(target);
+      else if (isInFolder(activeFolderId, from)) {
+        setActiveFolderId(rewriteFolderPrefix(activeFolderId, from, target) ?? ROOT_FOLDER_ID);
+      }
+      expandAncestors(target);
+      toast("success", `目录已重命名为「${fileNameOf(target)}」`);
+    } catch (error) {
+      toast("error", error instanceof Error ? error.message : "目录重命名失败");
+    }
   };
 
   const deleteFolder = (folder: DocumentFolder) => {
-    const parent = folderPathOf(folder.id);
-    const affected = pathUpdatesFor(folder.id, parent).length;
+    const affected = pathUpdatesFor(folder.id, folderPathOf(folder.id)).length;
+    const hasChildren = folders.some((candidate) => candidate.parentId === folder.id);
+    if (affected || hasChildren) {
+      toast("info", "该目录包含文档或子目录，请先移走内容后再删除");
+      return;
+    }
     confirmDelete({
       title: `删除目录「${folder.name}」？`,
-      content: affected
-        ? parent
-          ? `目录下的 ${affected} 篇文档会移到「${fileNameOf(parent)}」，子目录一并上提。`
-          : `目录下的 ${affected} 篇文档会移到「全部文档」。`
-        : "该目录下暂无文档。",
+      content: "删除空目录后无法恢复。",
       okText: "删除目录",
-      onConfirm: () => void removeFolder(folder.id, parent),
+      onConfirm: () => void removeFolder(folder.id),
     });
   };
 
@@ -827,10 +863,12 @@ export function DocumentsPage() {
                 onOpenChange={(open) => setOpenFolderMenuId(open ? folder.id : null)}
                 menu={{
                   items: [
+                    { key: "create-child", label: "新建子目录" },
                     { key: "rename", label: "重命名" },
                     { key: "delete", label: "删除目录", danger: true },
                   ],
                   onClick: ({ key }) => {
+                    if (key === "create-child") openCreateFolder(folder.id);
                     if (key === "rename") openRenameFolder(folder);
                     if (key === "delete") deleteFolder(folder);
                   },
@@ -968,7 +1006,17 @@ export function DocumentsPage() {
               ))}
             </nav>
             <div className="sg-docs-tree-divider" />
-            <div className="sg-docs-tree-subheading">我的目录</div>
+            <div className="sg-docs-tree-subheading">
+              <span>我的目录</span>
+              <Button
+                type="text"
+                size="small"
+                icon={<FolderPlus size={14} />}
+                onClick={() => openCreateFolder()}
+                aria-label="新建目录"
+                title="新建目录"
+              />
+            </div>
             <div className="sg-docs-tree" role="tree" aria-label="我的目录">
               {renderFolderTree(null)}
             </div>
@@ -1478,10 +1526,10 @@ export function DocumentsPage() {
       <Modal
         open={Boolean(folderDialog)}
         onCancel={() => setFolderDialog(null)}
-        title="重命名目录"
+        title={folderDialog?.mode === "create" ? "新建目录" : "重命名目录"}
         footer={
           <Button type="primary" disabled={!newFolderName.trim()} onClick={saveFolder}>
-            保存
+            {folderDialog?.mode === "create" ? "创建" : "保存"}
           </Button>
         }
         destroyOnHidden

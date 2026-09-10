@@ -4,7 +4,7 @@
  * `path` 是文档在工作空间内的完整逻辑路径，**含末段文件名**（不含扩展名），
  * 例如 `产品/需求文档/Shiguang Lab 产品需求文档`；根目录文档只有一段，如 `README`；
  * 空字符串表示尚未归类。本模块把这条路径换算成目录树所需的全部形状，
- * 目录本身不是独立实体，因此没有可创建、可残留的空目录。
+ * 服务端目录实体补充空目录；含文档的目录仍可由路径投影自动发现。
  */
 
 export interface DocumentFolder {
@@ -123,6 +123,17 @@ export function deriveFolderTree(assets: readonly { path?: string | null }[]): D
         parentId: index === -1 ? null : path.slice(0, index),
       };
     });
+}
+
+/** 合并文档路径投影与服务端持久化目录，生成完整且去重的目录树。 */
+export function mergeFolderTree(
+  assets: readonly { path?: string | null }[],
+  persistedPaths: readonly string[],
+): DocumentFolder[] {
+  const syntheticAssets = persistedPaths.map((path) => ({
+    path: joinFolderPath(path, "__folder__"),
+  }));
+  return deriveFolderTree([...assets, ...syntheticAssets]);
 }
 
 /** 某目录及其各级子目录的 id 集合，供「选中目录看整棵子树」使用。 */

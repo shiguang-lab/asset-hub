@@ -14,4 +14,13 @@ describe("toProblem", () => {
       recoveries: ["reload", "save_as_copy", "compare"],
     });
   });
+
+  it.each([
+    ["DOCUMENT_FOLDER_CONFLICT", 409],
+    ["DOCUMENT_FOLDER_NOT_EMPTY", 409],
+    ["DOCUMENT_FOLDER_NOT_FOUND", 404],
+  ])("maps %s to its folder API status", (code, status) => {
+    const error = Object.assign(new Error("目录操作失败"), { code });
+    expect(toProblem(error, "req_folder")).toMatchObject({ code, status });
+  });
 });
