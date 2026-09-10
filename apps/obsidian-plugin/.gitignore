@@ -1,0 +1,7 @@
+# esbuild 打包产物：Obsidian 从插件目录加载 main.js，但它是构建产物不入库，
+# 通过 `pnpm build` + `pnpm deploy:local` 生成并安装，发布时作为 Release 附件分发。
+main.js
+*.map
+
+# 插件运行时数据（登录令牌等）
+data.json

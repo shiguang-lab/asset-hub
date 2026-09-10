@@ -1,0 +1,51 @@
+/* 使用 Obsidian 主题变量，跟随用户当前主题，不引入自有配色。 */
+
+.asset-hub-statusbar {
+  cursor: pointer;
+}
+
+.asset-hub-statusbar--hidden {
+  display: none;
+}
+
+.asset-hub-statusbar.is-error {
+  color: var(--text-error);
+}
+
+.asset-hub-statusbar.is-conflict {
+  color: var(--text-warning);
+}
+
+.asset-hub-statusbar.is-signed-out {
+  color: var(--text-faint);
+}
+
+.asset-hub-status__summary p {
+  margin: 0 0 4px;
+}
+
+.asset-hub-status__error {
+  color: var(--text-error);
+}
+
+.asset-hub-status__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 8px 0;
+}
+
+.asset-hub-status__conflict {
+  border-top: 1px solid var(--background-modifier-border);
+  padding: 12px 0;
+}
+
+.asset-hub-status__conflict p {
+  margin: 0 0 4px;
+  word-break: break-all;
+}
+
+.asset-hub-status__hint {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+}

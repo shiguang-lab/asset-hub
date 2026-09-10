@@ -14,6 +14,7 @@ COPY apps/worker/package.json apps/worker/package.json
 COPY apps/compute-worker/package.json apps/compute-worker/package.json
 COPY apps/public-gateway/package.json apps/public-gateway/package.json
 COPY apps/ssr/package.json apps/ssr/package.json
+COPY apps/obsidian-plugin/package.json apps/obsidian-plugin/package.json
 COPY packages/ai-core/package.json packages/ai-core/package.json
 COPY packages/config/package.json packages/config/package.json
 COPY packages/content/package.json packages/content/package.json
