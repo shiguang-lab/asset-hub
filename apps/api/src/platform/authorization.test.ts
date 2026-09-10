@@ -33,6 +33,7 @@ function asset(overrides: Partial<Asset> = {}): Asset {
     ownerSubject: "owner-1",
     type: "document",
     title: "Private document",
+    path: "",
     description: "",
     visibility: "private",
     status: "normal",

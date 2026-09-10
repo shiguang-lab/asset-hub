@@ -22,6 +22,7 @@ interface IdentityClaims {
   name?: unknown;
   org_id?: unknown;
   roles?: unknown;
+  scope?: unknown;
   sub?: unknown;
 }
 
@@ -35,6 +36,12 @@ export interface SgIdentityOptions {
   entitlement: string;
   jwksUrl: string;
   jwksFile?: string;
+  /**
+   * Expected JWS `typ` header. Defaults to the gateway assertion type. OAuth
+   * access tokens carry `at+jwt` so the two token classes can never be
+   * interchanged.
+   */
+  tokenType?: string;
 }
 
 export interface ResolvedSgIdentity {
@@ -42,13 +49,18 @@ export interface ResolvedSgIdentity {
   displayName?: string;
   organizationId?: string;
   roles: string[];
+  /** Space-delimited OAuth scopes. Absent on gateway identity assertions. */
+  scope?: string;
 }
 
 const CLOCK_TOLERANCE_SECONDS = 10;
+const DEFAULT_TOKEN_TYPE = "sg-identity+jwt";
 
 /**
- * Verifies the access-gateway-issued `X-SG-Identity` assertion (RS256 JWT)
- * against the shared JWKS, mirroring OPC's `UnifiedIdentityService`.
+ * Verifies an RS256 JWT against the shared JWKS, mirroring OPC's
+ * `UnifiedIdentityService`. Used both for the access-gateway-issued
+ * `X-SG-Identity` assertion and, with `tokenType: "at+jwt"`, for OAuth access
+ * tokens issued by the authorization server.
  */
 export class SgIdentityVerifier {
   private readonly keys = new Map<string, KeyObject>();
@@ -68,7 +80,7 @@ export class SgIdentityVerifier {
       !header ||
       !claims ||
       header.alg !== "RS256" ||
-      header.typ !== "sg-identity+jwt" ||
+      header.typ !== (this.options.tokenType ?? DEFAULT_TOKEN_TYPE) ||
       typeof header.kid !== "string"
     ) {
       return null;
@@ -87,11 +99,13 @@ export class SgIdentityVerifier {
 
     const subject = String(claims.sub);
     const orgId = typeof claims.org_id === "string" ? claims.org_id : undefined;
+    const scope = typeof claims.scope === "string" ? claims.scope : undefined;
     return {
       sub: subject,
       displayName: typeof claims.name === "string" ? claims.name : undefined,
       organizationId: orgId && orgId !== "" ? orgId : undefined,
       roles: stringArray(claims.roles),
+      ...(scope ? { scope } : {}),
     };
   }
 

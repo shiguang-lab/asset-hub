@@ -3,6 +3,7 @@ import { type ActorContext, nextId } from "@shiguang/contracts";
 import type { Store } from "@shiguang/database";
 import { z } from "zod";
 import { forbidden, unauthorized } from "./errors.js";
+import { mapOAuthScopes } from "./oauth-scope.js";
 
 const assertionSchema = z.object({
   sub: z.string().min(1),
@@ -17,12 +18,18 @@ type VerifiedIdentity = {
   displayName?: string;
   organizationId?: string;
   roles: string[];
+  scope?: string;
 };
 
 export interface IdentityOptions {
   devAuth: boolean;
   demoSubject: string;
   verifyAssertion?: (token: string) => Promise<VerifiedIdentity | null>;
+  /**
+   * Verifies an OAuth 2.0 access token. When omitted, Bearer tokens are only
+   * ever treated as personal access tokens.
+   */
+  verifyOAuth?: (token: string) => Promise<VerifiedIdentity | null>;
 }
 
 export class IdentityService {
@@ -37,6 +44,9 @@ export class IdentityService {
     if (bearer?.startsWith("Bearer ")) {
       const token = bearer.slice("Bearer ".length).trim();
       if (!token) throw unauthorized();
+      if (isOAuthAccessToken(token, this.options.verifyOAuth)) {
+        return await this.resolveOAuthToken(token, requestId);
+      }
       return await this.resolveToken(token, requestId);
     }
     const identity = takeHeader(headers, "x-sg-identity");
@@ -129,6 +139,32 @@ export class IdentityService {
     };
   }
 
+  /**
+   * Resolves an OAuth 2.0 access token minted for a third-party client such as
+   * the Obsidian plugin. The client acts on the user's personal document hub;
+   * what it may do is bounded by the granted scopes, not by the workspace role.
+   */
+  private async resolveOAuthToken(token: string, requestId: string): Promise<ActorContext> {
+    const verified = await this.options.verifyOAuth?.(token);
+    if (!verified) throw unauthorized("OAuth 访问令牌无效或已过期");
+    const personal = await this.store.ensurePersonalWorkspace(verified.sub);
+    await this.store.ensureUser({
+      subject: verified.sub,
+      workspaceId: personal.id,
+      ...(verified.displayName ? { displayName: verified.displayName } : {}),
+    });
+    return {
+      subject: verified.sub,
+      workspaceId: personal.id,
+      workspaceType: "personal",
+      workspaceRole: "owner",
+      requestId,
+      isService: false,
+      tokenScopes: mapOAuthScopes(verified.scope),
+      ...(verified.displayName ? { displayName: verified.displayName } : {}),
+    };
+  }
+
   requireWrite(actor: ActorContext): void {
     if (!actor.tokenScopes.includes("write")) {
       throw forbidden("当前 Token 为只读权限，无法执行写操作");
@@ -190,6 +226,18 @@ export class IdentityService {
       ...(displayName ? { displayName } : {}),
     };
   }
+}
+
+/**
+ * Personal access tokens are prefixed with `sg_`; OAuth access tokens are
+ * compact JWTs. Anything else stays on the personal access token path, which is
+ * a hash lookup and therefore fails closed.
+ */
+export function isOAuthAccessToken(
+  token: string,
+  verifyOAuth: ((token: string) => Promise<VerifiedIdentity | null>) | undefined,
+): boolean {
+  return verifyOAuth !== undefined && !token.startsWith("sg_") && token.split(".").length === 3;
 }
 
 export function roleFromOrganizationRoles(roles: string[]): "admin" | "editor" | "viewer" | null {

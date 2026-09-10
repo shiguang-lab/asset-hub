@@ -4,8 +4,11 @@ import {
   collectImportFolders,
   downloadableAssetContent,
   extractAndUploadResources,
+  importPathToAssetPath,
   parseImportedDocumentFile,
+  parseImportPathPrefix,
   resolveImportReference,
+  withImportPrefix,
 } from "./assets.js";
 
 describe("parseImportedDocumentFile", () => {
@@ -128,5 +131,55 @@ describe("folder import paths", () => {
       "guides",
       "guides/api",
     ]);
+  });
+});
+
+describe("importPathToAssetPath", () => {
+  it("strips the extension because it is derived from the asset type", () => {
+    expect(importPathToAssetPath("guides/api/auth.md")).toBe("guides/api/auth");
+    expect(importPathToAssetPath("README.md")).toBe("README");
+  });
+
+  it("keeps dots that are part of the file name", () => {
+    expect(importPathToAssetPath("specs/v1.2.3-draft.md")).toBe("specs/v1.2.3-draft");
+  });
+
+  it("leaves extensionless paths untouched", () => {
+    expect(importPathToAssetPath("guides/LICENSE")).toBe("guides/LICENSE");
+  });
+
+  it("normalises decomposed unicode so macOS imports do not fork folders", () => {
+    expect(importPathToAssetPath("café/naïve.md".normalize("NFD"))).toBe(
+      "café/naïve".normalize("NFC"),
+    );
+  });
+});
+
+describe("parseImportPathPrefix", () => {
+  it("accepts a folder path and normalises it", () => {
+    expect(parseImportPathPrefix({ pathPrefix: "产品/需求文档" })).toBe("产品/需求文档");
+  });
+
+  it("rejects shapes the asset path contract forbids", () => {
+    expect(parseImportPathPrefix({ pathPrefix: "/产品/" })).toBe("");
+    expect(parseImportPathPrefix({ pathPrefix: "产品/../研究" })).toBe("");
+    expect(parseImportPathPrefix({ pathPrefix: "产品//需求" })).toBe("");
+  });
+
+  it("falls back to the root for missing or non-string values", () => {
+    expect(parseImportPathPrefix({})).toBe("");
+    expect(parseImportPathPrefix({ pathPrefix: "" })).toBe("");
+    expect(parseImportPathPrefix({ pathPrefix: ["产品"] })).toBe("");
+    expect(parseImportPathPrefix(undefined)).toBe("");
+  });
+});
+
+describe("withImportPrefix", () => {
+  it("nests the imported tree under the target folder", () => {
+    expect(withImportPrefix("产品", "guides/setup.md")).toBe("产品/guides/setup.md");
+  });
+
+  it("leaves the path alone at the root", () => {
+    expect(withImportPrefix("", "guides/setup.md")).toBe("guides/setup.md");
   });
 });

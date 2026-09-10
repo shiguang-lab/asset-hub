@@ -11,10 +11,12 @@ import {
   type Asset,
   type AssetContent,
   aiDocumentActionSchema,
+  assetPathSchema,
   createAssetInputSchema,
   listAssetsQuerySchema,
   nextId,
   nowIso,
+  updateAssetInputSchema,
 } from "@shiguang/contracts";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
@@ -38,6 +40,10 @@ export function registerAssets(app: FastifyInstance): void {
       status: query.status,
       visibility: query.visibility,
       includeDeleted: query.includeDeleted,
+      // 增量同步需要「活跃 + 已删」一起返回才能感知远端删除，而 includeDeleted
+      // 表达的是回收站视图（只看已删）。带 since 时切换到 all 范围。
+      ...(query.since ? { deletedScope: "all" as const, since: query.since } : {}),
+      ...(query.pathPrefix !== undefined ? { pathPrefix: query.pathPrefix } : {}),
       limit: query.limit,
       after: query.cursor,
       subject: req.actor.subject,
@@ -61,6 +67,7 @@ export function registerAssets(app: FastifyInstance): void {
           const asset = await ctx.store.createAsset(req.actor, {
             type: input.type,
             title: input.title,
+            ...(input.path !== undefined ? { path: input.path } : {}),
             ...(input.description !== undefined ? { description: input.description } : {}),
             ...(input.visibility !== undefined ? { visibility: input.visibility } : {}),
             content,
@@ -92,6 +99,7 @@ export function registerAssets(app: FastifyInstance): void {
     const asset = await ctx.store.createAsset(req.actor, {
       type: input.type,
       title: input.title,
+      ...(input.path !== undefined ? { path: input.path } : {}),
       ...(input.description !== undefined ? { description: input.description } : {}),
       ...(input.visibility !== undefined ? { visibility: input.visibility } : {}),
       content,
@@ -193,6 +201,7 @@ export function registerAssets(app: FastifyInstance): void {
       req.actor,
       parts.map((part) => ({ path: part.name, data: part.data })),
       parseImportResolutions(req.query),
+      parseImportPathPrefix(req.query),
     );
     for (const item of imported.items) {
       if (!item.replaced) {
@@ -265,7 +274,8 @@ export function registerAssets(app: FastifyInstance): void {
     const asset = await ctx.store.getAsset(req.actor.workspaceId, id);
     if (!asset) return reply.code(404).send({ code: "RESOURCE_NOT_FOUND", detail: "资产不存在" });
     const content = await ctx.store.readContent(id);
-    return { ...asset, content };
+    // 暴露乐观锁版本，供客户端构造后续写请求的 If-Match。
+    return reply.header("etag", `"${asset.lockVersion}"`).send({ ...asset, content });
   });
 
   app.get("/api/v1/assets/:id/download", async (req, reply) => {
@@ -291,16 +301,9 @@ export function registerAssets(app: FastifyInstance): void {
       .send(payload.data);
   });
 
-  app.patch("/api/v1/assets/:id", async (req, _reply) => {
+  app.patch("/api/v1/assets/:id", async (req, reply) => {
     const { id } = req.params as { id: string };
-    const body = z
-      .object({
-        title: z.string().optional(),
-        description: z.string().optional(),
-        visibility: z.enum(["private", "link", "public"]).optional(),
-        content: z.record(z.string(), z.unknown()).optional(),
-      })
-      .parse(req.body);
+    const body = updateAssetInputSchema.parse(req.body);
     const expectedVersion = ifMatchVersion(req.headers);
     const asset = await ctx.store.getAsset(req.actor.workspaceId, id);
     if (!asset) throw notFound("资产");
@@ -310,6 +313,7 @@ export function registerAssets(app: FastifyInstance): void {
       const saved = await ctx.store.saveContent(req.actor, id, content, {
         changeKind: "edit",
         title: body.title,
+        ...(body.path !== undefined ? { path: body.path } : {}),
         expectedLockVersion: expectedVersion,
       });
       if (asset.type === "document" || asset.type === "report") {
@@ -326,10 +330,11 @@ export function registerAssets(app: FastifyInstance): void {
         trace: {},
         data: { assetId: id, versionId: saved.version.id, contentHash: saved.version.contentHash },
       });
-      return saved.asset;
+      return reply.header("etag", `"${saved.asset.lockVersion}"`).send(saved.asset);
     }
     const updated = await ctx.store.updateAssetMeta(req.actor, id, body, expectedVersion);
-    return updated ?? asset;
+    const result = updated ?? asset;
+    return reply.header("etag", `"${result.lockVersion}"`).send(result);
   });
 
   app.delete("/api/v1/assets/:id", async (req, reply) => {
@@ -781,6 +786,22 @@ function parseImportResolutions(query: unknown): Record<string, ImportResolution
   }
 }
 
+/**
+ * 导入目标目录。目录页在某个目录下导入时带上 `pathPrefix`，导入的文件会落进
+ * 该目录，而不是前端另造一套目录 id。非法值按根目录处理。
+ */
+export function parseImportPathPrefix(query: unknown): string {
+  const raw = (query as { pathPrefix?: unknown })?.pathPrefix;
+  if (typeof raw !== "string" || raw.length === 0) return "";
+  const parsed = assetPathSchema.safeParse(raw);
+  return parsed.success ? parsed.data : "";
+}
+
+/** 把导入用的相对路径挂到目标目录下；前缀为空时原样返回。 */
+export function withImportPrefix(pathPrefix: string, path: string): string {
+  return pathPrefix ? `${pathPrefix}/${path}` : path;
+}
+
 async function loadExistingDocumentTitles(
   ctx: AppContext,
   workspaceId: string,
@@ -801,6 +822,7 @@ async function importDocumentEntries(
   actor: ActorContext,
   parts: ImportEntry[],
   resolutions: Record<string, ImportResolution> = {},
+  pathPrefix = "",
 ): Promise<ImportedDocumentBundle> {
   const entries = expandImportEntries(parts);
   const normalized = normalizeImportEntries(entries);
@@ -831,6 +853,8 @@ async function importDocumentEntries(
       asset = await ctx.store.createAsset(actor, {
         type: "document",
         title,
+        // 导入路径同时写入正式 path 字段，使导入的目录结构对 Web 与插件都可见。
+        path: importPathToAssetPath(withImportPrefix(pathPrefix, path)),
         sourceType: "upload",
         metadata: { importPath: path },
         content: { kind: "markdown", text: parsed.markdown, manifest: null, refs: [] },
@@ -885,7 +909,7 @@ async function importDocumentEntries(
 
   return {
     items,
-    folders: collectImportFolders(items.map((item) => item.path)),
+    folders: collectImportFolders(items.map((item) => withImportPrefix(pathPrefix, item.path))),
     uploadedResources,
   };
 }
@@ -932,6 +956,16 @@ export function resolveImportReference(sourcePath: string, source: string): stri
     : pathPosix.join(pathPosix.dirname(sourcePath), withoutSuffix);
   const normalized = pathPosix.normalize(joined).replace(/^\.\//, "");
   return normalizeResourcePath(normalized);
+}
+
+/**
+ * 把导入用的相对文件路径转成 assets.path：去掉扩展名并规范化为 NFC。
+ * 扩展名由 asset.type 推导，故不保留。
+ */
+export function importPathToAssetPath(path: string): string {
+  return normalizeResourcePath(path)
+    .replace(/\.[^./]+$/, "")
+    .normalize("NFC");
 }
 
 export function collectImportFolders(paths: string[]): string[] {

@@ -71,6 +71,18 @@ export function toProblem(err: unknown, requestId?: string): ProblemDetails {
       recoveries: ["reload", "save_as_copy", "compare"],
     };
   }
+  if (err instanceof Error && (err as Error & { code?: string }).code === "ASSET_PATH_CONFLICT") {
+    return {
+      type: "https://docs.shiguanglab.com/problems/path-conflict",
+      title: "路径冲突",
+      status: 409,
+      code: "ASSET_PATH_CONFLICT",
+      detail: "该目录下已存在同名文档",
+      instance: requestId ? `/requests/${requestId}` : undefined,
+      requestId,
+      recoveries: ["rename", "choose_other_folder"],
+    };
+  }
   return {
     type: "about:blank",
     title: "Internal error",

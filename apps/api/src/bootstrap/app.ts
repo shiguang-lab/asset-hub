@@ -58,10 +58,26 @@ export async function buildApp(config: ServiceConfig): Promise<FastifyInstance> 
       "https://shiguanglab.com/.well-known/sg-identity-jwks.json",
     jwksFile: process.env.SG_IDENTITY_JWKS_FILE,
   });
+  // OAuth access tokens are signed by the same authority over the same JWKS,
+  // but carry `typ: at+jwt` so they can never be confused with a gateway
+  // assertion. Only distinct configuration is the expected token type and, if
+  // the issuer ever diverges, the issuer itself.
+  const oauthVerifier = new SgIdentityVerifier({
+    issuer:
+      process.env.SG_OAUTH_ISSUER ?? process.env.SG_IDENTITY_ISSUER ?? "https://shiguanglab.com",
+    audience: process.env.SG_OAUTH_AUDIENCE ?? process.env.SG_IDENTITY_AUDIENCE ?? "asset-hub-api",
+    entitlement: process.env.SG_IDENTITY_ENTITLEMENT ?? "asset-hub:access",
+    jwksUrl:
+      process.env.SG_IDENTITY_JWKS_URL ??
+      "https://shiguanglab.com/.well-known/sg-identity-jwks.json",
+    jwksFile: process.env.SG_IDENTITY_JWKS_FILE,
+    tokenType: "at+jwt",
+  });
   const identity = new IdentityService(store, {
     devAuth: config.devAuth,
     demoSubject: dbConfig.demoSubject,
     verifyAssertion: (token) => verifier.verify(token),
+    verifyOAuth: (token) => oauthVerifier.verify(token),
   });
   const nats = new NatsChannel();
   if (process.env.NATS_URL) {
