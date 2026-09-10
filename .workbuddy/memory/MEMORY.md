@@ -10,11 +10,14 @@
 - 统一 Tabs：所有页面用 `shared/AppTabs.tsx`（antd Tabs 封装，含加粗不抖动占位撑宽），不要自研 role="tab" 按钮组。
 
 ## 构建与验证（沙箱内 pnpm 不可用）
-- `pnpm` 不在 PATH；corepack/npx 拉起来的 pnpm 会撞 pnpm store 陈旧 symlink 报 `CODEBUDDY_BROKER_DENY EEXIST`。改用根目录已有二进制：`./node_modules/.bin/tsc|vitest|turbo`。
+- `pnpm` 不在 PATH；corepack/npx 拉起来的 pnpm 会撞 pnpm store 陈旧 symlink 报 `CODEBUDDY_BROKER_DENY EEXIST`。日常校验改用根目录已有二进制：`./node_modules/.bin/tsc|vitest|turbo`。
+- **但 pnpm 本体可以自取**（网络通时）：`curl -sSL -o pnpm.tgz https://registry.npmjs.org/@pnpm/macos-x64/-/macos-x64-<ver>.tgz && tar xzf pnpm.tgz`，可执行文件在 `package/pnpm`。配合 `--store-dir /tmp/pnpm-store` 就不会碰仓库内 `.pnpm-store`。
+- **只改 lockfile 用 `pnpm install --lockfile-only`**：不落 node_modules、不触发 broker 拦截，改完 diff 干净。这是新增 workspace 包后同步 `pnpm-lock.yaml` 的唯一可行路径（漏了它 `--frozen-lockfile` 会直接让镜像构建失败）。
 - 单包测试：`cd <pkg> && ../../node_modules/.bin/vitest run src`（turbo 需要 pnpm 才能跑，会失败）。
 - 缺依赖时用 `curl https://registry.npmjs.org/<pkg>/-/<pkg>-<ver>.tgz | tar xz` 解到目标 `node_modules/`；`node_modules/` 已被 gitignore，不影响仓库。
 - 需要 `esbuild` 时从 `node_modules/.pnpm/esbuild@<ver>/node_modules/esbuild` 软链。注意相对路径层级：从 `apps/*/node_modules/` 起是 `../../../node_modules/...`（两层会指到 `apps/node_modules`）。
 - Go 不在 PATH：`export PATH=$PATH:/usr/local/go/bin`。
+- 回归跑全量测试时要**逐个包串行**：并排跑多个 vitest 会 SIGTERM（exit 137）。`apps/web` 的 typecheck 需要 `NODE_OPTIONS=--max-old-space-size=6144`。
 
 ## 文档目录模型（真源约定，锁定）
 - `asset.path` 是**含末段文件名的完整逻辑路径**、不含扩展名：`产品/需求文档/PRD`；根目录文档只有一段（`README`）；空串 = 未归类。服务端唯一（同 workspace 同 path 冲突 → 409 `ASSET_PATH_CONFLICT`）。
@@ -31,6 +34,19 @@
 - 不复用 `@shiguang/contracts`：插件产物体积敏感，`src/api/types.ts` 自维护最小镜像。
 - 索引文件 `sync-index.json` 存于插件目录，`IndexStorage` 注入以便测试；**以 `vaultPath` 为键**，重命名时必须整条记录搬走。
 - 内容哈希必须与服务端一致：`sha256:<hex>`，且**上传前先做 CRLF→LF 规范化**（否则两端算不出同一个值）。
+
+## 发布流程（锁定：只有 tag 触发）
+- **`main` 不跑任何工作流**。两条工作流都只在 `push: tags: ["v*"]` 触发：
+  - `.github/workflows/docker-publish.yml`：6 个 target 单作业多平台 buildx，每个 tag 推 `X.Y.Z` + `vX.Y.Z` + `sha-<12>` + `latest`（每 tag 都覆盖 latest，不做最高 semver 判断）。
+  - `.github/workflows/obsidian-plugin-release.yml`：装依赖 → **断言 tag 版本 == `manifest.json` version**（不一致就失败，Obsidian 靠这个认更新）→ 测试 → 构建 → `gh release create` 挂 `main.js`/`manifest.json`/`styles.css`。
+- 插件 `main.js` 是构建产物，已 gitignore（`apps/obsidian-plugin/.gitignore`），**不要入库**；分发走 Release 附件或本地 `deploy:local`。
+- 新增 workspace 包后必须同步三处，否则 tag 构建会挂：①`pnpm install --lockfile-only` 更新 lockfile importer；②Dockerfile `node-deps` 阶段补 `COPY <pkg>/package.json`（该阶段逐个列举 workspace 清单，`apps/*` 的 glob 不生效）；③若新包引入 `strict-peer-dependencies` 不满足的 peer，加 `pnpm.peerDependencyRules.allowedVersions`（`obsidian` 精确锁 CodeMirror peer 就是这种情况，实际不打包故放行）。
+- `pnpm/action-setup@v4` **不要写 `version:`**，仓库 `packageManager` 字段已声明 pnpm 版本，同时写会报「Multiple versions of pnpm specified」。
+- 本地安装插件到 vault：`OBSIDIAN_VAULT_PATH=<vault> node scripts/deploy-local.mjs`（拷 main.js/manifest.json/styles.css 到 `.obsidian/plugins/asset-hub-sync/`）。本机 vault 是 `/Users/yanxianliang/overseas/pd-atlas`。
+- biome 要显式排除构建产物：`apps/obsidian-plugin/main.js` 与 `**/.next`；否则 `biome check .` 会被打包产物灌进 9 万条噪音。
+
+## 已知存量问题（非本次引入，未处理）
+- `pnpm check` 目前在 main 上就是红的：`apps/api/src/{internal/routes.ts,modules/comments.ts,platform/render.ts}`、`apps/worker/src/workflows/presentation*.ts`、`apps/web/public/presentation-player.js`、`packages/database/src/db.ts`、`skills/seed-skills.mjs` 有 lint/format 问题（多数 `biome check --write` 可自动修）；另有 `.codeartsdoer/temp/` 等工具目录未纳入 biome 排除。
 
 ## 本地调试 web
 - broker 模式：`.env.local` 配 `ASSET_HUB_LOCAL_BROKER_ENABLED=true` + 线上账号密码 + `ASSET_HUB_AUTH_TARGET=https://shiguanglab.com`；接口走线上需 `ASSET_HUB_LOCAL_API_TARGET=http://100.87.115.78:3701`。
