@@ -45,6 +45,7 @@
 - **action 大版本必须 ≥ 各仓库的「Node 24 分界版本」**，否则报 Node 20 弃用告警（GitHub 2025-09-19 起）。实测分界：`actions/checkout` v5、`actions/setup-node` v5、`pnpm/action-setup` v5、`docker/login-action` v4、`docker/setup-buildx-action` v4、`docker/setup-qemu-action` v4、`docker/build-push-action` v7（v7 起 `node24`）。当前锁定：v7 / v7 / v6 / v4 / v4 / v4 / v7。
 - `actions/setup-node@v5+` 的自动缓存只对 npm 生效（v5 曾对 `packageManager` 全量自动缓存，v6 收紧为仅 npm），pnpm 必须显式 `cache: pnpm`，且该步要排在 `pnpm/action-setup` 之后。
 - **已发布的 tag 不能再重指**：`obsidian-plugin-release.yml` 最后一步是无 `--clobber` 的 `gh release create`，同名 release 已存在会直接失败。
+- **Obsidian 插件登录的两个线上前置**（2026-09-10 现状）：①auth-service 的 OAuth 端点（`/.well-known/oauth-authorization-server`、`/oauth/*`）代码已在 main（tag v0.1.0），但线上跑的是旧镜像，访问返回 SPA HTML——插件登录报 `Unexpected token '<'` 就是它；②`doc.shiguanglab.com` 的 edge forward-auth 只认浏览器 session，不认 OAuth Bearer（带假 token 也 `401 session_missing`），插件登录打通后同步请求仍会被网关拦，需要 edge 侧对 `/api/v1/*` 放行 Bearer（api 侧已支持 `at+jwt` 校验）。域名分工：serverUrl=`https://shiguanglab.com`（授权服务器），apiUrl=`https://doc.shiguanglab.com/api/v1`（默认值已修正，曾错写成 shiguanglab.com/api/v1）。
 - 本地安装插件到 vault：`OBSIDIAN_VAULT_PATH=<vault> node scripts/deploy-local.mjs`（拷 main.js/manifest.json/styles.css 到 `.obsidian/plugins/asset-hub-sync/`）。本机 vault 是 `/Users/yanxianliang/overseas/pd-atlas`。
 - biome 要显式排除构建产物：`apps/obsidian-plugin/main.js` 与 `**/.next`；否则 `biome check .` 会被打包产物灌进 9 万条噪音。
 
