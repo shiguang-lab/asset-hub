@@ -449,6 +449,9 @@ export default class AssetHubPlugin extends Plugin {
   }
 
   #commands(): void {
+    this.addRibbonIcon("folder-sync", "知序资产中心：同步状态面板", () =>
+      void this.#revealStatusView(),
+    );
     this.addCommand({
       id: "sync-now",
       name: "立即同步",
