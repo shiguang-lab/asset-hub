@@ -141,6 +141,8 @@ export interface Asset {
   ownerDisplayName?: string;
   type: string;
   title: string;
+  /** 工作空间内的逻辑路径，含末段文件名、不含扩展名；空串表示未归类。 */
+  path: string;
   description: string;
   visibility: string;
   status: string;

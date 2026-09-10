@@ -36,6 +36,13 @@ import {
 } from "../../entities/api.js";
 import { loadDocumentLocal, saveDocumentLocal } from "../../shared/document-local.js";
 import { DocumentMarkdown } from "../../shared/document-markdown.js";
+import {
+  fileNameOf,
+  folderPathOf,
+  joinFolderPath,
+  leafFromTitle,
+  normalizeFolderPath,
+} from "../../shared/document-path.js";
 import { loadDraft, markSynced, saveDraft } from "../../shared/draft.js";
 import { useDeleteConfirm } from "../../shared/useDeleteConfirm";
 import { useShellBreadcrumb } from "../../shell/layout.js";
@@ -376,12 +383,22 @@ export function DocumentEditorPage() {
     void saveDocumentLocal(`${id}:charts`, charts).catch(() => undefined);
   }, [charts, id]);
 
+  // 从目录页带过来的目标目录；`path` 含末段文件名，所以落地时要补上文件名。
+  const folderPath = normalizeFolderPath(params.get("folder") ?? "");
   const createMutation = useMutation({
-    mutationFn: () =>
-      api<Asset>("/assets", {
+    mutationFn: () => {
+      const name = title.trim() || "未命名文档";
+      const path = folderPath ? joinFolderPath(folderPath, leafFromTitle(name)) : "";
+      return api<Asset>("/assets", {
         method: "POST",
-        body: { type: "document", title: title || "未命名文档", content: { markdown: "" } },
-      }),
+        body: {
+          type: "document",
+          title: name,
+          ...(path ? { path } : {}),
+          content: { markdown: "" },
+        },
+      });
+    },
     onSuccess: (asset) => {
       navigate(`/documents/${asset.id}`, { replace: true });
       void queryClient.invalidateQueries({ queryKey: ["assets"] });
@@ -477,7 +494,7 @@ export function DocumentEditorPage() {
   };
 
   const patchAsset = useCallback(
-    (body: { title?: string; content?: { markdown: string } }): Promise<Asset> => {
+    (body: { title?: string; path?: string; content?: { markdown: string } }): Promise<Asset> => {
       if (!id) return Promise.reject(new Error("文档不存在"));
       const request = patchQueueRef.current.then(async () => {
         const updated = await api<Asset>(`/assets/${id}`, {
@@ -500,14 +517,31 @@ export function DocumentEditorPage() {
   const saveTitle = async () => {
     const nextTitle = title.trim();
     if (!id || !nextTitle || nextTitle === asset?.title) return;
+    const currentPath = asset?.path ?? "";
+    const leaf = leafFromTitle(nextTitle);
+    // 路径末段若仍等于旧标题，说明它是新建时自动派生的文件名，跟随标题一起改，
+    // 免得云端留下一个叫「未命名文档」的文件。
+    const nextPath =
+      currentPath && leaf && fileNameOf(currentPath) === leafFromTitle(asset?.title ?? "")
+        ? joinFolderPath(folderPathOf(currentPath), leaf)
+        : "";
     try {
-      const updated = await patchAsset({ title: nextTitle });
+      let updated: Asset;
+      let pathSkipped = false;
+      try {
+        updated = await patchAsset({ title: nextTitle, ...(nextPath ? { path: nextPath } : {}) });
+      } catch (error) {
+        // 目标路径已被别的文档占用时不该挡住改名，退化为只改标题。
+        if (!nextPath) throw error;
+        updated = await patchAsset({ title: nextTitle });
+        pathSkipped = true;
+      }
       queryClient.setQueryData<Asset>(["asset", id], (current) => ({
         ...(current ?? updated),
         ...updated,
         content: current?.content ?? updated.content,
       }));
-      toast("success", "标题已保存");
+      toast("success", pathSkipped ? "标题已保存，文件名保持原样" : "标题已保存");
       void queryClient.invalidateQueries({ queryKey: ["asset", id] });
     } catch (error) {
       toast("error", error instanceof Error ? error.message : "标题保存失败");

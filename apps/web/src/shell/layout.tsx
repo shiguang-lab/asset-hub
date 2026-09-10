@@ -93,8 +93,12 @@ export function isDocumentImportResult(
 export type DocumentImportHandler = (result: DocumentImportResult) => void;
 
 type ShellDocumentActions = {
-  openDocumentFilePicker: () => void;
-  openDocumentFolderPicker: () => void;
+  /**
+   * 导入目标目录。文档页在某个目录下发起导入时通过 `pathPrefix` 传入，
+   * 由服务端写进 `path`，前端不再另造一套目录归属。
+   */
+  openDocumentFilePicker: (options?: { pathPrefix?: string }) => void;
+  openDocumentFolderPicker: (options?: { pathPrefix?: string }) => void;
   registerImportHandler: (handler: DocumentImportHandler) => () => void;
 };
 
@@ -274,10 +278,17 @@ export function Shell() {
   const documentFileInputRef = useRef<HTMLInputElement>(null);
   const documentFolderInputRef = useRef<HTMLInputElement>(null);
   const importHandlersRef = useRef<DocumentImportHandler[]>([]);
+  const importPathPrefixRef = useRef("");
   const documentActions = useMemo<ShellDocumentActions>(
     () => ({
-      openDocumentFilePicker: () => documentFileInputRef.current?.click(),
-      openDocumentFolderPicker: () => documentFolderInputRef.current?.click(),
+      openDocumentFilePicker: (options) => {
+        importPathPrefixRef.current = options?.pathPrefix ?? "";
+        documentFileInputRef.current?.click();
+      },
+      openDocumentFolderPicker: (options) => {
+        importPathPrefixRef.current = options?.pathPrefix ?? "";
+        documentFolderInputRef.current?.click();
+      },
       registerImportHandler: (handler) => {
         importHandlersRef.current.push(handler);
         return () => {
@@ -398,6 +409,9 @@ export function Shell() {
 
   const importDocument = async (files: File[]) => {
     if (files.length === 0) return;
+    // 立刻取走，避免取消或失败后影响下一次导入。
+    const pathPrefix = importPathPrefixRef.current;
+    importPathPrefixRef.current = "";
     try {
       const titles = computeCandidateTitles(files);
       let resolutions: Record<string, ImportResolutionValue> = {};
@@ -415,12 +429,14 @@ export function Shell() {
           resolutions = chosen;
         }
       }
-      const query =
-        Object.keys(resolutions).length > 0
-          ? `?resolutions=${encodeURIComponent(JSON.stringify(resolutions))}`
-          : "";
+      const params = new URLSearchParams();
+      if (Object.keys(resolutions).length > 0) {
+        params.set("resolutions", JSON.stringify(resolutions));
+      }
+      if (pathPrefix) params.set("pathPrefix", pathPrefix);
+      const queryString = params.toString();
       const result = await uploadFiles<Asset | DocumentImportResult>(
-        `/assets/documents/import${query}`,
+        `/assets/documents/import${queryString ? `?${queryString}` : ""}`,
         files,
       );
       if (isDocumentImportResult(result)) {

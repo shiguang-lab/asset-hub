@@ -1,7 +1,7 @@
 import { Empty, Field, Loading, Scrollbar, useToast } from "@shiguang/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { MenuProps } from "antd";
-import { Button, Dropdown, Input, Modal, Segmented, Select } from "antd";
+import { App, Button, Dropdown, Input, Modal, Segmented, Select } from "antd";
 import { createStyles } from "antd-style";
 import {
   BarChart3,
@@ -31,27 +31,33 @@ import {
   Trash2,
   Users,
 } from "lucide-react";
-import {
-  type Dispatch,
-  type ReactNode,
-  type SetStateAction,
-  useEffect,
-  useMemo,
-  useState,
-} from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { getAuthSession } from "../../auth/session.js";
 import { type Asset, api, publishedShortUrl } from "../../entities/api.js";
 import { AppPagination } from "../../shared/AppPagination.js";
 import { AppTable } from "../../shared/AppTable.js";
+import {
+  legacyFolderNames,
+  readLegacyFolderMigration,
+} from "../../shared/document-folder-migration.js";
+import {
+  type DocumentFolder,
+  deriveFolderTree,
+  fileNameOf,
+  folderDisplayPath,
+  folderPathOf,
+  isInFolder,
+  joinFolderPath,
+  leafFromTitle,
+  normalizeFolderPath,
+  ROOT_FOLDER_ID,
+  rewriteFolderPrefix,
+} from "../../shared/document-path.js";
 import { OwnerAvatar } from "../../shared/OwnerAvatar.js";
 import { isOwnedBySession, ownerDisplayName } from "../../shared/owner.js";
 import { useDeleteConfirm } from "../../shared/useDeleteConfirm";
-import {
-  type DocumentImportResult,
-  useShellBreadcrumb,
-  useShellDocumentActions,
-} from "../../shell/layout.js";
+import { useShellBreadcrumb, useShellDocumentActions } from "../../shell/layout.js";
 import { PublishDialog } from "../publishing/publish-dialog.js";
 
 const useDocumentsPageStyles = createStyles(() => ({
@@ -89,21 +95,6 @@ const useDocumentsPageStyles = createStyles(() => ({
 
 const ME = "dev-user";
 const FAVORITES_STORAGE_KEY = "shiguang.document-favorites";
-const FOLDERS_STORAGE_KEY = "shiguang.document-folders";
-const FOLDER_ASSIGNMENTS_STORAGE_KEY = "shiguang.document-folder-assignments";
-
-type DocumentFolder = { id: string; name: string; parentId: string | null };
-
-const DEFAULT_DOCUMENT_FOLDERS: DocumentFolder[] = [
-  { id: "product", name: "产品", parentId: null },
-  { id: "product-planning", name: "产品规划", parentId: "product" },
-  { id: "product-requirements", name: "需求文档", parentId: "product" },
-  { id: "product-design", name: "设计规范", parentId: "product" },
-  { id: "research", name: "研究", parentId: null },
-  { id: "research-industry", name: "行业报告", parentId: "research" },
-  { id: "research-competitor", name: "竞品分析", parentId: "research" },
-  { id: "data", name: "数据与看板", parentId: null },
-];
 
 const DEMO_DOCUMENTS: Asset[] = [
   {
@@ -112,6 +103,7 @@ const DEMO_DOCUMENTS: Asset[] = [
     ownerSubject: ME,
     type: "document",
     title: "2024 新能源汽车行业研究报告",
+    path: "研究/行业报告/2024 新能源汽车行业研究报告",
     description: "深入分析全球新能源汽车市场趋势，竞争格局与技术...",
     visibility: "public",
     status: "ready",
@@ -129,6 +121,7 @@ const DEMO_DOCUMENTS: Asset[] = [
     ownerSubject: ME,
     type: "report",
     title: "越南消费金融市场分析",
+    path: "研究/行业报告/越南消费金融市场分析",
     description: "聚焦越南消费金融市场现状与未来机遇，包含市场...",
     visibility: "link",
     status: "ready",
@@ -146,6 +139,7 @@ const DEMO_DOCUMENTS: Asset[] = [
     ownerSubject: ME,
     type: "document",
     title: "AI Agent 产品设计规范",
+    path: "产品/设计规范/AI Agent 产品设计规范",
     description: "定义 AI Agent 产品的设计原则、功能模块与交互...",
     visibility: "link",
     status: "ready",
@@ -163,6 +157,7 @@ const DEMO_DOCUMENTS: Asset[] = [
     ownerSubject: ME,
     type: "document",
     title: "Shiguang Lab 产品需求文档",
+    path: "产品/需求文档/Shiguang Lab 产品需求文档",
     description: "Shiguang Lab 核心功能需求、用户场景与验收标...",
     visibility: "link",
     status: "ready",
@@ -180,6 +175,7 @@ const DEMO_DOCUMENTS: Asset[] = [
     ownerSubject: ME,
     type: "document",
     title: "行业数据 Dashboard",
+    path: "数据与看板/行业数据 Dashboard",
     description: "可视化展示行业关键指标与趋势数据，支持多维度...",
     visibility: "public",
     status: "ready",
@@ -280,132 +276,15 @@ function documentTone(title: string): string {
   return "blue";
 }
 
-function readStoredFolders(): DocumentFolder[] {
-  if (typeof window === "undefined") return DEFAULT_DOCUMENT_FOLDERS;
-  try {
-    const parsed = JSON.parse(window.localStorage.getItem(FOLDERS_STORAGE_KEY) ?? "null");
-    if (Array.isArray(parsed)) {
-      const folders = parsed.flatMap((folder): DocumentFolder[] => {
-        if (!folder || typeof folder.id !== "string" || typeof folder.name !== "string") return [];
-        return [
-          {
-            id: folder.id,
-            name: folder.name,
-            parentId: typeof folder.parentId === "string" ? folder.parentId : null,
-          },
-        ];
-      });
-      if (folders.length > 0) {
-        const merged = new Map(DEFAULT_DOCUMENT_FOLDERS.map((folder) => [folder.id, folder]));
-        for (const folder of folders) merged.set(folder.id, folder);
-        return [...merged.values()];
-      }
-    }
-  } catch {
-    // Fall back to the built-in folders when local storage is unavailable or corrupt.
-  }
-  return DEFAULT_DOCUMENT_FOLDERS;
+/** 移动目标路径：优先沿用已有文件名，尚未归类的文档用标题兜底。 */
+function destinationPath(document: Asset, folderPath: string): string {
+  const leaf = fileNameOf(document.path) || leafFromTitle(document.title) || document.id;
+  return joinFolderPath(folderPath, leaf);
 }
 
-function readFolderAssignments(): Record<string, string> {
-  if (typeof window === "undefined") return {};
-  try {
-    const parsed = JSON.parse(window.localStorage.getItem(FOLDER_ASSIGNMENTS_STORAGE_KEY) ?? "{}");
-    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-      const assignments: Record<string, string> = {};
-      for (const [documentId, folderId] of Object.entries(parsed)) {
-        if (typeof folderId === "string") assignments[documentId] = folderId;
-      }
-      return assignments;
-    }
-  } catch {
-    // Use the root directory if local storage is unavailable or corrupt.
-  }
-  return {};
-}
-
-function folderIdForImportPath(prefix: string, path: string): string {
-  return `${prefix}-${path
-    .split("/")
-    .map((part) => part.replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 32))
-    .join("-")}`;
-}
-
-function restoreImportedDocumentFolders(
-  result: DocumentImportResult,
-  activeFolderId: string,
-  setFolders: Dispatch<SetStateAction<DocumentFolder[]>>,
-  setFolderAssignments: Dispatch<SetStateAction<Record<string, string>>>,
-  setExpandedFolderIds: Dispatch<SetStateAction<string[]>>,
-): void {
-  if (typeof window === "undefined") return;
-  try {
-    const rootParentId = activeFolderId === "root" ? null : activeFolderId;
-    const prefix = activeFolderId === "root" ? "import" : `import-${activeFolderId}`;
-    const folderIdByPath = new Map<string, string>();
-
-    setFolders((current) => {
-      const existingIds = new Set(current.map((folder) => folder.id));
-      const newFolders: DocumentFolder[] = [];
-      for (const path of result.folders) {
-        const parts = path.split("/").filter(Boolean);
-        let parentPath = "";
-        let parentId = rootParentId;
-        for (const name of parts) {
-          const currentPath = parentPath ? `${parentPath}/${name}` : name;
-          const id = folderIdForImportPath(prefix, currentPath);
-          folderIdByPath.set(currentPath, id);
-          if (!existingIds.has(id) && !newFolders.some((folder) => folder.id === id)) {
-            newFolders.push({ id, name, parentId });
-            existingIds.add(id);
-          }
-          parentPath = currentPath;
-          parentId = id;
-        }
-      }
-      if (newFolders.length === 0) return current;
-      const merged = new Map(current.map((folder) => [folder.id, folder]));
-      for (const folder of newFolders) merged.set(folder.id, folder);
-      return [...merged.values()];
-    });
-
-    const nextAssignments: Record<string, string> = {};
-    for (const entry of result.entries) {
-      const directory = entry.path.split("/").slice(0, -1).join("/");
-      const folderId = directory ? folderIdByPath.get(directory) : rootParentId;
-      if (folderId) {
-        nextAssignments[entry.asset.id] = folderId;
-      }
-    }
-    if (Object.keys(nextAssignments).length > 0) {
-      setFolderAssignments((current) => ({ ...current, ...nextAssignments }));
-    }
-    if (rootParentId) {
-      setExpandedFolderIds((current) =>
-        current.includes(rootParentId) ? current : [...current, rootParentId],
-      );
-    }
-  } catch {
-    // Folder restoration is a UI enhancement; importing the assets still succeeds.
-  }
-}
-
-function inferredFolderId(document: Asset): string {
-  if (document.title.includes("Dashboard")) return "data";
-  if (
-    document.title.includes("消费金融") ||
-    document.title.includes("新能源") ||
-    document.sourceType === "research"
-  ) {
-    return "research-industry";
-  }
-  if (document.title.includes("Agent")) {
-    return "product-design";
-  }
-  if (document.title.includes("PRD")) {
-    return "product-requirements";
-  }
-  return "root";
+/** 目录树的两个 id 语义：真实目录用路径本身，全部文档用哨兵。 */
+function toFolderScope(activeFolderId: string): string {
+  return activeFolderId === ROOT_FOLDER_ID ? "" : activeFolderId;
 }
 
 function visMeta(a: Asset): { icon: typeof Globe; cls: string; label: string } {
@@ -452,9 +331,11 @@ export function DocumentsPage() {
   ];
   const documentActions = useShellDocumentActions();
   const toast = useToast();
+  const { modal } = App.useApp();
   const { confirmDelete } = useDeleteConfirm();
   const queryClient = useQueryClient();
   const authSession = getAuthSession();
+  const migrationCheckedRef = useRef(false);
   const [filter, setFilter] = useState<FilterId>("all");
   const [q, setQ] = useState("");
   const [type, setType] = useState("all");
@@ -462,22 +343,18 @@ export function DocumentsPage() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [viewMode, setViewMode] = useState<"list" | "grid">("list");
-  const [folders, setFolders] = useState<DocumentFolder[]>(readStoredFolders);
-  const [folderAssignments, setFolderAssignments] =
-    useState<Record<string, string>>(readFolderAssignments);
-  const [activeFolderId, setActiveFolderId] = useState("root");
+  const [activeFolderId, setActiveFolderId] = useState(ROOT_FOLDER_ID);
   const [treePanelOpen, setTreePanelOpen] = useState(false);
-  const [expandedFolderIds, setExpandedFolderIds] = useState<string[]>(["product", "research"]);
+  const [expandedFolderIds, setExpandedFolderIds] = useState<string[]>([]);
   const [openFolderMenuId, setOpenFolderMenuId] = useState<string | null>(null);
-  const [folderDialog, setFolderDialog] = useState<{
-    mode: "create" | "rename";
-    parentId: string | null;
-    folderId?: string;
-  } | null>(null);
+  const [folderDialog, setFolderDialog] = useState<{ folderId: string } | null>(null);
   const [moveDialog, setMoveDialog] = useState<{
     documentId: string;
     documentTitle: string;
+    /** 选中的已有目录，空串代表「全部文档」。 */
     folderId: string;
+    /** 直接输入的新目录路径，非空时优先于上面的选择。 */
+    newFolderPath: string;
   } | null>(null);
   const [openDocumentMenuId, setOpenDocumentMenuId] = useState<string | null>(null);
   const [publishTarget, setPublishTarget] = useState<Asset | null>(null);
@@ -500,34 +377,13 @@ export function DocumentsPage() {
   }, [favoriteIds]);
 
   useEffect(() => {
-    window.localStorage.setItem(FOLDERS_STORAGE_KEY, JSON.stringify(folders));
-  }, [folders]);
-
-  useEffect(() => {
-    window.localStorage.setItem(FOLDER_ASSIGNMENTS_STORAGE_KEY, JSON.stringify(folderAssignments));
-  }, [folderAssignments]);
-
-  useEffect(() => {
     if (!documentActions?.registerImportHandler) return;
-    return documentActions.registerImportHandler((result) => {
-      restoreImportedDocumentFolders(
-        result,
-        activeFolderId,
-        setFolders,
-        setFolderAssignments,
-        setExpandedFolderIds,
-      );
+    // 导入的目录结构由服务端按导入路径写入 `path`，前端只需刷新列表。
+    return documentActions.registerImportHandler(() => {
       void queryClient.invalidateQueries({ queryKey: ["assets", "document"] });
       void queryClient.invalidateQueries({ queryKey: ["home"] });
     });
-  }, [
-    documentActions,
-    activeFolderId,
-    setFolders,
-    setFolderAssignments,
-    setExpandedFolderIds,
-    queryClient,
-  ]);
+  }, [documentActions, queryClient]);
 
   const { data: docs, isLoading: documentsLoading } = useQuery<{
     items: Asset[];
@@ -567,20 +423,19 @@ export function DocumentsPage() {
   const all = useMemo(() => (demoMode ? DEMO_DOCUMENTS : (docs?.items ?? [])), [demoMode, docs]);
   const deleted = useMemo(() => trashed?.items ?? [], [trashed]);
   const listLoading = filter === "trash" ? trashedLoading : documentsLoading;
-  const visibleFolderIds = useMemo(() => {
-    if (activeFolderId === "root") return null;
-    const ids = new Set([activeFolderId]);
-    let changed = true;
-    while (changed) {
-      changed = false;
-      for (const folder of folders) {
-        if (folder.parentId && ids.has(folder.parentId) && !ids.has(folder.id)) {
-          ids.add(folder.id);
-          changed = true;
-        }
-      }
-    }
-    return ids;
+  // 目录树是 `path` 的投影：目录不是独立实体，因此也不会残留空目录。
+  const folders = useMemo(() => deriveFolderTree(all), [all]);
+  const folderScope = toFolderScope(activeFolderId);
+  // 在当前目录下新建文档：新建时就把 `path` 定下来，文档不会凭空落到根目录。
+  const newDocumentHref = folderScope
+    ? `/documents/new?folder=${encodeURIComponent(folderScope)}`
+    : "/documents/new";
+
+  // 目录是文档路径的投影，最后一批文档被移走后目录会消失，此时退回全部文档。
+  useEffect(() => {
+    if (activeFolderId === ROOT_FOLDER_ID) return;
+    if (folders.some((folder) => folder.id === activeFolderId)) return;
+    setActiveFolderId(ROOT_FOLDER_ID);
   }, [activeFolderId, folders]);
 
   const items = useMemo(() => {
@@ -609,11 +464,7 @@ export function DocumentsPage() {
             ? a.type === "document" || a.type === "report"
             : a.type === type,
       )
-      .filter((a) =>
-        visibleFolderIds === null
-          ? true
-          : visibleFolderIds.has(folderAssignments[a.id] ?? inferredFolderId(a)),
-      )
+      .filter((a) => isInFolder(a.path ?? "", folderScope))
       .filter((a) =>
         q.trim() ? `${a.title} ${a.description}`.toLowerCase().includes(q.toLowerCase()) : true,
       )
@@ -624,18 +475,7 @@ export function DocumentsPage() {
             ? new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
             : new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
       );
-  }, [
-    all,
-    authSession,
-    deleted,
-    favoriteIds,
-    filter,
-    type,
-    q,
-    sort,
-    folderAssignments,
-    visibleFolderIds,
-  ]);
+  }, [all, authSession, deleted, favoriteIds, filter, type, q, sort, folderScope]);
 
   useEffect(() => {
     setPage(1);
@@ -710,10 +550,105 @@ export function DocumentsPage() {
     toast("success", favoriteIds.includes(id) ? "已取消收藏" : "已加入收藏");
   };
 
-  const moveToFolder = (documentId: string, folderId: string) => {
-    setFolderAssignments((current) => ({ ...current, [documentId]: folderId }));
-    const folderName = folders.find((folder) => folder.id === folderId)?.name ?? "全部文档";
-    toast("success", `已移动到${folderName}`);
+  /**
+   * 目录没有独立接口：移动、改名、删除都归结为改写相关文档的 `path`。
+   * 逐条提交而非并发，单条失败不影响其余，最后统一汇报。
+   */
+  const assignPaths = useCallback(
+    async (
+      updates: Array<{ id: string; lockVersion: number; path: string }>,
+    ): Promise<string[]> => {
+      const failures: string[] = [];
+      for (const update of updates) {
+        try {
+          await api<Asset>(`/assets/${update.id}`, {
+            method: "PATCH",
+            headers: { "if-match": `"${update.lockVersion}"` },
+            body: { path: update.path },
+          });
+        } catch (error) {
+          failures.push(error instanceof Error ? error.message : "未知错误");
+        }
+      }
+      if (updates.length > failures.length) {
+        void queryClient.invalidateQueries({ queryKey: ["assets", "document"] });
+        void queryClient.invalidateQueries({ queryKey: ["home"] });
+      }
+      return failures;
+    },
+    [queryClient],
+  );
+
+  const pathUpdatesFor = (from: string, to: string) =>
+    all.flatMap((document) => {
+      const next = rewriteFolderPrefix(document.path ?? "", from, to);
+      return next === null
+        ? []
+        : [{ id: document.id, lockVersion: document.lockVersion, path: next }];
+    });
+
+  /** 展开某目录的所有上级，改名或移动后仍能看到它。 */
+  const expandAncestors = (folderPath: string) => {
+    const ancestors: string[] = [];
+    let current = folderPathOf(folderPath);
+    while (current) {
+      ancestors.push(current);
+      current = folderPathOf(current);
+    }
+    if (ancestors.length === 0) return;
+    setExpandedFolderIds((current) => [...new Set([...current, ...ancestors])]);
+  };
+
+  const moveToFolder = async (documentId: string, folderPath: string) => {
+    const document = all.find((item) => item.id === documentId);
+    if (!document) return;
+    const next = destinationPath(document, folderPath);
+    // 服务端以 `path` 唯一，落到同一个路径会报 ASSET_PATH_CONFLICT。
+    if (next === (document.path ?? "")) {
+      toast("info", "文档已在该目录下");
+      return;
+    }
+    const failures = await assignPaths([
+      { id: document.id, lockVersion: document.lockVersion, path: next },
+    ]);
+    if (failures.length > 0) {
+      toast("error", failures[0] as string);
+      return;
+    }
+    expandAncestors(folderPath);
+    toast("success", folderPath ? `已移动到「${folderPath}」` : "已移到全部文档");
+  };
+
+  const renameFolder = async (from: string, to: string) => {
+    const updates = pathUpdatesFor(from, to);
+    if (updates.length === 0) {
+      toast("info", "目录下暂无文档，无需改名");
+      return;
+    }
+    const failures = await assignPaths(updates);
+    if (failures.length > 0) {
+      toast("error", `${failures.length} 篇文档改名失败：${failures[0]}`);
+      return;
+    }
+    if (activeFolderId === from) setActiveFolderId(to);
+    else if (isInFolder(activeFolderId, from)) {
+      setActiveFolderId(rewriteFolderPrefix(activeFolderId, from, to) ?? ROOT_FOLDER_ID);
+    }
+    expandAncestors(to);
+    toast("success", `目录已重命名为「${fileNameOf(to)}」`);
+  };
+
+  /** 删除目录 = 把它下面的文档整体上提到父目录；目录随之从树中消失。 */
+  const removeFolder = async (from: string, to: string) => {
+    const updates = pathUpdatesFor(from, to);
+    const failures = updates.length > 0 ? await assignPaths(updates) : [];
+    if (failures.length > 0) {
+      toast("error", `${failures.length} 篇文档未能移出：${failures[0]}`);
+      return;
+    }
+    setExpandedFolderIds((current) => current.filter((id) => !isInFolder(id, from)));
+    if (isInFolder(activeFolderId, from)) setActiveFolderId(to || ROOT_FOLDER_ID);
+    toast("success", to ? `目录已删除，文档已移到「${to}」` : "目录已删除，文档已移到全部文档");
   };
 
   const openMoveDialog = (document: Asset) => {
@@ -721,7 +656,8 @@ export function DocumentsPage() {
     setMoveDialog({
       documentId: document.id,
       documentTitle: document.title,
-      folderId: folderAssignments[document.id] ?? inferredFolderId(document),
+      folderId: folderPathOf(document.path ?? ""),
+      newFolderPath: "",
     });
   };
 
@@ -747,33 +683,25 @@ export function DocumentsPage() {
     if (key === "restore") batchMutation.mutate({ action: "restore", ids: [document.id] });
   };
 
-  const confirmMoveToFolder = () => {
+  const confirmMoveToFolder = async () => {
     if (!moveDialog) return;
-    moveToFolder(moveDialog.documentId, moveDialog.folderId);
+    const typed = normalizeFolderPath(moveDialog.newFolderPath);
+    const target = typed || moveDialog.folderId;
     setMoveDialog(null);
+    await moveToFolder(moveDialog.documentId, target);
   };
 
   const activeFolderPath = useMemo(() => {
-    if (activeFolderId === "root") {
+    if (activeFolderId === ROOT_FOLDER_ID) {
       return FILTERS.find((item) => item.id === filter)?.label ?? "全部文档";
     }
-    const path: string[] = [];
-    let current = folders.find((folder) => folder.id === activeFolderId);
-    const visited = new Set<string>();
-    while (current && !visited.has(current.id)) {
-      path.unshift(current.name);
-      visited.add(current.id);
-      current = current.parentId
-        ? folders.find((folder) => folder.id === current?.parentId)
-        : undefined;
-    }
-    return path.join(" / ") || "全部文档";
+    return folderDisplayPath(folders, activeFolderId) || "全部文档";
   }, [activeFolderId, filter, folders]);
   useShellBreadcrumb("文档", activeFolderPath);
 
   const selectSystemView = (nextFilter: FilterId) => {
     setFilter(nextFilter);
-    setActiveFolderId("root");
+    setActiveFolderId(ROOT_FOLDER_ID);
     setTreePanelOpen(false);
   };
 
@@ -789,73 +717,65 @@ export function DocumentsPage() {
     );
   };
 
-  const openCreateFolder = (parentId: string | null) => {
-    setNewFolderName("");
-    setFolderDialog({ mode: "create", parentId });
-  };
-
   const openRenameFolder = (folder: DocumentFolder) => {
     setNewFolderName(folder.name);
-    setFolderDialog({ mode: "rename", parentId: folder.parentId, folderId: folder.id });
+    setFolderDialog({ folderId: folder.id });
   };
 
-  const saveFolder = () => {
-    const name = newFolderName.trim();
+  const saveFolder = async () => {
+    const name = normalizeFolderPath(newFolderName);
     if (!name || !folderDialog) return;
-    if (folderDialog.mode === "rename" && folderDialog.folderId) {
-      setFolders((current) =>
-        current.map((folder) =>
-          folder.id === folderDialog.folderId ? { ...folder, name } : folder,
-        ),
-      );
-      toast("success", `目录已重命名为“${name}”`);
-      setFolderDialog(null);
-      setNewFolderName("");
-      return;
-    }
-    const id = `folder-${Date.now()}`;
-    setFolders((current) => [...current, { id, name, parentId: folderDialog.parentId }]);
-    if (folderDialog.parentId) {
-      setExpandedFolderIds((current) =>
-        current.includes(folderDialog.parentId as string)
-          ? current
-          : [...current, folderDialog.parentId as string],
-      );
-    }
-    setActiveFolderId(id);
-    setFilter("all");
-    setNewFolderName("");
+    const from = folderDialog.folderId;
     setFolderDialog(null);
-    toast("success", `目录“${name}”已创建`);
+    setNewFolderName("");
+    await renameFolder(from, joinFolderPath(folderPathOf(from), name));
   };
 
   const deleteFolder = (folder: DocumentFolder) => {
-    if (!window.confirm(`删除目录“${folder.name}”及其子目录？文档将移到全部文档。`)) return;
-    const deletedIds = new Set([folder.id]);
-    let changed = true;
-    while (changed) {
-      changed = false;
-      for (const candidate of folders) {
-        if (
-          candidate.parentId &&
-          deletedIds.has(candidate.parentId) &&
-          !deletedIds.has(candidate.id)
-        ) {
-          deletedIds.add(candidate.id);
-          changed = true;
-        }
-      }
-    }
-    setFolders((current) => current.filter((candidate) => !deletedIds.has(candidate.id)));
-    setFolderAssignments((current) =>
-      Object.fromEntries(
-        Object.entries(current).filter(([, folderId]) => !deletedIds.has(folderId)),
-      ),
-    );
-    setExpandedFolderIds((current) => current.filter((id) => !deletedIds.has(id)));
-    if (deletedIds.has(activeFolderId)) setActiveFolderId("root");
-    toast("success", "目录已删除，文档已移到全部文档");
+    const parent = folderPathOf(folder.id);
+    const affected = pathUpdatesFor(folder.id, parent).length;
+    confirmDelete({
+      title: `删除目录「${folder.name}」？`,
+      content: affected
+        ? parent
+          ? `目录下的 ${affected} 篇文档会移到「${fileNameOf(parent)}」，子目录一并上提。`
+          : `目录下的 ${affected} 篇文档会移到「全部文档」。`
+        : "该目录下暂无文档。",
+      okText: "删除目录",
+      onConfirm: () => void removeFolder(folder.id, parent),
+    });
   };
+
+  // 目录归属曾经只存在本机 localStorage，这里做一次上传，避免改造变成静默丢数据。
+  useEffect(() => {
+    if (migrationCheckedRef.current || !docs) return;
+    migrationCheckedRef.current = true;
+    const migration = readLegacyFolderMigration(window.localStorage, docs.items);
+    if (!migration) return;
+    const legacyNames = legacyFolderNames(window.localStorage).slice(0, 4).join("、");
+    modal.confirm({
+      title: "检测到本地目录数据",
+      content: `旧版本的目录（${legacyNames}）只保存在本机。上传后这些目录会对 Web 端与 Obsidian 插件同时可见。`,
+      okText: "上传到云端",
+      cancelText: "暂不处理",
+      onOk: async () => {
+        const byId = new Map(docs.items.map((item) => [item.id, item]));
+        const updates = migration.updates.flatMap((update) => {
+          const asset = byId.get(update.id);
+          return asset
+            ? [{ id: update.id, lockVersion: asset.lockVersion, path: update.path }]
+            : [];
+        });
+        const failures = await assignPaths(updates);
+        if (failures.length > 0) {
+          toast("error", `${failures.length} 篇文档未能上传：${failures[0]}`);
+          return;
+        }
+        for (const key of migration.keys) window.localStorage.removeItem(key);
+        toast("success", `已上传 ${updates.length} 篇文档的目录`);
+      },
+    });
+  }, [assignPaths, docs, modal, toast]);
 
   const renderFolderTree = (parentId: string | null, depth = 0): ReactNode =>
     folders
@@ -907,12 +827,10 @@ export function DocumentsPage() {
                 onOpenChange={(open) => setOpenFolderMenuId(open ? folder.id : null)}
                 menu={{
                   items: [
-                    { key: "create", label: "新建子目录" },
                     { key: "rename", label: "重命名" },
                     { key: "delete", label: "删除目录", danger: true },
                   ],
                   onClick: ({ key }) => {
-                    if (key === "create") openCreateFolder(folder.id);
                     if (key === "rename") openRenameFolder(folder);
                     if (key === "delete") deleteFolder(folder);
                   },
@@ -951,7 +869,7 @@ export function DocumentsPage() {
               className={`sg-docs-move-folder ${selected ? "selected" : ""} ${moveDepthClasses[Math.min(depth, moveDepthClasses.length - 1)]}`}
               onClick={() =>
                 setMoveDialog((current) =>
-                  current ? { ...current, folderId: folder.id } : current,
+                  current ? { ...current, folderId: folder.id, newFolderPath: "" } : current,
                 )
               }
             >
@@ -974,17 +892,17 @@ export function DocumentsPage() {
         <div className="sg-docs-head-actions">
           <Button
             className="sg-assets-head-btn"
-            onClick={() => documentActions?.openDocumentFilePicker()}
+            onClick={() => documentActions?.openDocumentFilePicker({ pathPrefix: folderScope })}
           >
             <FileText size={15} /> 导入文件
           </Button>
           <Button
             className="sg-assets-head-btn"
-            onClick={() => documentActions?.openDocumentFolderPicker()}
+            onClick={() => documentActions?.openDocumentFolderPicker({ pathPrefix: folderScope })}
           >
             <FolderOpen size={15} /> 导入目录
           </Button>
-          <Button type="primary" onClick={() => navigate("/documents/new")}>
+          <Button type="primary" onClick={() => navigate(newDocumentHref)}>
             <Plus size={15} /> 新建文档
           </Button>
         </div>
@@ -1024,9 +942,6 @@ export function DocumentsPage() {
                 aria-label={treePanelOpen ? "收起目录面板" : "展开目录面板"}
               >
                 {treePanelOpen ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
-              </button>
-              <button type="button" onClick={() => openCreateFolder(null)} aria-label="新建根目录">
-                <FolderPlus size={15} />
               </button>
             </div>
           </div>
@@ -1120,7 +1035,7 @@ export function DocumentsPage() {
 
           {listLoading ? <Loading loading minHeight={360} /> : null}
 
-          {!listLoading && filter === "all" && activeFolderId === "root" && (
+          {!listLoading && filter === "all" && activeFolderId === ROOT_FOLDER_ID && (
             <section className="sg-docs-recent-section">
               <div className={`sg-row-between ${styles.recentHeader}`}>
                 <h2 className={`sg-h3 ${styles.sectionTitle}`}>最近编辑</h2>
@@ -1144,7 +1059,7 @@ export function DocumentsPage() {
                   title="还没有文档"
                   hint="创建第一份 Markdown 文档，或从模板快速开始。"
                   action={
-                    <Button type="primary" onClick={() => navigate("/documents/new")}>
+                    <Button type="primary" onClick={() => navigate(newDocumentHref)}>
                       <Plus size={15} /> 新建文档
                     </Button>
                   }
@@ -1518,19 +1433,36 @@ export function DocumentsPage() {
           <p className="sg-docs-move-hint">
             选择“{moveDialog?.documentTitle ?? "文档"}”要移动到的目录
           </p>
+          <Field label="目标目录">
+            <Input
+              value={moveDialog?.newFolderPath ?? ""}
+              onChange={(event) =>
+                setMoveDialog((current) =>
+                  current
+                    ? // 输入新目录时清掉列表选中，避免两处同时看起来生效
+                      { ...current, folderId: "", newFolderPath: event.target.value }
+                    : current,
+                )
+              }
+              placeholder="留空则用下面的选择；也可直接输入新目录，如「产品/客户项目」"
+              allowClear
+            />
+          </Field>
           <Scrollbar className="sg-docs-move-tree" role="radiogroup" aria-label="目标目录">
             <button
               type="button"
               role="radio"
-              aria-checked={moveDialog?.folderId === "root"}
-              className={`sg-docs-move-folder ${moveDialog?.folderId === "root" ? "selected" : ""}`}
+              aria-checked={moveDialog?.folderId === ""}
+              className={`sg-docs-move-folder ${moveDialog?.folderId === "" ? "selected" : ""}`}
               onClick={() =>
-                setMoveDialog((current) => (current ? { ...current, folderId: "root" } : current))
+                setMoveDialog((current) =>
+                  current ? { ...current, folderId: "", newFolderPath: "" } : current,
+                )
               }
             >
               <FileStack size={17} />
               <span>全部文档</span>
-              {moveDialog?.folderId === "root" ? (
+              {moveDialog?.folderId === "" ? (
                 <Check className="sg-docs-move-folder-check" size={17} />
               ) : null}
             </button>
@@ -1546,10 +1478,10 @@ export function DocumentsPage() {
       <Modal
         open={Boolean(folderDialog)}
         onCancel={() => setFolderDialog(null)}
-        title={folderDialog?.mode === "rename" ? "重命名目录" : "新建目录"}
+        title="重命名目录"
         footer={
           <Button type="primary" disabled={!newFolderName.trim()} onClick={saveFolder}>
-            {folderDialog?.mode === "rename" ? "保存" : "创建目录"}
+            保存
           </Button>
         }
         destroyOnHidden
