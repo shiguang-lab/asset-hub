@@ -3,13 +3,15 @@
   "files": {
     "includes": [
       "**",
-      "!!design/**",
-      "!!.data/**",
-      "!!**/.cache/**",
-      "!!**/.turbo/**",
-      "!!**/.pnpm-store/**",
-      "!!**/dist/**",
-      "!!**/node_modules/**"
+      "!!design",
+      "!!.data",
+      "!!**/.cache",
+      "!!**/.turbo",
+      "!!**/.pnpm-store",
+      "!!**/dist",
+      "!!**/.next",
+      "!!**/node_modules",
+      "!!apps/obsidian-plugin/main.js"
     ]
   },
   "formatter": {
