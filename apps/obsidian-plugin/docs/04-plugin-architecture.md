@@ -157,7 +157,7 @@ export interface VaultAdapter {
 interface PluginSettings {
   // 服务端
   serverUrl:        string;   // https://shiguanglab.com
-  apiUrl:           string;   // https://shiguanglab.com/api/v1
+  apiUrl:           string;   // https://doc.shiguanglab.com/api/v1
 
   // 同步
   syncRoot:         string;   // 默认「资产中心」
@@ -207,7 +207,7 @@ interface PluginSettings {
 
 高级
   服务地址        [https://shiguanglab.com]
-  接口地址        [https://shiguanglab.com/api/v1]
+  接口地址        [https://doc.shiguanglab.com/api/v1]
   [重建]          [同步]
 ```
 

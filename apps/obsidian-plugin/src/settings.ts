@@ -29,7 +29,7 @@ export interface PluginSettings {
 
 export const DEFAULT_SETTINGS: PluginSettings = {
   serverUrl: "https://shiguanglab.com",
-  apiUrl: "https://shiguanglab.com/api/v1",
+  apiUrl: "https://doc.shiguanglab.com/api/v1",
   syncRoot: "资产中心",
   syncEnabled: true,
   autoSyncInterval: 5,

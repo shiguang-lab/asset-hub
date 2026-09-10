@@ -25,10 +25,10 @@ describe("mergeSettings", () => {
   it("strips trailing slashes from the endpoints", () => {
     const merged = mergeSettings({
       serverUrl: "https://shiguanglab.com/",
-      apiUrl: "https://shiguanglab.com/api/v1///",
+      apiUrl: "https://doc.shiguanglab.com/api/v1///",
     });
     expect(merged.serverUrl).toBe("https://shiguanglab.com");
-    expect(merged.apiUrl).toBe("https://shiguanglab.com/api/v1");
+    expect(merged.apiUrl).toBe("https://doc.shiguanglab.com/api/v1");
   });
 
   it("restores an endpoint default when it is blanked out", () => {
