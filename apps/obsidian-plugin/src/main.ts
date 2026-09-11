@@ -535,9 +535,11 @@ export default class AssetHubPlugin extends Plugin {
   }
 
   #commands(): void {
-    const ribbonTitle = "打开知序文档中心";
-    this.addRibbonIcon("library", ribbonTitle, () => void this.#revealAssetHub());
-    this.app.workspace.onLayoutReady(() => this.#moveRibbonActionToEnd(ribbonTitle));
+    const ribbonTitle = "知序";
+    this.addRibbonIcon("sparkles", ribbonTitle, () => void this.#revealAssetHub());
+    this.app.workspace.onLayoutReady(() =>
+      this.#placeRibbonActionLast(ribbonTitle, ["打开知序文档中心"]),
+    );
     this.addCommand({
       id: "sync-now",
       name: "立即同步",
@@ -583,15 +585,26 @@ export default class AssetHubPlugin extends Plugin {
     });
   }
 
-  #moveRibbonActionToEnd(title: string): void {
+  #placeRibbonActionLast(title: string, obsoleteTitles: string[]): void {
     const ribbon = this.app.workspace.leftRibbon as unknown as OrderedRibbon;
     const id = `${this.manifest.id}:${title}`;
+    let changed = false;
+    for (const obsoleteTitle of obsoleteTitles) {
+      const obsoleteId = `${this.manifest.id}:${obsoleteTitle}`;
+      const obsoleteIndex = ribbon.items.findIndex((item) => item.id === obsoleteId);
+      if (obsoleteIndex < 0) continue;
+      ribbon.items.splice(obsoleteIndex, 1);
+      changed = true;
+    }
     const index = ribbon.items.findIndex((item) => item.id === id);
-    if (index < 0 || index === ribbon.items.length - 1) return;
-    const [action] = ribbon.items.splice(index, 1);
-    if (!action) return;
-    ribbon.items.push(action);
-    ribbon.onChange(true);
+    if (index >= 0 && index !== ribbon.items.length - 1) {
+      const [action] = ribbon.items.splice(index, 1);
+      if (action) {
+        ribbon.items.push(action);
+        changed = true;
+      }
+    }
+    if (changed) ribbon.onChange(true);
   }
 
   #remoteIdFor(file: TAbstractFile): string | null {
