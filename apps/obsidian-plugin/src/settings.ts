@@ -5,6 +5,8 @@ export interface PluginSettings {
   serverUrl: string;
   /** Base URL of the asset hub API. */
   apiUrl: string;
+  /** Web application embedded in the Obsidian workspace. */
+  webUrl: string;
 
   syncRoot: string;
   syncEnabled: boolean;
@@ -30,13 +32,14 @@ export interface PluginSettings {
 export const DEFAULT_SETTINGS: PluginSettings = {
   serverUrl: "https://shiguanglab.com",
   apiUrl: "https://doc.shiguanglab.com/api/v1",
+  webUrl: "https://doc.shiguanglab.com",
   syncRoot: "拾光资产中心",
-  syncEnabled: true,
+  syncEnabled: false,
   autoSyncInterval: 5,
   syncOnStartup: true,
   realtimeEnabled: true,
   deleteRemoteOnLocalDelete: false,
-  deleteLocalOnRemoteDelete: true,
+  deleteLocalOnRemoteDelete: false,
   showStatusBar: true,
   debugLogging: false,
 };
@@ -44,7 +47,12 @@ export const DEFAULT_SETTINGS: PluginSettings = {
 /** `data.json` in the plugin directory. */
 export interface PersistedData {
   settings?: Partial<PluginSettings>;
-  auth?: AuthState | null;
+  auth?: AuthState | EncryptedAuthState | null;
+}
+
+export interface EncryptedAuthState {
+  format: "electron-safe-storage-v1";
+  ciphertext: string;
 }
 
 /**
@@ -59,6 +67,7 @@ export function mergeSettings(stored: Partial<PluginSettings> | undefined): Plug
   merged.syncRoot = asText(merged.syncRoot).trim() || DEFAULT_SETTINGS.syncRoot;
   merged.serverUrl = asEndpoint(merged.serverUrl, DEFAULT_SETTINGS.serverUrl);
   merged.apiUrl = asEndpoint(merged.apiUrl, DEFAULT_SETTINGS.apiUrl);
+  merged.webUrl = asEndpoint(merged.webUrl, DEFAULT_SETTINGS.webUrl);
   return merged;
 }
 

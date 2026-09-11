@@ -11,7 +11,7 @@ import { SyncIndexStore } from "./index-store.js";
 import type { SyncBinding } from "./types.js";
 
 const NOW = 1_700_000_000_000;
-const ROOT = "资产中心";
+const ROOT = DEFAULT_SETTINGS.syncRoot;
 
 class MemoryVault implements VaultAdapter {
   #mtime = 1;
@@ -195,7 +195,7 @@ async function createHarness(overrides: Partial<PluginSettings> = {}): Promise<H
   await index.load();
 
   const notices: Array<{ message: string; level: NoticeLevel }> = [];
-  const settings: PluginSettings = { ...DEFAULT_SETTINGS, ...overrides };
+  const settings: PluginSettings = { ...DEFAULT_SETTINGS, syncEnabled: true, ...overrides };
   const engine = new SyncEngine({
     vault,
     documents: documents as unknown as DocumentsApi,
@@ -395,7 +395,7 @@ describe("SyncEngine", () => {
   });
 
   it("trashes the local file when the server dropped the document", async () => {
-    const h = await createHarness();
+    const h = await createHarness({ deleteLocalOnRemoteDelete: true });
     h.vault.seed(`${ROOT}/笔记.md`, "原始内容");
     h.index.upsert(binding());
 

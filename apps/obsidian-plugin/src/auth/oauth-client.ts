@@ -1,19 +1,29 @@
 import { requestUrl } from "obsidian";
 import type { OAuthTokenResponse } from "../api/types.js";
 import type { Logger } from "../logger.js";
-import { CALLBACK_PATH, LoopbackServer, OAuthCallbackError } from "./loopback-server.js";
-import { createPkceChallenge, randomState } from "./pkce.js";
 import type { AuthState } from "./token-store.js";
 
 export const CLIENT_ID = "obsidian-asset-hub";
-export const DEFAULT_SCOPE = "documents:read documents:write offline_access";
-const CALLBACK_TIMEOUT_MS = 120_000;
+export const DEFAULT_SCOPE = "documents:read documents:write web:session offline_access";
 
 export interface AuthorizationServerMetadata {
   issuer: string;
   authorization_endpoint: string;
   token_endpoint: string;
+  device_authorization_endpoint: string;
   revocation_endpoint?: string;
+}
+interface DeviceAuthorizationResponse {
+  device_code: string;
+  user_code: string;
+  verification_uri: string;
+  verification_uri_complete?: string;
+  expires_in: number;
+  interval?: number;
+}
+interface WebSessionResponse {
+  url: string;
+  expires_in: number;
 }
 
 export class OAuthError extends Error {
@@ -27,20 +37,17 @@ export class OAuthError extends Error {
 }
 
 export interface OAuthClientOptions {
-  /** Public origin of the authorization server, e.g. https://shiguanglab.com */
   serverUrl: () => string;
-  /** Opens a URL in the user's system browser. */
   openExternal: (url: string) => void;
   logger: Logger;
+  accessToken?: () => Promise<string>;
   now?: () => number;
 }
 
 export class OAuthClient {
   #metadata: AuthorizationServerMetadata | null = null;
-
   constructor(private readonly options: OAuthClientOptions) {}
 
-  /** RFC 8414 discovery, cached for the lifetime of the session. */
   async discover(): Promise<AuthorizationServerMetadata> {
     if (this.#metadata) return this.#metadata;
     const url = `${this.baseUrl()}/.well-known/oauth-authorization-server`;
@@ -49,136 +56,127 @@ export class OAuthClient {
       headers: { Accept: "application/json" },
       throw: false,
     });
-    if (response.status !== 200) {
-      throw new OAuthError(
-        "discovery_failed",
-        `无法读取授权服务器元数据（${url} 返回 ${response.status}）。请检查服务地址设置。`,
-      );
-    }
+    if (response.status !== 200)
+      throw new OAuthError("discovery_failed", `无法读取授权服务器元数据（${response.status}）。`);
     const body = response.json as Partial<AuthorizationServerMetadata>;
-    if (!body.authorization_endpoint || !body.token_endpoint) {
-      throw new OAuthError("discovery_invalid", `授权服务器元数据缺少必要端点：${url}`);
-    }
+    if (!body.authorization_endpoint || !body.token_endpoint || !body.device_authorization_endpoint)
+      throw new OAuthError("discovery_invalid", "授权服务器尚未启用设备登录。");
     this.#metadata = {
       issuer: body.issuer ?? this.baseUrl(),
       authorization_endpoint: body.authorization_endpoint,
       token_endpoint: body.token_endpoint,
+      device_authorization_endpoint: body.device_authorization_endpoint,
       ...(body.revocation_endpoint ? { revocation_endpoint: body.revocation_endpoint } : {}),
     };
     return this.#metadata;
   }
 
-  /**
-   * Runs the authorization code + PKCE flow against the system browser and
-   * returns the freshly issued credentials.
-   */
   async authorize(scope: string = DEFAULT_SCOPE): Promise<AuthState> {
     const metadata = await this.discover();
-    const pkce = createPkceChallenge();
-    const state = randomState();
-    const loopback = new LoopbackServer();
-    try {
-      const port = await loopback.start();
-      const redirectUri = `http://127.0.0.1:${port}${CALLBACK_PATH}`;
-      this.options.logger.debug("oauth redirect", redirectUri);
-
-      const authorizeUrl = new URL(metadata.authorization_endpoint);
-      authorizeUrl.searchParams.set("response_type", "code");
-      authorizeUrl.searchParams.set("client_id", CLIENT_ID);
-      authorizeUrl.searchParams.set("redirect_uri", redirectUri);
-      authorizeUrl.searchParams.set("scope", scope);
-      authorizeUrl.searchParams.set("state", state);
-      authorizeUrl.searchParams.set("code_challenge", pkce.challenge);
-      authorizeUrl.searchParams.set("code_challenge_method", pkce.method);
-
-      this.options.openExternal(authorizeUrl.toString());
-      const callback = await loopback.waitForCallback(state, CALLBACK_TIMEOUT_MS);
-      const tokens = await this.exchangeCode({
-        code: callback.code,
-        verifier: pkce.verifier,
-        redirectUri,
-        tokenEndpoint: metadata.token_endpoint,
-      });
-      return toAuthState(tokens, metadata.issuer, this.now());
-    } finally {
-      // Always released: a lingering listener on a loopback port is a needless
-      // local attack surface.
-      await loopback.close();
+    const request = await this.postForm<DeviceAuthorizationResponse>(
+      metadata.device_authorization_endpoint,
+      { client_id: CLIENT_ID, scope },
+    );
+    if (!request.device_code || !request.verification_uri || typeof request.expires_in !== "number")
+      throw new OAuthError("invalid_response", "设备授权响应不完整。");
+    this.options.openExternal(request.verification_uri_complete || request.verification_uri);
+    const deadline = this.now() + request.expires_in * 1000;
+    let interval = Math.max(1, request.interval ?? 5) * 1000;
+    while (this.now() < deadline) {
+      await wait(interval);
+      try {
+        const tokens = await this.postForm<OAuthTokenResponse>(metadata.token_endpoint, {
+          grant_type: "urn:ietf:params:oauth:grant-type:device_code",
+          device_code: request.device_code,
+          client_id: CLIENT_ID,
+        });
+        validateTokens(tokens);
+        return toAuthState(tokens, metadata.issuer, this.now());
+      } catch (error) {
+        if (error instanceof OAuthError && error.code === "authorization_pending") continue;
+        if (error instanceof OAuthError && error.code === "slow_down") {
+          interval += 5_000;
+          continue;
+        }
+        throw error;
+      }
     }
+    throw new OAuthError("expired_token", "登录请求已过期，请重新发起。");
   }
 
-  async exchangeCode(input: {
-    code: string;
-    verifier: string;
-    redirectUri: string;
-    tokenEndpoint: string;
-  }): Promise<OAuthTokenResponse> {
-    return await this.postForm(input.tokenEndpoint, {
-      grant_type: "authorization_code",
-      code: input.code,
-      redirect_uri: input.redirectUri,
-      client_id: CLIENT_ID,
-      code_verifier: input.verifier,
-    });
-  }
-
-  /** Refresh callback for `TokenStore`. */
   async refresh(refreshToken: string): Promise<OAuthTokenResponse> {
     const metadata = await this.discover();
-    return await this.postForm(metadata.token_endpoint, {
+    const tokens = await this.postForm<OAuthTokenResponse>(metadata.token_endpoint, {
       grant_type: "refresh_token",
       refresh_token: refreshToken,
       client_id: CLIENT_ID,
     });
+    validateTokens(tokens);
+    return tokens;
   }
 
-  /**
-   * RFC 7009 revocation. Failures are swallowed by the caller: the user asked
-   * to sign out, and the local credentials are cleared either way.
-   */
   async revoke(refreshToken: string): Promise<void> {
     const metadata = await this.discover();
-    if (!metadata.revocation_endpoint) return;
-    await this.postForm(metadata.revocation_endpoint, {
-      token: refreshToken,
-      token_type_hint: "refresh_token",
-      client_id: CLIENT_ID,
-    });
+    if (metadata.revocation_endpoint)
+      await this.postForm<object>(metadata.revocation_endpoint, {
+        token: refreshToken,
+        token_type_hint: "refresh_token",
+        client_id: CLIENT_ID,
+      });
   }
 
-  private async postForm(
+  async createWebSession(returnTo: string): Promise<string> {
+    const token = await this.options.accessToken?.();
+    if (!token) throw new OAuthError("invalid_token", "尚未登录知序账号。");
+    const result = await this.postForm<WebSessionResponse>(
+      `${this.baseUrl()}/oauth/web-session-ticket`,
+      { return_to: returnTo },
+      { Authorization: `Bearer ${token}` },
+    );
+    if (!result.url) throw new OAuthError("invalid_response", "未获得页面登录地址。");
+    return result.url;
+  }
+
+  private async postForm<T extends object>(
     endpoint: string,
     form: Record<string, string>,
-  ): Promise<OAuthTokenResponse> {
+    extraHeaders: Record<string, string> = {},
+  ): Promise<T> {
     const response = await requestUrl({
       url: endpoint,
       method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Accept: "application/json",
+        ...extraHeaders,
+      },
       body: new URLSearchParams(form).toString(),
       throw: false,
     });
     const body = readJson(response.status, response.text) as {
       error?: string;
       error_description?: string;
-    } & Partial<OAuthTokenResponse>;
-    if (response.status !== 200 || body.error) {
+    } & T;
+    if (response.status < 200 || response.status >= 300 || body.error)
       throw new OAuthError(body.error ?? `http_${response.status}`, body.error_description ?? "");
-    }
-    if (!body.access_token || typeof body.expires_in !== "number") {
-      throw new OAuthError("invalid_response", "授权服务器返回的令牌响应不完整。");
-    }
-    return body as OAuthTokenResponse;
+    return body;
   }
 
   private baseUrl(): string {
     return this.options.serverUrl().replace(/\/+$/, "");
   }
-
   private now(): number {
     return this.options.now?.() ?? Date.now();
   }
 }
 
+function validateTokens(tokens: Partial<OAuthTokenResponse>): asserts tokens is OAuthTokenResponse {
+  if (!tokens.access_token || typeof tokens.expires_in !== "number")
+    throw new OAuthError("invalid_response", "授权服务器返回的令牌响应不完整。");
+}
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
 function readJson(status: number, text: string): unknown {
   try {
     return JSON.parse(text) as unknown;
@@ -200,10 +198,6 @@ export function toAuthState(tokens: OAuthTokenResponse, issuer: string, now: num
   };
 }
 
-/**
- * Reads the access token payload for display only. The signature is verified by
- * the resource server; the plugin never trusts this value for access decisions.
- */
 export function decodeJwtPayload(token: string): Record<string, unknown> | null {
   const parts = token.split(".");
   if (parts.length !== 3 || !parts[1]) return null;
@@ -216,5 +210,3 @@ export function decodeJwtPayload(token: string): Record<string, unknown> | null 
     return null;
   }
 }
-
-export { OAuthCallbackError };

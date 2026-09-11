@@ -37,6 +37,30 @@ function kinds(actions: SyncAction[]): string[] {
 }
 
 describe("planSync", () => {
+  it("ignores unbound local and remote documents in per-document mode", () => {
+    const actions = planSync(
+      {
+        local: [local("任意目录/同名.md", HASH_A)],
+        remote: [remote("ast_2", "目标目录/同名.md", 1)],
+        bindings: [],
+      },
+      { ...OPTIONS, associationsOnly: true },
+    );
+    expect(actions).toEqual([]);
+  });
+
+  it("keeps a bound local path when the remote document is renamed", () => {
+    const actions = planSync(
+      {
+        local: [local("本地/笔记.md", HASH_A)],
+        remote: [remote("ast_1", "云端/新名字.md", 2)],
+        bindings: [binding({ vaultPath: "本地/笔记.md" })],
+      },
+      { ...OPTIONS, associationsOnly: true },
+    );
+    expect(actions[0]).toMatchObject({ kind: "pull", vaultPath: "本地/笔记.md" });
+  });
+
   it("creates a remote document for an unbound local file", () => {
     const actions = planSync(
       { local: [local("资产中心/新笔记.md", HASH_A)], remote: [], bindings: [] },

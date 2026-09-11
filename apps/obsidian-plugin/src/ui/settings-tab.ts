@@ -39,7 +39,7 @@ export class SettingsTab extends PluginSettingTab {
         );
       containerEl.createEl("p", {
         cls: "setting-item-description",
-        text: "访问令牌以明文保存在本插件的 data.json 中（Obsidian 未提供系统钥匙串）。请勿将插件目录提交到公开仓库。",
+        text: "桌面端使用系统凭据保护能力加密保存令牌；系统加密不可用时不持久化令牌，下次启动需重新登录。",
       });
     } else {
       new Setting(containerEl)
@@ -58,63 +58,15 @@ export class SettingsTab extends PluginSettingTab {
 
     containerEl.createEl("h3", { text: "同步" });
     new Setting(containerEl)
-      .setName("同步根目录")
-      .setDesc("云端文档将同步到这个文件夹下，其目录结构保持一致。")
-      .addText((text) =>
-        text.setValue(settings.syncRoot).onChange(async (value) => {
-          await this.deps.saveSettings({ syncRoot: value.trim() || settings.syncRoot });
-        }),
-      );
-
-    new Setting(containerEl).setName("启用同步").addToggle((toggle) =>
-      toggle.setValue(settings.syncEnabled).onChange(async (value) => {
-        await this.deps.saveSettings({ syncEnabled: value });
-      }),
-    );
-
-    new Setting(containerEl).setName("启动时同步").addToggle((toggle) =>
-      toggle.setValue(settings.syncOnStartup).onChange(async (value) => {
-        await this.deps.saveSettings({ syncOnStartup: value });
-      }),
-    );
-
-    new Setting(containerEl)
-      .setName("自动同步间隔")
-      .setDesc("单位：分钟。设为 0 关闭定时同步。")
-      .addText((text) =>
-        text.setValue(String(settings.autoSyncInterval)).onChange(async (value) => {
-          const parsed = Number.parseInt(value, 10);
-          await this.deps.saveSettings({
-            autoSyncInterval:
-              Number.isFinite(parsed) && parsed >= 0 ? parsed : settings.autoSyncInterval,
-          });
-        }),
-      );
-
-    new Setting(containerEl)
-      .setName("实时更新")
-      .setDesc("订阅服务端事件，远端修改几乎立即落地。")
+      .setName("自动双向同步")
+      .setDesc(
+        "开启后在启动、定时和本地或云端发生变化时同步已关联文档。冲突会保留双方版本并等待处理。",
+      )
       .addToggle((toggle) =>
-        toggle.setValue(settings.realtimeEnabled).onChange(async (value) => {
-          await this.deps.saveSettings({ realtimeEnabled: value });
+        toggle.setValue(settings.syncEnabled).onChange(async (value) => {
+          await this.deps.saveSettings({ syncEnabled: value });
         }),
       );
-
-    containerEl.createEl("h3", { text: "删除行为" });
-    new Setting(containerEl)
-      .setName("本地删除时同步删除云端")
-      .setDesc("⚠ 开启后在 Obsidian 删除文件会软删除云端文档。默认关闭。")
-      .addToggle((toggle) =>
-        toggle.setValue(settings.deleteRemoteOnLocalDelete).onChange(async (value) => {
-          await this.deps.saveSettings({ deleteRemoteOnLocalDelete: value });
-        }),
-      );
-
-    new Setting(containerEl).setName("云端删除时删除本地").addToggle((toggle) =>
-      toggle.setValue(settings.deleteLocalOnRemoteDelete).onChange(async (value) => {
-        await this.deps.saveSettings({ deleteLocalOnRemoteDelete: value });
-      }),
-    );
 
     containerEl.createEl("h3", { text: "界面" });
     new Setting(containerEl).setName("显示状态栏").addToggle((toggle) =>
@@ -145,9 +97,14 @@ export class SettingsTab extends PluginSettingTab {
         await this.deps.saveSettings({ apiUrl: value.trim() });
       }),
     );
+    new Setting(containerEl).setName("知序页面地址").addText((text) =>
+      text.setValue(settings.webUrl).onChange(async (value) => {
+        await this.deps.saveSettings({ webUrl: value.trim() });
+      }),
+    );
     new Setting(containerEl)
       .setName("重建同步索引")
-      .setDesc("索引损坏或需要全量重新比对时使用。")
+      .setDesc("索引损坏时使用。重建会清除全部文档关联，不删除本地或云端内容。")
       .addButton((button) =>
         button.setButtonText("重建").onClick(async () => {
           await this.deps.rebuildIndex();

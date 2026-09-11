@@ -1,5 +1,7 @@
 # Obsidian 插件：总览与架构决策
 
+> 历史架构稿：现状勘察和旧实施顺序保留供追溯。新版产品范围以 [05-product-design.md](./05-product-design.md) 为准，OAuth 目标方案以 [01-oauth-design.md](./01-oauth-design.md) 的设备授权流程为准。
+
 将「知序资产中心」的文档中心接入 Obsidian，使用户在 Obsidian 内完成文档的浏览、编辑、创建、组织与同步。
 
 **范围限定**：仅文档中心（`type = document | html`）。不含调研（Research）、演示（Presentation）、数据集（Dataset）、图表（Chart）、知识库问答。

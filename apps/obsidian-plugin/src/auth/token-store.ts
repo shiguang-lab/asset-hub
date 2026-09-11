@@ -4,10 +4,9 @@ import type { Logger } from "../logger.js";
 /**
  * Persisted credential state.
  *
- * Obsidian exposes no system keychain, so this is written to `data.json` in
- * plain text. That is a property of the platform, not a choice made here; the
- * mitigations are the short access token lifetime, server-side revocation and
- * telling the user plainly.
+ * The plugin persists this through Electron safeStorage. When system-backed
+ * encryption is unavailable, the state remains usable for the current process
+ * but is not written to `data.json`.
  */
 export interface AuthState {
   accessToken: string;

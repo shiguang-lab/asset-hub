@@ -21,6 +21,13 @@ export interface RemoteContent {
 export class DocumentsApi {
   constructor(private readonly client: ApiClient) {}
 
+  async listFolders(): Promise<string[]> {
+    const result = await this.client.request<{ items: Array<{ path: string }> }>({
+      path: "/document-folders",
+    });
+    return result.items.map((item) => item.path).filter(Boolean);
+  }
+
   /**
    * Lists every document, following the cursor to exhaustion.
    *

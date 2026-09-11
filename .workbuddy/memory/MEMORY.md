@@ -56,3 +56,8 @@
 - broker 模式：`.env.local` 配 `ASSET_HUB_LOCAL_BROKER_ENABLED=true` + 线上账号密码 + `ASSET_HUB_AUTH_TARGET=https://shiguanglab.com`；接口走线上需 `ASSET_HUB_LOCAL_API_TARGET=http://100.87.115.78:3701`。
 - 启动命令：`cd apps/web && node node_modules/vite/dist/node/cli.js --port 3000 --strictPort`（勿用 `node .bin/vite`，那是 shell 脚本）。
 - 授权由 broker 向 shiguanglab.com 换 identity token 注入 x-sg-identity 头，线上 API JWKS 校验；dev 强制监听 127.0.0.1。
+- **边缘网关真源**：doc/shiguanglab 域名的 Caddyfile 真源在 `shiguang/deploy/access-gateway/Caddyfile`（独立 deploy 仓库），NAS 落地 `/volume1/docker/shiguang-deploy/access-gateway/`，发布跑 `deploy.sh`（validate→备份→重建→健康断言）。改边缘路由不要改 `shiguang/access-gateway` 代码仓库里的副本（已落后）。
+- **原生客户端 API 鉴权链路**：`Authorization: Bearer`（at+jwt）在边缘跳过 forward_auth 直透 `asset-hub-api:3001`，API 用 JWKS 自校验（`apps/api/src/platform/identity.ts` + `bootstrap/app.ts` 的 oauthVerifier）；无 Bearer 仍走 forward_auth（浏览器 session）。OAuth 端点（`/.well-known/oauth-authorization-server`、`/oauth/*`）在 shiguanglab.com host 直连 auth-service，不剥 Cookie、不加网关 token。
+
+## 本地调试 web
+- **网关配置只认一份**：唯一真源 `shiguang/deploy/access-gateway/Caddyfile`。源码仓库 `shiguang/access-gateway` 的 Caddyfile 仅是镜像内嵌兜底（被 NAS 挂载覆盖），已同步为真源逐字节一致，改路由永远只改 deploy 仓库。NAS 目录已清理散落 `Caddyfile.bak.*`，历史备份统一在 `backups/`（deploy.sh 自动生成）。

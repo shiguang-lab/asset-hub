@@ -4,6 +4,7 @@ import { normalisePath } from "./path-mapper.js";
 export interface WatcherOptions {
   vault: VaultAdapter;
   syncRoot: () => string;
+  isTracked?: (path: string) => boolean;
   onTrigger: (reason: string) => void;
   debounceMs?: number;
 }
@@ -46,6 +47,7 @@ export class VaultWatcher {
   }
 
   #consider(reason: string, path: string): void {
+    if (this.options.isTracked && !this.options.isTracked(normalisePath(path))) return;
     if (!this.#isInsideSyncRoot(path)) return;
     this.#reason = reason;
     const delay = this.options.debounceMs ?? DEFAULT_DEBOUNCE_MS;

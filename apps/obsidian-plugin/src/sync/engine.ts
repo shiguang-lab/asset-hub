@@ -39,6 +39,8 @@ export interface SyncEngineDeps {
   onProgress: (progress: SyncProgress) => void;
   onNotice: (message: string, level: NoticeLevel) => void;
   now?: () => number;
+  /** Reconcile only explicit per-document bindings. */
+  associationsOnly?: boolean;
 }
 
 /**
@@ -188,6 +190,9 @@ export class SyncEngine {
         syncRoot: settings.syncRoot,
         deleteRemoteOnLocalDelete: settings.deleteRemoteOnLocalDelete,
         deleteLocalOnRemoteDelete: settings.deleteLocalOnRemoteDelete,
+        ...(this.deps.associationsOnly !== undefined
+          ? { associationsOnly: this.deps.associationsOnly }
+          : {}),
       },
     );
     if (actions.length === 0) return;
@@ -214,6 +219,24 @@ export class SyncEngine {
   }
 
   async #scanLocal(settings: PluginSettings): Promise<LocalSnapshot[]> {
+    if (this.deps.associationsOnly) {
+      const entries = await this.deps.vault.list("");
+      const byPath = new Map(entries.map((entry) => [normalisePath(entry.path), entry]));
+      const snapshots: LocalSnapshot[] = [];
+      for (const binding of this.deps.index.bindings) {
+        const path = normalisePath(binding.vaultPath);
+        const entry = byPath.get(path);
+        if (!entry || !/\.md$/i.test(path)) continue;
+        const cached = this.#hashes.get(path);
+        const hash =
+          cached && cached.mtime === entry.mtime
+            ? cached.hash
+            : contentHash(await this.deps.vault.read(path));
+        this.#hashes.set(path, { mtime: entry.mtime, hash });
+        snapshots.push({ vaultPath: path, hash, mtime: entry.mtime });
+      }
+      return snapshots;
+    }
     const root = normalisePath(settings.syncRoot);
     if (!(await this.deps.vault.exists(root))) return [];
     const entries = await this.deps.vault.list(root);

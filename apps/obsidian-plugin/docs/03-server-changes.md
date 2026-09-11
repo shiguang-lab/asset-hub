@@ -1,5 +1,7 @@
 # 服务端改动清单
 
+> 历史实施稿：已完成能力可作为代码线索，但授权码 + loopback 相关内容不再是目标方案。OAuth 以 [01-oauth-design.md](./01-oauth-design.md) 的设备授权流程为准，产品边界以 [05-product-design.md](./05-product-design.md) 为准。
+
 插件依赖的服务端能力缺口。按依赖顺序排列。
 
 ## 0. 前置：迁移机制缺失（阻塞项）

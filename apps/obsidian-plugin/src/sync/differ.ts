@@ -3,6 +3,7 @@ import type { LocalSnapshot, RemoteSnapshot, SyncAction, SyncBinding } from "./t
 
 export interface DifferOptions {
   syncRoot: string;
+  associationsOnly?: boolean;
   /** When false, a file removed locally never removes the server document. */
   deleteRemoteOnLocalDelete: boolean;
   /** When false, a document removed on the server leaves the local file alone. */
@@ -115,7 +116,9 @@ export function planSync(input: DifferInput, options: DifferOptions): SyncAction
         actions.push({
           kind: "pull",
           remoteId: decision.remote.remoteId,
-          vaultPath: toVaultPath(decision.remote.remotePath, options.syncRoot),
+          vaultPath: options.associationsOnly
+            ? decision.binding.vaultPath
+            : toVaultPath(decision.remote.remotePath, options.syncRoot),
           remotePath: normalisePath(decision.remote.remotePath),
           remoteVersion: decision.remote.version,
           previousVaultPath: decision.previousVaultPath,
@@ -171,6 +174,8 @@ export function planSync(input: DifferInput, options: DifferOptions): SyncAction
       }
     }
   });
+
+  if (options.associationsOnly) return actions;
 
   for (const entry of input.local) {
     const path = normalisePath(entry.vaultPath);

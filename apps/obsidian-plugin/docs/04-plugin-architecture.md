@@ -1,5 +1,7 @@
 # 插件工程架构
 
+> 历史架构稿：旧目录结构和设置保留供追溯。当前实现与技术契约见 [05-product-design.md](./05-product-design.md) 和 [01-oauth-design.md](./01-oauth-design.md)。
+
 ## 1. 目录结构
 
 ```

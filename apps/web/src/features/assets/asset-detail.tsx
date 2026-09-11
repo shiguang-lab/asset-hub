@@ -4,7 +4,7 @@ import { Button, Card, Input, Modal, Select, Switch, Tabs, Tag } from "antd";
 import { createStyles } from "antd-style";
 import { Download, FilePenLine, Pencil } from "lucide-react";
 import { useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { canWriteWorkspace, getAuthSession, isWorkspaceAdmin } from "../../auth/session.js";
 import {
   type Asset,
@@ -50,13 +50,14 @@ export function AssetDetailPage() {
   const { confirmDelete } = useDeleteConfirm();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [tab, setTab] = useState("content");
   const [kbModal, setKbModal] = useState(false);
   const [kbId, setKbId] = useState("");
   const [shareModal, setShareModal] = useState(false);
   const [shareSubject, setShareSubject] = useState("");
   const [shareRole, setShareRole] = useState("viewer");
-  const [publishOpen, setPublishOpen] = useState(false);
+  const [publishOpen, setPublishOpen] = useState(searchParams.get("publish") === "1");
   const { styles } = useAssetDetailStyles();
   const session = getAuthSession();
   const workspaceWritable = canWriteWorkspace(session);

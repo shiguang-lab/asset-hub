@@ -3,6 +3,7 @@ import { ApiClient, describe, type TokenProvider } from "./api/client.js";
 import { DocumentsApi } from "./api/documents.js";
 import { consumeEventStream, type ServerEvent } from "./api/events.js";
 import { OAuthClient } from "./auth/oauth-client.js";
+import { decodeAuth, encodeAuth } from "./auth/credential-codec.js";
 import {
   AuthRequiredError,
   type AuthState,
@@ -14,11 +15,14 @@ import { ObsidianVaultAdapter } from "./obsidian/vault-adapter.js";
 import { mergeSettings, type PersistedData, type PluginSettings } from "./settings.js";
 import { type NoticeLevel, SyncEngine, type SyncProgress } from "./sync/engine.js";
 import { type IndexStorage, SyncIndexStore } from "./sync/index-store.js";
-import { toRemotePath } from "./sync/path-mapper.js";
 import { VaultWatcher } from "./sync/watcher.js";
 import { SettingsTab } from "./ui/settings-tab.js";
 import { badgeText, type SyncBadge } from "./ui/status-bar.js";
 import { SyncStatusView, VIEW_TYPE_SYNC_STATUS } from "./ui/status-view.js";
+import { AssetHubView, VIEW_TYPE_ASSET_HUB } from "./ui/asset-hub-view.js";
+import { chooseRemoteFolder, resolvePathCollision } from "./ui/sync-modals.js";
+import { contentHash, normaliseContent } from "./sync/hash.js";
+import { normalisePath, titleForPath } from "./sync/path-mapper.js";
 
 const INDEX_FILE = "sync-index.json";
 const INDEX_BACKUP_FILE = "sync-index.corrupt.json";
@@ -33,6 +37,7 @@ export default class AssetHubPlugin extends Plugin {
    */
   declare settings: PluginSettings;
   private auth: AuthState | null = null;
+  private storedAuth: NonNullable<PersistedData["auth"]> | null = null;
   private logger!: Logger;
 
   private vault!: ObsidianVaultAdapter;
@@ -60,6 +65,7 @@ export default class AssetHubPlugin extends Plugin {
       serverUrl: () => this.settings.serverUrl,
       openExternal: (url) => this.#openExternal(url),
       logger: this.logger,
+      accessToken: () => this.tokens.getAccessToken(),
     });
     this.tokens = new TokenStore(
       this.auth,
@@ -81,10 +87,12 @@ export default class AssetHubPlugin extends Plugin {
       logger: this.logger,
       onProgress: (progress) => this.#onProgress(progress),
       onNotice: (message, level) => this.#notify(message, level),
+      associationsOnly: true,
     });
     this.watcher = new VaultWatcher({
       vault: this.vault,
-      syncRoot: () => this.settings.syncRoot,
+      syncRoot: () => "",
+      isTracked: (path) => Boolean(this.index.find(path)),
       onTrigger: (reason) => {
         this.logger.debug(`vault change: ${reason}`);
         void this.#sync("vault");
@@ -107,6 +115,65 @@ export default class AssetHubPlugin extends Plugin {
           openSettings: () => this.#openSettings(),
         }),
     );
+    this.registerView(
+      VIEW_TYPE_ASSET_HUB,
+      (leaf) => new AssetHubView(leaf, (returnTo) => this.#webSessionURL(returnTo)),
+    );
+
+    this.registerEvent(
+      this.app.workspace.on("file-menu", (menu, file) => {
+        if (!(file instanceof TFile) || file.extension.toLowerCase() !== "md") return;
+        const binding = this.index.find(file.path);
+        menu.addSeparator();
+        menu.addItem((item) =>
+          item
+            .setSection("知序")
+            .setIcon("refresh-cw")
+            .setTitle(binding ? "知序：同步" : "知序：同步到文档中心")
+            .onClick(() => void this.#syncFile(file)),
+        );
+        if (!binding) return;
+        menu.addItem((item) =>
+          item
+            .setSection("知序")
+            .setIcon("download")
+            .setTitle("知序：拉取云端版本")
+            .onClick(() => void this.#pullFile(file)),
+        );
+        menu.addItem((item) =>
+          item
+            .setSection("知序")
+            .setIcon("upload-cloud")
+            .setTitle("知序：发布…")
+            .onClick(() => void this.#openAssetPage(file, true)),
+        );
+        menu.addItem((item) =>
+          item
+            .setSection("知序")
+            .setIcon("external-link")
+            .setTitle("知序：在文档中心打开")
+            .onClick(() => void this.#openAssetPage(file, false)),
+        );
+        menu.addItem((item) =>
+          item
+            .setSection("知序")
+            .setIcon("unlink")
+            .setTitle("知序：解除同步")
+            .onClick(() => void this.#unlinkFile(file)),
+        );
+      }),
+    );
+
+    this.registerEvent(
+      this.app.vault.on("rename", (file, oldPath) => {
+        if (!(file instanceof TFile)) return;
+        const binding = this.index.find(oldPath);
+        if (!binding) return;
+        this.index.remove(oldPath);
+        this.index.upsert({ ...binding, vaultPath: file.path });
+        void this.index.save();
+      }),
+    );
 
     this.addSettingTab(
       new SettingsTab(this.app, this, {
@@ -119,7 +186,7 @@ export default class AssetHubPlugin extends Plugin {
         },
         login: () => this.#login(),
         logout: () => this.#logout(),
-        syncNow: () => this.#sync("settings"),
+        syncNow: () => this.#syncNow(),
         rebuildIndex: () => this.#rebuildIndex(),
       }),
     );
@@ -144,6 +211,7 @@ export default class AssetHubPlugin extends Plugin {
     this.#stopEventStream();
     this.watcher.stop();
     this.app.workspace.detachLeavesOfType(VIEW_TYPE_SYNC_STATUS);
+    this.app.workspace.detachLeavesOfType(VIEW_TYPE_ASSET_HUB);
   }
 
   /** Re-applies everything that depends on settings that just changed. */
@@ -182,12 +250,20 @@ export default class AssetHubPlugin extends Plugin {
   async #loadData(): Promise<void> {
     const stored = (await this.loadData()) as PersistedData | null;
     this.settings = mergeSettings(stored?.settings);
-    this.auth = stored?.auth ?? null;
+    this.storedAuth = stored?.auth ?? null;
+    this.auth = decodeAuth(this.storedAuth);
+    if (this.auth && this.storedAuth && !("format" in this.storedAuth)) {
+      this.storedAuth = encodeAuth(this.auth);
+      await this.saveData({
+        settings: this.settings,
+        auth: this.storedAuth,
+      } satisfies PersistedData);
+    }
   }
 
   /** Settings and credentials share `data.json`, so all writes go through here. */
   #queueSave(): Promise<void> {
-    const payload: PersistedData = { settings: this.settings, auth: this.auth };
+    const payload: PersistedData = { settings: this.settings, auth: this.storedAuth };
     this.saving = this.saving
       .then(() => this.saveData(payload))
       .catch((error: unknown) => this.logger.error("写入插件数据失败", error));
@@ -202,6 +278,7 @@ export default class AssetHubPlugin extends Plugin {
 
   async #persistAuth(state: AuthState | null): Promise<void> {
     this.auth = state;
+    this.storedAuth = state ? encodeAuth(state) : null;
     await this.#queueSave();
     this.applyRuntimeSettings();
   }
@@ -449,9 +526,7 @@ export default class AssetHubPlugin extends Plugin {
   }
 
   #commands(): void {
-    this.addRibbonIcon("folder-sync", "知序资产中心：同步状态面板", () =>
-      void this.#revealStatusView(),
-    );
+    this.addRibbonIcon("library", "打开知序文档中心", () => void this.#revealAssetHub());
     this.addCommand({
       id: "sync-now",
       name: "立即同步",
@@ -499,18 +574,155 @@ export default class AssetHubPlugin extends Plugin {
 
   #remoteIdFor(file: TAbstractFile): string | null {
     if (!(file instanceof TFile)) return null;
-    const remotePath = toRemotePath(file.path, this.settings.syncRoot);
-    if (!remotePath) return null;
-    const binding = this.index.bindings.find(
-      (entry) => entry.remotePath === remotePath && entry.vaultPath === file.path,
-    );
+    const binding = this.index.find(file.path);
     return binding?.remoteId ?? null;
   }
 
   #openInAssetHub(file: TFile): void {
     const remoteId = this.#remoteIdFor(file);
     if (!remoteId) return;
-    this.#openExternal(`${this.settings.serverUrl}/assets/${encodeURIComponent(remoteId)}`);
+    void this.#revealAssetHub(`/assets/${encodeURIComponent(remoteId)}`);
+  }
+
+  async #syncFile(file: TFile): Promise<void> {
+    if (!this.tokens.isAuthenticated) {
+      new Notice("请先登录知序账号。");
+      this.#openSettings();
+      return;
+    }
+    const existing = this.index.find(file.path);
+    if (existing) {
+      await this.engine.sync();
+      new Notice("文档同步完成。");
+      return;
+    }
+    try {
+      const folders = await this.documents.listFolders();
+      const folder = await chooseRemoteFolder(this.app, folders);
+      if (folder === null) return;
+      const docs = await this.documents.listAll();
+      let remotePath = normalisePath([folder, file.basename].filter(Boolean).join("/"));
+      const collision = docs.find((doc) => normalisePath(doc.remotePath) === remotePath);
+      if (collision) {
+        const renamed = this.#uniqueRemotePath(
+          remotePath,
+          docs.map((doc) => doc.remotePath),
+        );
+        const choice = await resolvePathCollision(this.app, remotePath, renamed);
+        if (!choice) return;
+        if (choice === "pull") {
+          const existingLocal = this.index.bindings.find(
+            (binding) => binding.remoteId === collision.remoteId,
+          );
+          if (existingLocal) {
+            new Notice(`该云端文档已关联本 Vault 中的「${existingLocal.vaultPath}」。`);
+            return;
+          }
+          const remote = await this.documents.fetchContent(collision.remoteId);
+          const text = normaliseContent(remote.text);
+          await this.vault.write(file.path, text);
+          this.index.upsert({
+            remoteId: collision.remoteId,
+            vaultPath: file.path,
+            remotePath: collision.remotePath,
+            baseHash: contentHash(text),
+            remoteVersion: collision.version,
+            updatedAt: collision.updatedAt,
+          });
+          await this.index.save();
+          new Notice("已关联并拉取云端文档。");
+          return;
+        }
+        remotePath = renamed;
+      }
+      const text = normaliseContent(await this.vault.read(file.path));
+      const created = await this.documents.create({
+        remotePath,
+        title: titleForPath(remotePath),
+        text,
+      });
+      this.index.upsert({
+        remoteId: created.remoteId,
+        vaultPath: file.path,
+        remotePath: created.remotePath,
+        baseHash: contentHash(text),
+        remoteVersion: created.version,
+        updatedAt: created.updatedAt,
+      });
+      await this.index.save();
+      new Notice("已同步到知序文档中心。");
+    } catch (error) {
+      this.logger.error("同步当前文档失败", error);
+      new Notice(`同步失败：${describe(error)}`);
+    }
+  }
+
+  async #pullFile(file: TFile): Promise<void> {
+    const binding = this.index.find(file.path);
+    if (!binding) return;
+    try {
+      const localText = normaliseContent(await this.vault.read(file.path));
+      if (binding.baseHash !== null && contentHash(localText) !== binding.baseHash) {
+        new Notice("本地有尚未同步的修改。请先同步并处理差异，再拉取云端版本。");
+        return;
+      }
+      const docs = await this.documents.listAll();
+      const remoteDoc = docs.find((doc) => doc.remoteId === binding.remoteId);
+      if (!remoteDoc) throw new Error("云端文档已不存在");
+      const remote = await this.documents.fetchContent(binding.remoteId);
+      const text = normaliseContent(remote.text);
+      await this.vault.write(file.path, text);
+      this.index.settle(file.path, {
+        remotePath: remoteDoc.remotePath,
+        remoteVersion: remoteDoc.version,
+        baseHash: contentHash(text),
+        updatedAt: remoteDoc.updatedAt,
+      });
+      await this.index.save();
+      new Notice("已拉取云端版本。");
+    } catch (error) {
+      new Notice(`拉取失败：${describe(error)}`);
+    }
+  }
+
+  async #unlinkFile(file: TFile): Promise<void> {
+    this.index.remove(file.path);
+    await this.index.save();
+    new Notice("已解除同步，本地和云端文档均已保留。");
+  }
+
+  #uniqueRemotePath(path: string, occupied: string[]): string {
+    const dot = path.toLowerCase().endsWith(".md") ? path.length - 3 : path.length;
+    const base = path.slice(0, dot);
+    const ext = path.slice(dot);
+    const used = new Set(occupied.map(normalisePath));
+    let n = 2;
+    let candidate = `${base} (${n})${ext}`;
+    while (used.has(candidate)) candidate = `${base} (${++n})${ext}`;
+    return candidate;
+  }
+
+  async #webSessionURL(returnTo: string): Promise<string> {
+    return await this.oauth.createWebSession(returnTo);
+  }
+
+  async #revealAssetHub(path = "/"): Promise<void> {
+    if (!this.tokens.isAuthenticated) {
+      this.#openSettings();
+      new Notice("请先登录知序账号。");
+      return;
+    }
+    const returnTo = `${this.settings.webUrl}${path}`;
+    const existing = this.app.workspace.getLeavesOfType(VIEW_TYPE_ASSET_HUB)[0];
+    const leaf = existing ?? this.app.workspace.getLeaf("tab");
+    await leaf.setViewState({ type: VIEW_TYPE_ASSET_HUB, active: true, state: { returnTo } });
+    await this.app.workspace.revealLeaf(leaf);
+  }
+
+  async #openAssetPage(file: TFile, publish: boolean): Promise<void> {
+    const id = this.#remoteIdFor(file);
+    if (!id) return;
+    await this.#revealAssetHub(`/assets/${encodeURIComponent(id)}${publish ? "?publish=1" : ""}`);
   }
 
   // --- misc ---------------------------------------------------------------
