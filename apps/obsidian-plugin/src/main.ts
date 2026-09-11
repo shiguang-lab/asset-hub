@@ -33,6 +33,11 @@ type SubmenuMenuItem = MenuItem & {
   setSubmenu(): Menu;
 };
 
+type OrderedRibbon = {
+  items: Array<{ id: string }>;
+  onChange(saveLayout: boolean): void;
+};
+
 export default class AssetHubPlugin extends Plugin {
   /**
    * `Plugin` has shipped `settings?: unknown` since 1.13 so plugins can type
@@ -530,7 +535,9 @@ export default class AssetHubPlugin extends Plugin {
   }
 
   #commands(): void {
-    this.addRibbonIcon("library", "打开知序文档中心", () => void this.#revealAssetHub());
+    const ribbonTitle = "打开知序文档中心";
+    this.addRibbonIcon("library", ribbonTitle, () => void this.#revealAssetHub());
+    this.app.workspace.onLayoutReady(() => this.#moveRibbonActionToEnd(ribbonTitle));
     this.addCommand({
       id: "sync-now",
       name: "立即同步",
@@ -574,6 +581,17 @@ export default class AssetHubPlugin extends Plugin {
       name: "重建同步索引",
       callback: () => void this.#rebuildIndex(),
     });
+  }
+
+  #moveRibbonActionToEnd(title: string): void {
+    const ribbon = this.app.workspace.leftRibbon as unknown as OrderedRibbon;
+    const id = `${this.manifest.id}:${title}`;
+    const index = ribbon.items.findIndex((item) => item.id === id);
+    if (index < 0 || index === ribbon.items.length - 1) return;
+    const [action] = ribbon.items.splice(index, 1);
+    if (!action) return;
+    ribbon.items.push(action);
+    ribbon.onChange(true);
   }
 
   #remoteIdFor(file: TAbstractFile): string | null {
