@@ -748,6 +748,8 @@ export default class AssetHubPlugin extends Plugin {
       return;
     }
     const returnTo = `${this.settings.webUrl}${path}`;
+    this.app.workspace.leftSplit.collapse();
+    this.app.workspace.rightSplit.collapse();
     const existing = this.app.workspace.getLeavesOfType(VIEW_TYPE_ASSET_HUB)[0];
     const leaf = existing ?? this.app.workspace.getLeaf("tab");
     await leaf.setViewState({ type: VIEW_TYPE_ASSET_HUB, active: true, state: { returnTo } });

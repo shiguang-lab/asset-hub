@@ -37,71 +37,20 @@ jobs:
           fi
           echo "版本一致：${manifest_version}"
 
-  build-web:
-    name: Build web
+  build-images:
+    name: Build ${{ matrix.target }}
     needs: validate
     permissions:
       contents: read
       packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [web, api, worker, compute-worker, public-gateway, ssr]
     uses: ./.github/workflows/docker-publish.yml
     with:
-      target: web
-      image: asset-hub-web
-
-  build-api:
-    name: Build api
-    needs: validate
-    permissions:
-      contents: read
-      packages: write
-    uses: ./.github/workflows/docker-publish.yml
-    with:
-      target: api
-      image: asset-hub-api
-
-  build-worker:
-    name: Build worker
-    needs: validate
-    permissions:
-      contents: read
-      packages: write
-    uses: ./.github/workflows/docker-publish.yml
-    with:
-      target: worker
-      image: asset-hub-worker
-
-  build-compute-worker:
-    name: Build compute-worker
-    needs: validate
-    permissions:
-      contents: read
-      packages: write
-    uses: ./.github/workflows/docker-publish.yml
-    with:
-      target: compute-worker
-      image: asset-hub-compute-worker
-
-  build-public-gateway:
-    name: Build public-gateway
-    needs: validate
-    permissions:
-      contents: read
-      packages: write
-    uses: ./.github/workflows/docker-publish.yml
-    with:
-      target: public-gateway
-      image: asset-hub-public-gateway
-
-  build-ssr:
-    name: Build ssr
-    needs: validate
-    permissions:
-      contents: read
-      packages: write
-    uses: ./.github/workflows/docker-publish.yml
-    with:
-      target: ssr
-      image: asset-hub-ssr
+      target: ${{ matrix.target }}
+      image: asset-hub-${{ matrix.target }}
 
   build-plugin:
     name: Build Obsidian plugin
@@ -142,12 +91,7 @@ jobs:
   release:
     name: Release
     needs:
-      - build-web
-      - build-api
-      - build-worker
-      - build-compute-worker
-      - build-public-gateway
-      - build-ssr
+      - build-images
       - build-plugin
     runs-on: ubuntu-latest
     permissions:
