@@ -1,44 +1,26 @@
-name: Publish Asset Hub images
+name: Build image
 
-# 只在推送版本 tag 时构建并发布镜像；main 分支的普通提交不再触发发布。
 on:
-  push:
-    tags: ["v*"]
+  workflow_call:
+    inputs:
+      target:
+        required: true
+        type: string
+      image:
+        required: true
+        type: string
 
 permissions:
   contents: read
-
-concurrency:
-  group: asset-hub-publish-${{ github.ref }}
-  cancel-in-progress: true
+  packages: write
 
 env:
   IMAGE_NAMESPACE: ghcr.io/shiguang-lab
 
 jobs:
-  publish:
-    name: Publish ${{ matrix.image }}
+  build:
+    name: Build ${{ inputs.target }}
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-    strategy:
-      fail-fast: false
-      max-parallel: 2
-      matrix:
-        include:
-          - target: web
-            image: asset-hub-web
-          - target: api
-            image: asset-hub-api
-          - target: worker
-            image: asset-hub-worker
-          - target: compute-worker
-            image: asset-hub-compute-worker
-          - target: public-gateway
-            image: asset-hub-public-gateway
-          - target: ssr
-            image: asset-hub-ssr
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -58,7 +40,7 @@ jobs:
         shell: bash
         env:
           REF_NAME: ${{ github.ref_name }}
-          IMAGE_NAME: ${{ env.IMAGE_NAMESPACE }}/${{ matrix.image }}
+          IMAGE_NAME: ${{ env.IMAGE_NAMESPACE }}/${{ inputs.image }}
         run: |
           set -euo pipefail
           version="${REF_NAME#v}"
@@ -81,14 +63,14 @@ jobs:
         with:
           context: .
           file: Dockerfile
-          target: ${{ matrix.target }}
+          target: ${{ inputs.target }}
           platforms: linux/amd64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: |
-            org.opencontainers.image.title=Shiguang Asset Hub (${{ matrix.image }})
+            org.opencontainers.image.title=Shiguang Asset Hub (${{ inputs.image }})
             org.opencontainers.image.version=${{ github.ref_name }}
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
-          cache-from: type=gha,scope=asset-hub-${{ matrix.target }}
-          cache-to: type=gha,scope=asset-hub-${{ matrix.target }},mode=max
+          cache-from: type=gha,scope=asset-hub-${{ inputs.target }}
+          cache-to: type=gha,scope=asset-hub-${{ inputs.target }},mode=max

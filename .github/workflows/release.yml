@@ -1,0 +1,178 @@
+name: Release Asset Hub
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: asset-hub-release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+
+      - name: Assert tag matches manifest version
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          tag_version="${REF_NAME#v}"
+          manifest_version="$(node -p "require('./apps/obsidian-plugin/manifest.json').version")"
+          if [ "$tag_version" != "$manifest_version" ]; then
+            echo "tag ${REF_NAME} 与 manifest.json 的版本 ${manifest_version} 不一致" >&2
+            exit 1
+          fi
+          echo "版本一致：${manifest_version}"
+
+  build-web:
+    name: Build web
+    needs: validate
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/docker-publish.yml
+    with:
+      target: web
+      image: asset-hub-web
+
+  build-api:
+    name: Build api
+    needs: validate
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/docker-publish.yml
+    with:
+      target: api
+      image: asset-hub-api
+
+  build-worker:
+    name: Build worker
+    needs: validate
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/docker-publish.yml
+    with:
+      target: worker
+      image: asset-hub-worker
+
+  build-compute-worker:
+    name: Build compute-worker
+    needs: validate
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/docker-publish.yml
+    with:
+      target: compute-worker
+      image: asset-hub-compute-worker
+
+  build-public-gateway:
+    name: Build public-gateway
+    needs: validate
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/docker-publish.yml
+    with:
+      target: public-gateway
+      image: asset-hub-public-gateway
+
+  build-ssr:
+    name: Build ssr
+    needs: validate
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/docker-publish.yml
+    with:
+      target: ssr
+      image: asset-hub-ssr
+
+  build-plugin:
+    name: Build Obsidian plugin
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Test
+        run: pnpm --filter @shiguang/obsidian-plugin test
+
+      - name: Build
+        run: pnpm --filter @shiguang/obsidian-plugin build
+
+      - name: Upload plugin
+        uses: actions/upload-artifact@v4
+        with:
+          name: obsidian-plugin
+          if-no-files-found: error
+          path: |
+            apps/obsidian-plugin/main.js
+            apps/obsidian-plugin/manifest.json
+            apps/obsidian-plugin/styles.css
+
+  release:
+    name: Release
+    needs:
+      - build-web
+      - build-api
+      - build-worker
+      - build-compute-worker
+      - build-public-gateway
+      - build-ssr
+      - build-plugin
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Download plugin
+        uses: actions/download-artifact@v4
+        with:
+          name: obsidian-plugin
+          path: release-artifacts
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          gh release create "$REF_NAME" \
+            --title "$REF_NAME" \
+            --generate-notes \
+            release-artifacts/main.js \
+            release-artifacts/manifest.json \
+            release-artifacts/styles.css
