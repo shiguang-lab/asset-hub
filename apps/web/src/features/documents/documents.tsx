@@ -72,6 +72,7 @@ const useDocumentsPageStyles = createStyles(() => ({
   },
   relationBadge: {
     marginRight: 6,
+    whiteSpace: "nowrap",
   },
   folderDepth0: { paddingLeft: 4 },
   folderDepth1: { paddingLeft: 20 },
@@ -1285,12 +1286,14 @@ export function DocumentsPage() {
                 })}
               </div>
             ) : (
-              <Scrollbar className="sg-docs-table-wrap">
+              <div className="sg-docs-table-wrap">
                 <AppTable<Asset>
                   rowKey="id"
                   dataSource={paged}
                   pagination={false}
                   size="middle"
+                  tableLayout="fixed"
+                  scroll={{ x: 1120 }}
                   onRow={(d) => ({
                     draggable: true,
                     style: { cursor: "pointer" },
@@ -1307,6 +1310,7 @@ export function DocumentsPage() {
                     {
                       title: "名称",
                       dataIndex: "title",
+                      ellipsis: true,
                       render: (_v, d) => (
                         <div className="sg-asset-name">
                           <span className={`sg-asset-icn ${documentTone(d.title)}`}>
@@ -1377,6 +1381,7 @@ export function DocumentsPage() {
                       title: "操作",
                       key: "menu",
                       width: 180,
+                      fixed: "right",
                       render: (_v, d) => (
                         <div className="sg-docs-actions">
                           <Button
@@ -1447,7 +1452,7 @@ export function DocumentsPage() {
                     },
                   ]}
                 />
-              </Scrollbar>
+              </div>
             )}
 
             {paged.length > 0 && (
