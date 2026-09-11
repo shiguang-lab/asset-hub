@@ -1,4 +1,4 @@
-import { Notice, Plugin, type TAbstractFile, TFile } from "obsidian";
+import { Notice, Plugin, type Menu, type MenuItem, type TAbstractFile, TFile } from "obsidian";
 import { ApiClient, describe, type TokenProvider } from "./api/client.js";
 import { DocumentsApi } from "./api/documents.js";
 import { consumeEventStream, type ServerEvent } from "./api/events.js";
@@ -28,6 +28,10 @@ const INDEX_FILE = "sync-index.json";
 const INDEX_BACKUP_FILE = "sync-index.corrupt.json";
 /** Vault bursts arrive as several events; collapse them into one round. */
 const EVENT_DEBOUNCE_MS = 2_000;
+
+type SubmenuMenuItem = MenuItem & {
+  setSubmenu(): Menu;
+};
 
 export default class AssetHubPlugin extends Plugin {
   /**
@@ -125,42 +129,42 @@ export default class AssetHubPlugin extends Plugin {
         if (!(file instanceof TFile) || file.extension.toLowerCase() !== "md") return;
         const binding = this.index.find(file.path);
         menu.addSeparator();
-        menu.addItem((item) =>
-          item
-            .setSection("知序")
-            .setIcon("refresh-cw")
-            .setTitle(binding ? "知序：同步" : "知序：同步到文档中心")
-            .onClick(() => void this.#syncFile(file)),
-        );
-        if (!binding) return;
-        menu.addItem((item) =>
-          item
-            .setSection("知序")
-            .setIcon("download")
-            .setTitle("知序：拉取云端版本")
-            .onClick(() => void this.#pullFile(file)),
-        );
-        menu.addItem((item) =>
-          item
-            .setSection("知序")
-            .setIcon("upload-cloud")
-            .setTitle("知序：发布…")
-            .onClick(() => void this.#openAssetPage(file, true)),
-        );
-        menu.addItem((item) =>
-          item
-            .setSection("知序")
-            .setIcon("external-link")
-            .setTitle("知序：在文档中心打开")
-            .onClick(() => void this.#openAssetPage(file, false)),
-        );
-        menu.addItem((item) =>
-          item
-            .setSection("知序")
-            .setIcon("unlink")
-            .setTitle("知序：解除同步")
-            .onClick(() => void this.#unlinkFile(file)),
-        );
+        menu.addItem((item) => {
+          item.setSection("知序").setIcon("sparkles").setTitle("知序");
+          const submenu = (item as SubmenuMenuItem).setSubmenu();
+          submenu.addItem((child) =>
+            child
+              .setIcon("refresh-cw")
+              .setTitle(binding ? "同步" : "同步到文档中心…")
+              .onClick(() => void this.#syncFile(file)),
+          );
+          if (!binding) return;
+          submenu.addItem((child) =>
+            child
+              .setIcon("download")
+              .setTitle("拉取云端版本")
+              .onClick(() => void this.#pullFile(file)),
+          );
+          submenu.addItem((child) =>
+            child
+              .setIcon("upload-cloud")
+              .setTitle("发布与分享…")
+              .onClick(() => void this.#openAssetPage(file, true)),
+          );
+          submenu.addItem((child) =>
+            child
+              .setIcon("external-link")
+              .setTitle("在文档中心打开")
+              .onClick(() => void this.#openAssetPage(file, false)),
+          );
+          submenu.addSeparator();
+          submenu.addItem((child) =>
+            child
+              .setIcon("unlink")
+              .setTitle("解除同步")
+              .onClick(() => void this.#unlinkFile(file)),
+          );
+        });
       }),
     );
 
