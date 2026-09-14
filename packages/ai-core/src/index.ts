@@ -154,10 +154,13 @@ export class ModelGatewayClient {
     const baseUrl = (this.config.baseUrl ?? "https://ai.shiguanglab.com/v1").replace(/\/+$/, "");
     const apiKey = this.config.apiKey ?? "sk-9532ceff57cbb74d-804864-b3a07f46";
 
+    const isJsonObjectReq = request.responseFormat === "json_object" || request.structuredOutput != null;
+
     const isReasoningTask =
-      request.quality === "best" ||
-      (request.modelTaskKey &&
-        /(research|reasoning|knowledge|report|analysis|review|deep)/i.test(request.modelTaskKey));
+      !isJsonObjectReq &&
+      (request.quality === "best" ||
+        (request.modelTaskKey &&
+          /(research|reasoning|knowledge-answer|report|deep-analysis)/i.test(request.modelTaskKey)));
 
     let model = DEFAULT_FAST_MODEL;
     let effectiveThinkingMode = request.thinkingMode;
@@ -166,6 +169,10 @@ export class ModelGatewayClient {
       model = DEFAULT_REASONING_MODEL;
       if (!effectiveThinkingMode || effectiveThinkingMode === "auto") {
         effectiveThinkingMode = "enabled";
+      }
+    } else if (isJsonObjectReq) {
+      if (!effectiveThinkingMode || effectiveThinkingMode === "auto") {
+        effectiveThinkingMode = "disabled";
       }
     }
 
@@ -287,7 +294,10 @@ export class ModelGatewayClient {
         throw new Error(`global Model Gateway ${res.status}: ${body.slice(0, 300)}`);
       }
       const parsed = completionSchema.parse(await res.json());
-      const text = parsed.choices[0]?.message.content ?? "";
+      let text = parsed.choices[0]?.message.content ?? "";
+      if (request.responseFormat === "json_object") {
+        text = cleanJsonText(text);
+      }
       const toolCalls = (parsed.choices[0]?.message.tool_calls ?? [])
         .filter((call) => call.id && call.function.name)
         .map((call) => ({
@@ -593,6 +603,9 @@ export class ModelGatewayClient {
       }
       buffer += decoder.decode();
       if (buffer.trim()) await processEvent(buffer);
+      if (request.responseFormat === "json_object") {
+        text = cleanJsonText(text);
+      }
       return {
         text,
         usage: { inputTokens, outputTokens },
@@ -634,6 +647,18 @@ export class ModelGatewayClient {
       ...(request.skills ? { skills: request.skills } : {}),
     });
   }
+}
+
+export function cleanJsonText(text: string): string {
+  if (!text) return "";
+  let clean = text.trim();
+  const match = clean.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+  if (match && match[1]) {
+    clean = match[1];
+  } else {
+    clean = clean.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "");
+  }
+  return clean.trim();
 }
 
 function isModelLockedError(error: unknown): boolean {

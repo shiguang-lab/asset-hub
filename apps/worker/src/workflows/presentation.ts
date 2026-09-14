@@ -4,6 +4,7 @@ import { createRequire } from "node:module";
 import {
   type ChatContentPart,
   type ChatStreamUpdate,
+  cleanJsonText,
   createAiService,
   loadCapabilityContext,
 } from "@shiguang/ai-core";
@@ -1271,11 +1272,7 @@ export function pageTitlesForStreamPhase(
 }
 
 function parseJsonText(text: string): unknown {
-  return JSON.parse(
-    stripCodeFence(text)
-      .replace(/^\s*json\s*/i, "")
-      .trim(),
-  );
+  return JSON.parse(cleanJsonText(text));
 }
 
 function splitBatches<T>(items: T[], size: number): T[][] {
