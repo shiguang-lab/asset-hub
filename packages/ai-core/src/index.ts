@@ -160,7 +160,8 @@ export class ModelGatewayClient {
       !isJsonObjectReq &&
       (request.quality === "best" ||
         (request.modelTaskKey &&
-          /(research|reasoning|knowledge-answer|report|deep-analysis)/i.test(request.modelTaskKey)));
+          /^(research\.|knowledge\.ask-reasoning|report\.write)/i.test(request.modelTaskKey))) &&
+      !request.modelTaskKey?.startsWith("presentation.");
 
     let model = DEFAULT_FAST_MODEL;
     let effectiveThinkingMode = request.thinkingMode;
@@ -170,7 +171,7 @@ export class ModelGatewayClient {
       if (!effectiveThinkingMode || effectiveThinkingMode === "auto") {
         effectiveThinkingMode = "enabled";
       }
-    } else if (isJsonObjectReq) {
+    } else {
       if (!effectiveThinkingMode || effectiveThinkingMode === "auto") {
         effectiveThinkingMode = "disabled";
       }

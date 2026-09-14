@@ -3580,7 +3580,7 @@ export async function runPresentationWorkflow(
                   temperature: modelAttempt === 1 ? 0.28 : 0.16,
                   fallbackToLocal: false,
                   taskId: ctx.taskId,
-                  modelTaskKey: "presentation.visual-review",
+                  modelTaskKey: "presentation.page-repair",
                   signal: cancellationController.signal,
                   agentMode: "direct",
                 },
