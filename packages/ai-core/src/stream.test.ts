@@ -42,17 +42,6 @@ describe("ModelGatewayClient.completeStream", () => {
     const fetchMock = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            provider: "openai",
-            model: "deepseek-v4-flash",
-            baseUrl: "http://provider.test",
-            apiKey: "provider-token",
-          }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        ),
-      )
-      .mockResolvedValueOnce(
         new Response(stream, { status: 200, headers: { "content-type": "text/event-stream" } }),
       );
     vi.stubGlobal("fetch", fetchMock);
@@ -83,24 +72,15 @@ describe("ModelGatewayClient.completeStream", () => {
     expect(deltas[0]).toBe("思考");
     expect(receivedChars[0]).toBe("思考".length);
     expect(receivedChars.at(-1)).toBe("思考<html>完成</html>".length);
-    const request = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body)) as Record<
+    const request = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body)) as Record<
       string,
       unknown
     >;
     expect(request).toMatchObject({
-      model: "deepseek-v4-flash",
+      model: "deepseek-flash",
       stream: true,
       max_tokens: 16_384,
       thinking: { type: "disabled" },
-    });
-    const resolveRequest = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body)) as Record<
-      string,
-      unknown
-    >;
-    expect(resolveRequest).toMatchObject({
-      agentKey: "asset-hub",
-      taskKey: "presentation.visual-review",
-      taskId: "tsk_stream_test",
     });
   });
 
@@ -108,17 +88,6 @@ describe("ModelGatewayClient.completeStream", () => {
     const abortController = new AbortController();
     const fetchMock = vi
       .fn<typeof fetch>()
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            provider: "openai",
-            model: "deepseek-v4-flash",
-            baseUrl: "http://provider.test",
-            apiKey: "provider-token",
-          }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        ),
-      )
       .mockImplementationOnce((_input, init) => {
         return new Promise<Response>((_resolve, reject) => {
           if (init?.signal?.aborted) {
@@ -161,17 +130,6 @@ describe("ModelGatewayClient.completeStream", () => {
     });
     const fetchMock = vi
       .fn<typeof fetch>()
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            provider: "openai",
-            model: "deepseek-v4-flash",
-            baseUrl: "http://provider.test",
-            apiKey: "provider-token",
-          }),
-          { status: 200 },
-        ),
-      )
       .mockResolvedValueOnce(new Response(stream, { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
 
@@ -187,7 +145,7 @@ describe("ModelGatewayClient.completeStream", () => {
     );
 
     expect(result.text).toBe('{"ok":true}');
-    const request = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body)) as Record<
+    const request = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body)) as Record<
       string,
       unknown
     >;
@@ -233,17 +191,6 @@ describe("ModelGatewayClient.completeStream", () => {
     const fetchMock = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            provider: "openai",
-            model: "deepseek-v4-flash",
-            baseUrl: "http://provider.test",
-            apiKey: "provider-token",
-          }),
-          { status: 200 },
-        ),
-      )
-      .mockResolvedValueOnce(
         new Response(stream, { status: 200, headers: { "content-type": "text/event-stream" } }),
       );
     vi.stubGlobal("fetch", fetchMock);
@@ -277,29 +224,7 @@ describe("ModelGatewayClient.completeStream", () => {
       });
     const fetchMock = vi
       .fn<typeof fetch>()
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            provider: "openai",
-            model: "deepseek-v4-flash",
-            baseUrl: "http://provider.test",
-            apiKey: "provider-token",
-          }),
-          { status: 200 },
-        ),
-      )
-      .mockImplementation(async (input) => {
-        if (String(input).includes("model-config/resolve")) {
-          return new Response(
-            JSON.stringify({
-              provider: "openai",
-              model: "deepseek-v4-flash",
-              baseUrl: "http://provider.test",
-              apiKey: "provider-token",
-            }),
-            { status: 200 },
-          );
-        }
+      .mockImplementation(async () => {
         return new Response(responseStream(), {
           status: 200,
           headers: { "content-type": "text/event-stream" },

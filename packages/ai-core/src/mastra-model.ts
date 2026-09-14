@@ -9,6 +9,7 @@ export interface ResolvedModelRoute {
   model: string;
   baseUrl?: string;
   apiKey: string;
+  thinkingMode?: "enabled" | "disabled" | "auto";
   capabilities?: {
     structuredOutput?: boolean;
   };
@@ -28,9 +29,10 @@ export function createMastraModel(
 
   const model = routeModelId(route.model);
   const headers = modelGatewayRouteHeaders(route.apiKey, options.taskId);
+  const effectiveThinkingMode = route.thinkingMode ?? options.thinkingMode;
   const injectThinking = <T extends Record<string, unknown>>(body: T): T =>
-    options.thinkingMode && options.thinkingMode !== "auto"
-      ? ({ ...body, thinking: { type: options.thinkingMode } } as T)
+    effectiveThinkingMode && effectiveThinkingMode !== "auto"
+      ? ({ ...body, thinking: { type: effectiveThinkingMode } } as T)
       : body;
   const middlewareFetch = async (
     input: string | URL | Request,
@@ -135,4 +137,12 @@ export function routeModelId(model: string): string {
   const trimmed = model.trim();
   const separator = trimmed.indexOf("/");
   return separator >= 0 ? trimmed.slice(separator + 1) : trimmed;
+}
+
+export function getCompletionsUrl(baseUrl: string): URL {
+  const cleanBase = baseUrl.replace(/\/+$/, "");
+  if (cleanBase.endsWith("/v1")) {
+    return new URL(`${cleanBase}/chat/completions`);
+  }
+  return new URL(`${cleanBase}/v1/chat/completions`);
 }

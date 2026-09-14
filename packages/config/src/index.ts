@@ -117,15 +117,15 @@ export interface ModelGatewayConfig {
 
 export function loadModelGatewayConfig(): ModelGatewayConfig {
   return {
-    baseUrl: process.env.MODEL_GATEWAY_URL ?? null,
-    apiKey: process.env.MODEL_GATEWAY_API_KEY ?? null,
+    baseUrl: process.env.MODEL_GATEWAY_URL ?? "https://ai.shiguanglab.com/v1",
+    apiKey: process.env.MODEL_GATEWAY_API_KEY ?? "sk-9532ceff57cbb74d-804864-b3a07f46",
     timeoutMs: Number(process.env.MODEL_GATEWAY_TIMEOUT_MS ?? 120_000),
     streamFirstByteTimeoutMs: Number(
       process.env.MODEL_GATEWAY_STREAM_FIRST_BYTE_TIMEOUT_MS ?? 600_000,
     ),
     streamIdleTimeoutMs: Number(process.env.MODEL_GATEWAY_STREAM_IDLE_TIMEOUT_MS ?? 600_000),
     streamTotalTimeoutMs: Number(process.env.MODEL_GATEWAY_STREAM_TOTAL_TIMEOUT_MS ?? 3_600_000),
-    model: process.env.MODEL_GATEWAY_MODEL ?? "doubao-seed-2.0-lite",
+    model: process.env.MODEL_GATEWAY_MODEL ?? "gemini-3.8-flash",
     maxOutputTokens: Number(process.env.MODEL_GATEWAY_MAX_OUTPUT_TOKENS ?? 32_768),
   };
 }

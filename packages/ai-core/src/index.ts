@@ -10,7 +10,7 @@ import {
 } from "@shiguang/config";
 import { z } from "zod";
 
-import { createMastraModel, type ResolvedModelRoute } from "./mastra-model.js";
+import { createMastraModel, getCompletionsUrl, type ResolvedModelRoute } from "./mastra-model.js";
 import { connectMcpServers } from "./mcp.js";
 import { type AgentSkillManifest, createMastraRemoteInlineSkills } from "./remote-skills.js";
 
@@ -20,9 +20,15 @@ export * from "./remote-skills.js";
 
 export type ModelQuality = "economy" | "balanced" | "best";
 
+/** Default fast model for light tasks & structured JSON generation */
+export const DEFAULT_FAST_MODEL = "gemini-3.8-flash";
+/** Fallback fast model if target fast model is temporarily locked on the gateway */
+export const FALLBACK_FAST_MODEL = "gemini-3.7-flash";
+/** Default reasoning model for research, deep analysis & complex planning */
+export const DEFAULT_REASONING_MODEL = "deepseek-flash";
+
 /**
  * asset-hub Agent 在全局 Model Gateway 中固定的 Agent 键。
- * 网关端为该键配置唯一默认绑定 → doubao-seed-2.0-lite，运行时直接解析，无需质量档/策略键映射。
  */
 export const MODEL_AGENT_KEY = "asset-hub";
 export const MAX_MODEL_OUTPUT_TOKENS = 32_768;
@@ -144,44 +150,69 @@ const completionSchema = z.object({
 export class ModelGatewayClient {
   constructor(private readonly config: ModelGatewayConfig) {}
 
-  private async resolve(taskId: string, modelTaskKey?: string): Promise<ResolvedModelRoute | null> {
-    if (!this.config.baseUrl) throw new Error("MODEL_GATEWAY_URL is not configured");
-    const url = new URL("/internal/model-config/resolve", this.config.baseUrl);
-    const res = await fetch(url, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${this.config.apiKey ?? ""}`,
-      },
-      body: JSON.stringify({ agentKey: MODEL_AGENT_KEY, taskKey: modelTaskKey ?? "", taskId }),
-    });
-    if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      throw new Error(`global Model Gateway resolve ${res.status}: ${body.slice(0, 300)}`);
+  private resolveRoute(request: ChatCompletionRequest): ResolvedModelRoute {
+    const baseUrl = (this.config.baseUrl ?? "https://ai.shiguanglab.com/v1").replace(/\/+$/, "");
+    const apiKey = this.config.apiKey ?? "sk-9532ceff57cbb74d-804864-b3a07f46";
+
+    const isReasoningTask =
+      request.quality === "best" ||
+      (request.modelTaskKey &&
+        /(research|reasoning|knowledge|report|analysis|review|deep)/i.test(request.modelTaskKey));
+
+    let model = DEFAULT_FAST_MODEL;
+    let effectiveThinkingMode = request.thinkingMode;
+
+    if (isReasoningTask) {
+      model = DEFAULT_REASONING_MODEL;
+      if (!effectiveThinkingMode || effectiveThinkingMode === "auto") {
+        effectiveThinkingMode = "enabled";
+      }
     }
-    return (await res.json()) as ResolvedModelRoute | null;
+
+    if (process.env.MODEL_GATEWAY_MODEL && process.env.MODEL_GATEWAY_MODEL !== DEFAULT_FAST_MODEL) {
+      model = process.env.MODEL_GATEWAY_MODEL;
+    }
+
+    return {
+      provider: "openai",
+      model,
+      baseUrl,
+      apiKey,
+      thinkingMode: effectiveThinkingMode,
+      capabilities: {
+        structuredOutput: true,
+      },
+    };
   }
 
   async complete(request: ChatCompletionRequest): Promise<ChatCompletionResponse> {
-    // 默认走 Mastra；直连仅保留给显式 direct 模式或尚未迁移的 OpenAI 工具调用方。
+    const taskId = request.taskId ?? `task_${crypto.randomUUID()}`;
+    const runtime = this.resolveRoute(request);
+    try {
+      return await this.executeComplete(request, runtime, taskId);
+    } catch (error) {
+      if (isModelLockedError(error) && runtime.model === DEFAULT_FAST_MODEL) {
+        const fallbackRuntime = { ...runtime, model: FALLBACK_FAST_MODEL };
+        return await this.executeComplete(request, fallbackRuntime, taskId);
+      }
+      throw error;
+    }
+  }
+
+  private async executeComplete(
+    request: ChatCompletionRequest,
+    runtime: ResolvedModelRoute,
+    taskId: string,
+  ): Promise<ChatCompletionResponse> {
     if (
       request.agentMode === "direct" ||
       (request.tools?.length && request.agentMode !== "mastra")
     ) {
-      return this.completeDirect(request);
+      return this.completeDirect(request, runtime, taskId);
     }
     if (!this.config.baseUrl) throw new Error("MODEL_GATEWAY_URL is not configured");
-    const taskId = request.taskId ?? `task_${crypto.randomUUID()}`;
-    const runtime = await this.resolve(taskId, request.modelTaskKey);
-    if (!runtime) {
-      throw new Error(`global Model Gateway has no route for agentKey=${MODEL_AGENT_KEY}`);
-    }
     const agent = this.createAgent(request, runtime, taskId);
-    // Mastra exposes mutually-exclusive overloads for structured/non-structured output,
-    // while this request type selects the schema at runtime. Keep the runtime branch
-    // explicit and narrow the call at this boundary instead of weakening the public API.
     const output = await agent.generate(toMastraMessages(request.messages), {
-      // Agent 工具循环必须有上限；严格 HTML 产物由调用方使用 direct 单步链路。
       maxSteps: request.maxSteps ?? (request.skills || request.workspace ? 4 : 1),
       abortSignal: request.signal,
       ...(request.structuredOutput
@@ -206,21 +237,21 @@ export class ModelGatewayClient {
     };
   }
 
-  private async completeDirect(request: ChatCompletionRequest): Promise<ChatCompletionResponse> {
+  private async completeDirect(
+    request: ChatCompletionRequest,
+    runtime: ResolvedModelRoute,
+    taskId: string,
+  ): Promise<ChatCompletionResponse> {
     if (!this.config.baseUrl) {
       throw new Error("MODEL_GATEWAY_URL is not configured");
     }
-    const taskId = request.taskId ?? `task_${crypto.randomUUID()}`;
-    const runtime = await this.resolve(taskId, request.modelTaskKey);
-    if (!runtime) {
-      throw new Error(`global Model Gateway has no route for agentKey=${MODEL_AGENT_KEY}`);
-    }
-    const url = new URL("/v1/chat/completions", runtime.baseUrl ?? this.config.baseUrl);
+    const url = getCompletionsUrl(runtime.baseUrl ?? this.config.baseUrl);
     const controller = new AbortController();
     const abortFromRequest = () => controller.abort(request.signal?.reason);
     if (request.signal?.aborted) abortFromRequest();
     else request.signal?.addEventListener("abort", abortFromRequest, { once: true });
     const timer = setTimeout(() => controller.abort(), this.config.timeoutMs);
+    const effectiveThinking = runtime.thinkingMode ?? request.thinkingMode;
     try {
       const res = await fetch(url, {
         method: "POST",
@@ -237,8 +268,8 @@ export class ModelGatewayClient {
             request.maxTokens ?? DEFAULT_MODEL_OUTPUT_TOKENS,
             this.config.maxOutputTokens,
           ),
-          ...(request.thinkingMode && request.thinkingMode !== "auto"
-            ? { thinking: { type: request.thinkingMode } }
+          ...(effectiveThinking && effectiveThinking !== "auto"
+            ? { thinking: { type: effectiveThinking } }
             : {}),
           ...(request.responseFormat === "json_object"
             ? { response_format: { type: "json_object" } }
@@ -288,10 +319,24 @@ export class ModelGatewayClient {
     }
     if (!this.config.baseUrl) throw new Error("MODEL_GATEWAY_URL is not configured");
     const taskId = request.taskId ?? `task_${crypto.randomUUID()}`;
-    const runtime = await this.resolve(taskId, request.modelTaskKey);
-    if (!runtime) {
-      throw new Error(`global Model Gateway has no route for agentKey=${MODEL_AGENT_KEY}`);
+    const runtime = this.resolveRoute(request);
+    try {
+      return await this.executeCompleteStream(request, runtime, taskId, onUpdate);
+    } catch (error) {
+      if (isModelLockedError(error) && runtime.model === DEFAULT_FAST_MODEL) {
+        const fallbackRuntime = { ...runtime, model: FALLBACK_FAST_MODEL };
+        return await this.executeCompleteStream(request, fallbackRuntime, taskId, onUpdate);
+      }
+      throw error;
     }
+  }
+
+  private async executeCompleteStream(
+    request: ChatCompletionRequest,
+    runtime: ResolvedModelRoute,
+    taskId: string,
+    onUpdate: ChatStreamHandler,
+  ): Promise<ChatCompletionResponse> {
     if (
       request.agentMode === "direct" ||
       (request.tools?.length && request.agentMode !== "mastra")
@@ -325,10 +370,7 @@ export class ModelGatewayClient {
     let text = "";
     try {
       const agent = this.createAgent(request, runtime, taskId);
-      // See the generate() call above: the schema is runtime-selected, but Mastra's
-      // overloads are static and mutually exclusive.
       const output = await agent.stream(toMastraMessages(request.messages), {
-        // Agent 工具循环必须有上限；严格 HTML 产物由调用方使用 direct 单步链路。
         maxSteps: request.maxSteps ?? (request.skills || request.workspace ? 4 : 1),
         abortSignal: controller.signal,
         ...(request.structuredOutput
@@ -375,9 +417,6 @@ export class ModelGatewayClient {
         armIdleTimeout();
         if (activity === "content") text += delta;
         await onUpdate({
-          // Preserve reasoning deltas for the execution stream. The canonical
-          // `text` value remains content-only so structured-output parsing is
-          // unaffected, while clients can render the live thinking trace.
           delta: activity === "content" || activity === "reasoning" ? delta : "",
           text,
           activity,
@@ -424,7 +463,7 @@ export class ModelGatewayClient {
     onUpdate: ChatStreamHandler,
   ): Promise<ChatCompletionResponse> {
     if (!this.config.baseUrl) throw new Error("MODEL_GATEWAY_URL is not configured");
-    const url = new URL("/v1/chat/completions", runtime.baseUrl ?? this.config.baseUrl);
+    const url = getCompletionsUrl(runtime.baseUrl ?? this.config.baseUrl);
     const controller = new AbortController();
     const abortFromRequest = () => controller.abort(request.signal?.reason);
     if (request.signal?.aborted) abortFromRequest();
@@ -455,6 +494,7 @@ export class ModelGatewayClient {
     let outputTokens = 0;
     let finishReason: string | undefined;
     let receivedFirstByte = false;
+    const effectiveThinking = runtime.thinkingMode ?? request.thinkingMode;
     const processEvent = async (rawEvent: string) => {
       const data = rawEvent
         .split(/\r?\n/)
@@ -477,7 +517,6 @@ export class ModelGatewayClient {
       try {
         parsed = JSON.parse(data) as typeof parsed;
       } catch {
-        // 网关可能在一帧中携带非 JSON 注释，忽略它并等待下一帧。
         return;
       }
       inputTokens = parsed.usage?.prompt_tokens ?? inputTokens;
@@ -493,8 +532,6 @@ export class ModelGatewayClient {
           if (firstByteTimer) clearTimeout(firstByteTimer);
         }
         armIdleTimeout();
-        // Keep reasoning text in the stream event. `text` intentionally stays
-        // content-only because it is later parsed as the model response.
         await onUpdate({ delta: reasoning, text, activity: "reasoning", receivedChars });
       }
       if (delta) {
@@ -529,8 +566,8 @@ export class ModelGatewayClient {
           ),
           stream: true,
           stream_options: { include_usage: true },
-          ...(request.thinkingMode && request.thinkingMode !== "auto"
-            ? { thinking: { type: request.thinkingMode } }
+          ...(effectiveThinking && effectiveThinking !== "auto"
+            ? { thinking: { type: effectiveThinking } }
             : {}),
           ...(request.responseFormat === "json_object"
             ? { response_format: { type: "json_object" } }
@@ -597,6 +634,19 @@ export class ModelGatewayClient {
       ...(request.skills ? { skills: request.skills } : {}),
     });
   }
+}
+
+function isModelLockedError(error: unknown): boolean {
+  if (error instanceof Error) {
+    return (
+      error.message.includes("is locked") ||
+      error.message.includes("is not available") ||
+      error.message.includes("ALL_TARGETS_SKIPPED") ||
+      error.message.includes("service_unavailable") ||
+      error.message.includes("503")
+    );
+  }
+  return false;
 }
 
 function clampMaxTokens(value: number, configuredCeiling = MAX_MODEL_OUTPUT_TOKENS): number {
