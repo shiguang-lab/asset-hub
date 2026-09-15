@@ -163,14 +163,14 @@ export class ModelGatewayClient {
     let effectiveThinkingMode = request.thinkingMode;
 
     if (taskKey.startsWith("presentation.planning") || taskKey.startsWith("ppt-planning")) {
-      model = "gpt-6-astra";
+      model = "deepseek-flash";
     } else if (
       taskKey.startsWith("research.") ||
       taskKey.startsWith("report.") ||
       taskKey === "deep-analysis" ||
       taskKey === "dataset-insights"
     ) {
-      model = "gpt-5.6-sol";
+      model = "deepseek-flash";
     } else if (taskKey.startsWith("knowledge.ask-reasoning")) {
       model = "deepseek-flash";
     } else if (
@@ -180,7 +180,7 @@ export class ModelGatewayClient {
     ) {
       model = "gemini-3.8-flash";
     } else if (request.quality === "best") {
-      model = "gpt-5.6-sol";
+      model = "deepseek-flash";
     } else if (request.quality === "economy") {
       model = "gemini-3.7-flash";
     }
@@ -218,7 +218,7 @@ export class ModelGatewayClient {
       return await this.executeComplete(request, runtime, taskId);
     } catch (error) {
       if (isModelLockedError(error)) {
-        const fallbackModel = runtime.model !== "gpt-5.6-sol" ? "gpt-5.6-sol" : "gemini-3.7-flash";
+        const fallbackModel = runtime.model === "deepseek-flash" ? "gemini-3.8-flash" : "gemini-3.7-flash";
         console.warn(
           `[ai-core] Model '${runtime.model}' failed with gateway lock/error (${(error as Error).message}). Auto-failing over to '${fallbackModel}'...`,
         );
@@ -360,7 +360,7 @@ export class ModelGatewayClient {
       return await this.executeCompleteStream(request, runtime, taskId, onUpdate);
     } catch (error) {
       if (isModelLockedError(error)) {
-        const fallbackModel = runtime.model !== "gpt-5.6-sol" ? "gpt-5.6-sol" : "gemini-3.7-flash";
+        const fallbackModel = runtime.model === "deepseek-flash" ? "gemini-3.8-flash" : "gemini-3.7-flash";
         console.warn(
           `[ai-core] Stream model '${runtime.model}' failed with gateway lock/error (${(error as Error).message}). Auto-failing over to '${fallbackModel}'...`,
         );
