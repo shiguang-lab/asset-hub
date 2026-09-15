@@ -56,7 +56,7 @@ describe("ModelGatewayClient.completeStream", () => {
         messages: [{ role: "user", content: "生成演示" }],
         maxTokens: 16_384,
         thinkingMode: "disabled",
-        modelTaskKey: "presentation.visual-review",
+        modelTaskKey: "knowledge.ask-reasoning",
       },
       (update) => {
         activities.push(update.activity);

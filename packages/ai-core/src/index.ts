@@ -13,10 +13,12 @@ import { z } from "zod";
 import { createMastraModel, getCompletionsUrl, type ResolvedModelRoute } from "./mastra-model.js";
 import { connectMcpServers } from "./mcp.js";
 import { type AgentSkillManifest, createMastraRemoteInlineSkills } from "./remote-skills.js";
+import { zodToJsonSchema } from "./zod-to-json-schema.js";
 
 export * from "./mastra-model.js";
 export * from "./mcp.js";
 export * from "./remote-skills.js";
+export * from "./zod-to-json-schema.js";
 
 export type ModelQuality = "economy" | "balanced" | "best";
 
@@ -76,7 +78,8 @@ export interface ChatCompletionRequest {
   messages: ChatMessage[];
   temperature?: number;
   maxTokens?: number;
-  responseFormat?: "text" | "json_object";
+  responseFormat?: "text" | "json_object" | "json_schema";
+  jsonSchema?: Record<string, unknown>;
   quality?: ModelQuality;
   taskId?: string;
   /**
@@ -154,20 +157,39 @@ export class ModelGatewayClient {
     const baseUrl = (this.config.baseUrl ?? "https://ai.shiguanglab.com/v1").replace(/\/+$/, "");
     const apiKey = this.config.apiKey ?? "sk-9532ceff57cbb74d-804864-b3a07f46";
 
-    const isJsonObjectReq = request.responseFormat === "json_object" || request.structuredOutput != null;
+    const taskKey = request.modelTaskKey ?? "";
 
-    const isReasoningTask =
-      !isJsonObjectReq &&
-      (request.quality === "best" ||
-        (request.modelTaskKey &&
-          /^(research\.|knowledge\.ask-reasoning|report\.write)/i.test(request.modelTaskKey))) &&
-      !request.modelTaskKey?.startsWith("presentation.");
-
-    let model = DEFAULT_FAST_MODEL;
+    let model = DEFAULT_FAST_MODEL; // gemini-3.8-flash
     let effectiveThinkingMode = request.thinkingMode;
 
-    if (isReasoningTask) {
-      model = DEFAULT_REASONING_MODEL;
+    if (taskKey.startsWith("presentation.planning") || taskKey.startsWith("ppt-planning")) {
+      model = "gpt-6-astra";
+    } else if (
+      taskKey.startsWith("research.") ||
+      taskKey.startsWith("report.") ||
+      taskKey === "deep-analysis" ||
+      taskKey === "dataset-insights"
+    ) {
+      model = "gpt-5.6-sol";
+    } else if (taskKey.startsWith("knowledge.ask-reasoning")) {
+      model = "deepseek-flash";
+    } else if (
+      taskKey.startsWith("presentation.page-generation") ||
+      taskKey.startsWith("visual-review") ||
+      taskKey.startsWith("page-repair")
+    ) {
+      model = "gemini-3.8-flash";
+    } else if (request.quality === "best") {
+      model = "gpt-5.6-sol";
+    } else if (request.quality === "economy") {
+      model = "gemini-3.7-flash";
+    }
+
+    if (process.env.MODEL_GATEWAY_MODEL) {
+      model = process.env.MODEL_GATEWAY_MODEL;
+    }
+
+    if (model === "deepseek-flash") {
       if (!effectiveThinkingMode || effectiveThinkingMode === "auto") {
         effectiveThinkingMode = "enabled";
       }
@@ -175,10 +197,6 @@ export class ModelGatewayClient {
       if (!effectiveThinkingMode || effectiveThinkingMode === "auto") {
         effectiveThinkingMode = "disabled";
       }
-    }
-
-    if (process.env.MODEL_GATEWAY_MODEL && process.env.MODEL_GATEWAY_MODEL !== DEFAULT_FAST_MODEL) {
-      model = process.env.MODEL_GATEWAY_MODEL;
     }
 
     return {
@@ -199,8 +217,12 @@ export class ModelGatewayClient {
     try {
       return await this.executeComplete(request, runtime, taskId);
     } catch (error) {
-      if (isModelLockedError(error) && runtime.model === DEFAULT_FAST_MODEL) {
-        const fallbackRuntime = { ...runtime, model: FALLBACK_FAST_MODEL };
+      if (isModelLockedError(error)) {
+        const fallbackModel = runtime.model !== "gpt-5.6-sol" ? "gpt-5.6-sol" : "gemini-3.7-flash";
+        console.warn(
+          `[ai-core] Model '${runtime.model}' failed with gateway lock/error (${(error as Error).message}). Auto-failing over to '${fallbackModel}'...`,
+        );
+        const fallbackRuntime = { ...runtime, model: fallbackModel };
         return await this.executeComplete(request, fallbackRuntime, taskId);
       }
       throw error;
@@ -279,9 +301,7 @@ export class ModelGatewayClient {
           ...(effectiveThinking && effectiveThinking !== "auto"
             ? { thinking: { type: effectiveThinking } }
             : {}),
-          ...(request.responseFormat === "json_object"
-            ? { response_format: { type: "json_object" } }
-            : {}),
+          ...buildResponseFormat(request),
           ...(request.tools?.length
             ? {
                 tools: request.tools.map((tool) => ({ type: "function", function: tool.function })),
@@ -296,7 +316,12 @@ export class ModelGatewayClient {
       }
       const parsed = completionSchema.parse(await res.json());
       let text = parsed.choices[0]?.message.content ?? "";
-      if (request.responseFormat === "json_object") {
+      if (
+        request.responseFormat === "json_object" ||
+        request.responseFormat === "json_schema" ||
+        request.structuredOutput != null ||
+        request.jsonSchema != null
+      ) {
         text = cleanJsonText(text);
       }
       const toolCalls = (parsed.choices[0]?.message.tool_calls ?? [])
@@ -334,8 +359,12 @@ export class ModelGatewayClient {
     try {
       return await this.executeCompleteStream(request, runtime, taskId, onUpdate);
     } catch (error) {
-      if (isModelLockedError(error) && runtime.model === DEFAULT_FAST_MODEL) {
-        const fallbackRuntime = { ...runtime, model: FALLBACK_FAST_MODEL };
+      if (isModelLockedError(error)) {
+        const fallbackModel = runtime.model !== "gpt-5.6-sol" ? "gpt-5.6-sol" : "gemini-3.7-flash";
+        console.warn(
+          `[ai-core] Stream model '${runtime.model}' failed with gateway lock/error (${(error as Error).message}). Auto-failing over to '${fallbackModel}'...`,
+        );
+        const fallbackRuntime = { ...runtime, model: fallbackModel };
         return await this.executeCompleteStream(request, fallbackRuntime, taskId, onUpdate);
       }
       throw error;
@@ -580,9 +609,7 @@ export class ModelGatewayClient {
           ...(effectiveThinking && effectiveThinking !== "auto"
             ? { thinking: { type: effectiveThinking } }
             : {}),
-          ...(request.responseFormat === "json_object"
-            ? { response_format: { type: "json_object" } }
-            : {}),
+          ...buildResponseFormat(request),
         }),
         signal: controller.signal,
       });
@@ -604,7 +631,12 @@ export class ModelGatewayClient {
       }
       buffer += decoder.decode();
       if (buffer.trim()) await processEvent(buffer);
-      if (request.responseFormat === "json_object") {
+      if (
+        request.responseFormat === "json_object" ||
+        request.responseFormat === "json_schema" ||
+        request.structuredOutput != null ||
+        request.jsonSchema != null
+      ) {
         text = cleanJsonText(text);
       }
       return {
@@ -662,14 +694,50 @@ export function cleanJsonText(text: string): string {
   return clean.trim();
 }
 
+export function buildResponseFormat(request: ChatCompletionRequest): Record<string, unknown> {
+  const schemaObj =
+    request.jsonSchema ??
+    (request.structuredOutput ? zodToJsonSchema(request.structuredOutput) : undefined);
+
+  if (schemaObj) {
+    return {
+      response_format: {
+        type: "json_schema",
+        json_schema: {
+          name: "structured_output",
+          strict: true,
+          schema: schemaObj,
+        },
+      },
+    };
+  }
+
+  if (request.responseFormat === "json_object" || request.responseFormat === "json_schema") {
+    return { response_format: { type: "json_object" } };
+  }
+
+  return {};
+}
+
 function isModelLockedError(error: unknown): boolean {
   if (error instanceof Error) {
+    const msg = error.message;
     return (
-      error.message.includes("is locked") ||
-      error.message.includes("is not available") ||
-      error.message.includes("ALL_TARGETS_SKIPPED") ||
-      error.message.includes("service_unavailable") ||
-      error.message.includes("503")
+      msg.includes("is locked") ||
+      msg.includes("is not available") ||
+      msg.includes("ALL_TARGETS_SKIPPED") ||
+      msg.includes("service_unavailable") ||
+      msg.includes("invalid or expired model route token") ||
+      msg.includes("503") ||
+      msg.includes("502") ||
+      msg.includes("403") ||
+      msg.includes("401") ||
+      msg.includes("400") ||
+      msg.includes("Model Gateway 401") ||
+      msg.includes("Model Gateway 403") ||
+      msg.includes("Model Gateway 502") ||
+      msg.includes("Model Gateway 503") ||
+      msg.includes("Model Gateway 400")
     );
   }
   return false;
@@ -686,7 +754,12 @@ function systemInstructions(request: ChatCompletionRequest): string {
     .map((message) => chatContentAsText(message.content))
     .filter(Boolean)
     .join("\n\n");
-  return `${system || "Follow the user's request accurately."}${request.responseFormat === "json_object" ? "\nReturn valid JSON only; do not wrap it in Markdown fences." : ""}`;
+  const isJson =
+    request.responseFormat === "json_object" ||
+    request.responseFormat === "json_schema" ||
+    request.structuredOutput != null ||
+    request.jsonSchema != null;
+  return `${system || "Follow the user's request accurately."}${isJson ? "\nReturn valid JSON only; do not wrap it in Markdown fences." : ""}`;
 }
 
 function toMastraMessages(messages: ChatMessage[]): MessageListInput {
