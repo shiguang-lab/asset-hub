@@ -113,9 +113,20 @@ export interface ModelGatewayConfig {
   streamTotalTimeoutMs: number;
   model: string;
   maxOutputTokens?: number;
+  planningModel?: string;
+  generationModel?: string;
+  reviewModel?: string;
+  repairModel?: string;
+  fallbackModel?: string;
+  thinkingMode?: "auto" | "enabled" | "disabled";
 }
 
 export function loadModelGatewayConfig(): ModelGatewayConfig {
+  const defaultModel =
+    process.env.MODEL_DEFAULT?.trim() ||
+    process.env.MODEL_GATEWAY_MODEL?.trim() ||
+    "deepseek-flash";
+
   return {
     baseUrl: process.env.MODEL_GATEWAY_URL ?? "https://ai.shiguanglab.com/v1",
     apiKey: process.env.MODEL_GATEWAY_API_KEY ?? "sk-9532ceff57cbb74d-804864-b3a07f46",
@@ -125,8 +136,19 @@ export function loadModelGatewayConfig(): ModelGatewayConfig {
     ),
     streamIdleTimeoutMs: Number(process.env.MODEL_GATEWAY_STREAM_IDLE_TIMEOUT_MS ?? 600_000),
     streamTotalTimeoutMs: Number(process.env.MODEL_GATEWAY_STREAM_TOTAL_TIMEOUT_MS ?? 3_600_000),
-    model: process.env.MODEL_GATEWAY_MODEL ?? "gemini-3.8-flash",
+    model: defaultModel,
     maxOutputTokens: Number(process.env.MODEL_GATEWAY_MAX_OUTPUT_TOKENS ?? 32_768),
+    planningModel: process.env.MODEL_PLANNING?.trim() || undefined,
+    generationModel: process.env.MODEL_GENERATION?.trim() || undefined,
+    reviewModel: process.env.MODEL_REVIEW?.trim() || undefined,
+    repairModel: process.env.MODEL_REPAIR?.trim() || undefined,
+    fallbackModel:
+      process.env.MODEL_FALLBACK !== undefined
+        ? process.env.MODEL_FALLBACK.trim() || undefined
+        : undefined,
+    thinkingMode:
+      (process.env.MODEL_THINKING_MODE?.trim() as "auto" | "enabled" | "disabled" | undefined) ||
+      undefined,
   };
 }
 

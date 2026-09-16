@@ -8,6 +8,7 @@ const config: ModelGatewayConfig = {
   baseUrl: "http://gateway.test",
   apiKey: "gateway-token",
   model: "fallback-model",
+  planningModel: "deepseek-flash",
   timeoutMs: 1_000,
   streamFirstByteTimeoutMs: 1_000,
   streamIdleTimeoutMs: 1_000,
@@ -86,19 +87,17 @@ describe("ModelGatewayClient.completeStream", () => {
 
   it("aborts while waiting for the first model byte", async () => {
     const abortController = new AbortController();
-    const fetchMock = vi
-      .fn<typeof fetch>()
-      .mockImplementationOnce((_input, init) => {
-        return new Promise<Response>((_resolve, reject) => {
-          if (init?.signal?.aborted) {
-            reject(init.signal.reason);
-            return;
-          }
-          init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), {
-            once: true,
-          });
+    const fetchMock = vi.fn<typeof fetch>().mockImplementationOnce((_input, init) => {
+      return new Promise<Response>((_resolve, reject) => {
+        if (init?.signal?.aborted) {
+          reject(init.signal.reason);
+          return;
+        }
+        init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), {
+          once: true,
         });
       });
+    });
     vi.stubGlobal("fetch", fetchMock);
 
     const pending = new ModelGatewayClient(config).completeStream(
@@ -222,14 +221,12 @@ describe("ModelGatewayClient.completeStream", () => {
           controller.close();
         },
       });
-    const fetchMock = vi
-      .fn<typeof fetch>()
-      .mockImplementation(async () => {
-        return new Response(responseStream(), {
-          status: 200,
-          headers: { "content-type": "text/event-stream" },
-        });
+    const fetchMock = vi.fn<typeof fetch>().mockImplementation(async () => {
+      return new Response(responseStream(), {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
       });
+    });
     vi.stubGlobal("fetch", fetchMock);
 
     const result = await new ModelGatewayClient(config).completeStream(

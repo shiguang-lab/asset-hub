@@ -81,6 +81,7 @@ export interface ChatCompletionRequest {
   responseFormat?: "text" | "json_object" | "json_schema";
   jsonSchema?: Record<string, unknown>;
   quality?: ModelQuality;
+  model?: string;
   taskId?: string;
   /**
    * Optional logical node key used by the global Model Gateway.  The gateway
@@ -159,42 +160,48 @@ export class ModelGatewayClient {
 
     const taskKey = request.modelTaskKey ?? "";
 
-    let model = DEFAULT_FAST_MODEL; // gemini-3.8-flash
-    let effectiveThinkingMode = request.thinkingMode;
+    let model = request.model;
 
-    if (taskKey.startsWith("presentation.planning") || taskKey.startsWith("ppt-planning")) {
-      model = "deepseek-flash";
-    } else if (
-      taskKey.startsWith("research.") ||
-      taskKey.startsWith("report.") ||
-      taskKey === "deep-analysis" ||
-      taskKey === "dataset-insights"
-    ) {
-      model = "deepseek-flash";
-    } else if (taskKey.startsWith("knowledge.ask-reasoning")) {
-      model = "deepseek-flash";
-    } else if (
-      taskKey.startsWith("presentation.page-generation") ||
-      taskKey.startsWith("visual-review") ||
-      taskKey.startsWith("page-repair")
-    ) {
-      model = "gemini-3.8-flash";
-    } else if (request.quality === "best") {
-      model = "deepseek-flash";
-    } else if (request.quality === "economy") {
-      model = "gemini-3.7-flash";
-    }
-
-    if (process.env.MODEL_GATEWAY_MODEL) {
-      model = process.env.MODEL_GATEWAY_MODEL;
-    }
-
-    if (model === "deepseek-flash") {
-      if (!effectiveThinkingMode || effectiveThinkingMode === "auto") {
-        effectiveThinkingMode = "enabled";
+    if (!model) {
+      if (
+        taskKey.startsWith("presentation.planning") ||
+        taskKey.startsWith("ppt-planning") ||
+        taskKey.startsWith("research.") ||
+        taskKey.startsWith("report.") ||
+        taskKey === "deep-analysis" ||
+        taskKey === "dataset-insights" ||
+        taskKey.startsWith("knowledge.ask-reasoning")
+      ) {
+        model = this.config.planningModel ?? this.config.model;
+      } else if (
+        taskKey.startsWith("presentation.page-generation") ||
+        taskKey.startsWith("presentation.foundation")
+      ) {
+        model = this.config.generationModel ?? this.config.model;
+      } else if (
+        taskKey.startsWith("visual-review") ||
+        taskKey.startsWith("presentation.visual-review")
+      ) {
+        model = this.config.reviewModel ?? this.config.model;
+      } else if (
+        taskKey.startsWith("page-repair") ||
+        taskKey.startsWith("presentation.page-repair")
+      ) {
+        model = this.config.repairModel ?? this.config.model;
+      } else if (request.quality === "best") {
+        model = this.config.planningModel ?? this.config.model;
+      } else if (request.quality === "economy") {
+        model = this.config.generationModel ?? this.config.model;
+      } else {
+        model = this.config.model;
       }
-    } else {
-      if (!effectiveThinkingMode || effectiveThinkingMode === "auto") {
+    }
+
+    let effectiveThinkingMode = this.config.thinkingMode ?? request.thinkingMode;
+    if (!effectiveThinkingMode || effectiveThinkingMode === "auto") {
+      if (model.includes("deepseek") && !model.includes("chat")) {
+        effectiveThinkingMode = "enabled";
+      } else {
         effectiveThinkingMode = "disabled";
       }
     }
@@ -217,8 +224,12 @@ export class ModelGatewayClient {
     try {
       return await this.executeComplete(request, runtime, taskId);
     } catch (error) {
-      if (isModelLockedError(error)) {
-        const fallbackModel = runtime.model === "deepseek-flash" ? "gemini-3.8-flash" : "gemini-3.7-flash";
+      if (
+        isModelLockedError(error) &&
+        this.config.fallbackModel &&
+        this.config.fallbackModel !== runtime.model
+      ) {
+        const fallbackModel = this.config.fallbackModel;
         console.warn(
           `[ai-core] Model '${runtime.model}' failed with gateway lock/error (${(error as Error).message}). Auto-failing over to '${fallbackModel}'...`,
         );
@@ -359,8 +370,12 @@ export class ModelGatewayClient {
     try {
       return await this.executeCompleteStream(request, runtime, taskId, onUpdate);
     } catch (error) {
-      if (isModelLockedError(error)) {
-        const fallbackModel = runtime.model === "deepseek-flash" ? "gemini-3.8-flash" : "gemini-3.7-flash";
+      if (
+        isModelLockedError(error) &&
+        this.config.fallbackModel &&
+        this.config.fallbackModel !== runtime.model
+      ) {
+        const fallbackModel = this.config.fallbackModel;
         console.warn(
           `[ai-core] Stream model '${runtime.model}' failed with gateway lock/error (${(error as Error).message}). Auto-failing over to '${fallbackModel}'...`,
         );
