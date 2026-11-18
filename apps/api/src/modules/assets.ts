@@ -204,19 +204,22 @@ export function registerAssets(app: FastifyInstance): void {
       parseImportPathPrefix(req.query),
     );
     for (const item of imported.items) {
-      if (!item.replaced) {
-        await ctx.bus.emit({
-          eventId: nextId("evt"),
-          eventType: "asset.created",
-          schemaVersion: 1,
-          occurredAt: nowIso(),
-          producer: "api",
-          tenantId: req.actor.workspaceId,
-          aggregate: { type: "asset", id: item.asset.id, version: 1 },
-          trace: {},
-          data: { assetId: item.asset.id, assetType: item.asset.type, sourceType: "upload" },
-        });
-      }
+      await ctx.bus.emit({
+        eventId: nextId("evt"),
+        eventType: item.replaced ? "asset.version.created" : "asset.created",
+        schemaVersion: 1,
+        occurredAt: nowIso(),
+        producer: "api",
+        tenantId: req.actor.workspaceId,
+        aggregate: { type: "asset", id: item.asset.id, version: item.asset.lockVersion },
+        trace: {},
+        data: {
+          assetId: item.asset.id,
+          assetType: item.asset.type,
+          versionId: item.asset.currentVersionId,
+          sourceType: "upload",
+        },
+      });
       await ctx.store.audit(
         req.actor.workspaceId,
         req.actor.subject,
@@ -295,6 +298,30 @@ export function registerAssets(app: FastifyInstance): void {
       .header("content-length", String(payload.data.byteLength))
       .header("content-disposition", `attachment; filename*=UTF-8''${fileName}`)
       .send(payload.data);
+  });
+
+  app.get("/api/v1/assets/:id/thumbnail", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const { v } = (req.query as { v?: string }) ?? {};
+    const asset = await ctx.store.getAsset(req.actor.workspaceId, id);
+    if (!asset) return reply.code(404).send({ code: "RESOURCE_NOT_FOUND", detail: "资产不存在" });
+    const requestedVersion = v?.split(":")[0] || undefined;
+    const thumb =
+      (requestedVersion ? await ctx.store.getAssetThumbnail(id, requestedVersion) : null) ??
+      (await ctx.store.getAssetThumbnail(id));
+    if (!thumb)
+      return reply.code(404).send({ code: "THUMBNAIL_NOT_FOUND", detail: "封面尚未生成" });
+    const data = await ctx.storage.get(thumb.objectKey);
+    if (!data) return reply.code(404).send({ code: "THUMBNAIL_NOT_FOUND", detail: "封面文件缺失" });
+    const cacheControl =
+      v && v === `${thumb.versionId}:${thumb.contentHash}`
+        ? "public, max-age=31536000, immutable"
+        : "private, max-age=60";
+    return reply
+      .type(thumb.mediaType)
+      .header("cache-control", cacheControl)
+      .header("content-length", String(data.byteLength))
+      .send(data);
   });
 
   app.patch("/api/v1/assets/:id", async (req, reply) => {

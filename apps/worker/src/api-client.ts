@@ -114,4 +114,91 @@ export class ApiClient {
   }> {
     return this.getInternal(`/internal/v1/tasks/${encodeURIComponent(taskId)}/state`);
   }
+
+  async listPendingThumbnails(limit = 8): Promise<
+    Array<{
+      id: string;
+      workspaceId: string;
+      type: string;
+      title: string;
+      currentVersionId: string;
+    }>
+  > {
+    const res = await this.getInternal<{
+      items: Array<{
+        id: string;
+        workspaceId: string;
+        type: string;
+        title: string;
+        currentVersionId: string;
+      }>;
+    }>(`/internal/v1/thumbnails/pending?limit=${limit}`);
+    return res.items;
+  }
+
+  async getThumbnailSource(assetId: string): Promise<{
+    id: string;
+    workspaceId: string;
+    type: string;
+    title: string;
+    currentVersionId: string;
+    hasCurrentThumbnail: boolean;
+    content: {
+      kind: string;
+      text?: string | null;
+      manifest?: Record<string, unknown> | null;
+    } | null;
+  } | null> {
+    const res = await fetch(
+      `${this.config.apiBase}/internal/v1/assets/${encodeURIComponent(assetId)}/thumbnail-source`,
+      {
+        headers: { "x-internal-token": this.config.workerToken },
+      },
+    );
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error(`api ${res.status} thumbnail-source`);
+    return (await res.json()) as {
+      id: string;
+      workspaceId: string;
+      type: string;
+      title: string;
+      currentVersionId: string;
+      hasCurrentThumbnail: boolean;
+      content: {
+        kind: string;
+        text?: string | null;
+        manifest?: Record<string, unknown> | null;
+      } | null;
+    };
+  }
+
+  async fetchInternalAssetBlob(
+    assetId: string,
+  ): Promise<{ body: Buffer; contentType: string } | null> {
+    const res = await fetch(
+      `${this.config.apiBase}/internal/v1/assets/${encodeURIComponent(assetId)}/blob`,
+      {
+        headers: { "x-internal-token": this.config.workerToken },
+      },
+    );
+    if (!res.ok) return null;
+    const arrayBuffer = await res.arrayBuffer();
+    return {
+      body: Buffer.from(arrayBuffer),
+      contentType: res.headers.get("content-type") ?? "application/octet-stream",
+    };
+  }
+
+  async uploadThumbnail(
+    assetId: string,
+    versionId: string,
+    data: Buffer,
+    mediaType: "image/jpeg" | "image/webp" | "image/png" = "image/jpeg",
+  ): Promise<{ ok: boolean; thumbnailRef: string }> {
+    return this.postInternal(`/internal/v1/assets/${encodeURIComponent(assetId)}/thumbnail`, {
+      versionId,
+      mediaType,
+      dataBase64: data.toString("base64"),
+    });
+  }
 }

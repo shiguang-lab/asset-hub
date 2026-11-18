@@ -2,8 +2,11 @@ import type { ObjectStore } from "@shiguang/database";
 import type { Logger } from "@shiguang/observability";
 import type { ApiClient } from "./api-client.js";
 import type { WorkerState } from "./state.js";
+import type { ThumbnailService } from "./thumbnail-service.js";
 import { runTaskWorkflow } from "./workflows/dispatch.js";
 import { runKnowledgeWorkflow } from "./workflows/knowledge.js";
+
+const THUMBNAIL_EVENTS = new Set(["asset.created", "asset.version.created"]);
 
 interface OutboxEvent {
   id: string;
@@ -22,6 +25,7 @@ export class Executor {
     private readonly storage: ObjectStore,
     private readonly logger: Logger,
     private readonly maxConcurrent: number,
+    private readonly thumbnails?: ThumbnailService,
   ) {}
 
   async poll(): Promise<void> {
@@ -63,6 +67,11 @@ export class Executor {
         await runTaskWorkflow(ctx, event.data, this.storage);
       } else if (event.eventType === "knowledge.source.added") {
         await runKnowledgeWorkflow(ctx, event.data, this.storage);
+      } else if (THUMBNAIL_EVENTS.has(event.eventType)) {
+        const assetId = typeof event.data.assetId === "string" ? event.data.assetId : "";
+        if (assetId && this.thumbnails) {
+          this.thumbnails.enqueue(assetId, event.eventType === "asset.version.created" ? 800 : 0);
+        }
       } else {
         this.logger.info({ eventType: event.eventType }, "no handler, acking");
       }

@@ -4,6 +4,7 @@ import type { ObjectStore } from "@shiguang/database";
 import type { Logger } from "@shiguang/observability";
 import type { ApiClient } from "./api-client.js";
 import type { WorkerState } from "./state.js";
+import type { ThumbnailService } from "./thumbnail-service.js";
 import { runTaskWorkflow } from "./workflows/dispatch.js";
 import type { StepContext } from "./workflows/helpers.js";
 import { runKnowledgeWorkflow } from "./workflows/knowledge.js";
@@ -202,6 +203,7 @@ export class HatchetRelay {
     private readonly state: WorkerState,
     private readonly logger: Logger,
     private readonly pollIntervalMs: number,
+    private readonly thumbnails?: ThumbnailService,
   ) {}
 
   start(): void {
@@ -257,6 +259,16 @@ export class HatchetRelay {
           kbId: String(event.data.kbId ?? ""),
           outboxEventId: event.id,
         });
+        return true;
+      } else if (
+        event.eventType === "asset.created" ||
+        event.eventType === "asset.version.created"
+      ) {
+        const assetId = typeof event.data.assetId === "string" ? event.data.assetId : "";
+        if (assetId && this.thumbnails) {
+          this.thumbnails.enqueue(assetId, event.eventType === "asset.version.created" ? 800 : 0);
+        }
+        await this.api.ackOutbox(event.id).catch(() => undefined);
         return true;
       } else {
         await this.api.ackOutbox(event.id).catch(() => undefined);

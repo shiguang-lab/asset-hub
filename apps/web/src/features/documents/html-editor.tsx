@@ -65,13 +65,35 @@ function SaveBadge({ state }: { state: SaveState }) {
   const tone = state === "saved" ? "emerald" : state === "saving" ? "amber" : "rose";
   const label = state === "saved" ? "已自动保存" : state === "saving" ? "正在保存…" : "保存失败";
   return (
-    <span className={`zx-pill ${tone}`}>
+    <span className={`zx-pill ${tone}`} aria-live="polite">
       <span
         style={{
           width: 6,
           height: 6,
           borderRadius: "50%",
           background: "currentColor",
+        }}
+      />
+      {label}
+    </span>
+  );
+}
+
+function SaveFooterStatus({ state }: { state: SaveState }) {
+  const label = state === "saved" ? "已自动保存" : state === "saving" ? "正在保存…" : "保存失败";
+  const dotColor = state === "saved" ? "#34D399" : state === "saving" ? "#FBBF24" : "#FB7185";
+  const textColor = state === "failed" ? "#FB7185" : undefined;
+  return (
+    <span
+      aria-live="polite"
+      style={{ display: "inline-flex", alignItems: "center", gap: 6, color: textColor }}
+    >
+      <span
+        style={{
+          width: 6,
+          height: 6,
+          borderRadius: "50%",
+          background: dotColor,
         }}
       />
       {label}
@@ -289,7 +311,6 @@ export function HtmlEditorPage() {
             placeholder="输入 HTML 页面标题…"
             className="zx-ed-title-input"
           />
-          <SaveBadge state={saveState} />
         </div>
 
         <div className="zx-ed-sub-pills" role="tablist" aria-label="HTML 视图模式">
@@ -314,6 +335,7 @@ export function HtmlEditorPage() {
         </div>
 
         <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
+          {saveState !== "saved" ? <SaveBadge state={saveState} /> : null}
           {asset ? (
             <button
               type="button"
@@ -397,8 +419,12 @@ export function HtmlEditorPage() {
           <section className="zx-md-pane">
             <div ref={editorRef} className="sg-code-editor-host" />
             <div className="zx-md-footer tabular">
-              <span>HTML 源码</span>
-              <span>共 {source.length} 字符 · 独立 Origin 安全沙箱预览</span>
+              <span>HTML 源码 · 独立 Origin 安全沙箱预览</span>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 10 }}>
+                <span>共 {source.length} 字符</span>
+                <span aria-hidden="true">·</span>
+                <SaveFooterStatus state={saveState} />
+              </span>
             </div>
           </section>
         )}

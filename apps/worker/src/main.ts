@@ -11,6 +11,7 @@ import { Executor } from "./executor.js";
 import { HatchetRelay, HatchetRuntime } from "./hatchet.js";
 import { Scheduler } from "./scheduler.js";
 import { WorkerState } from "./state.js";
+import { ThumbnailService } from "./thumbnail-service.js";
 
 // Load the repo-root `.env` for local development (no-op when absent) so that
 // optional integrations such as Hatchet can be configured without exporting
@@ -30,6 +31,7 @@ const state = new WorkerState(config.statePath);
 const storage = createObjectStore(loadObjectStoreConfig("worker"));
 const api = new ApiClient(config, logger);
 const scheduler = new Scheduler(api, logger);
+const thumbnails = new ThumbnailService(config, api, logger);
 
 const hatchetConfig = loadHatchetConfig();
 const hatchetRuntime = new HatchetRuntime(hatchetConfig, api, storage, logger);
@@ -43,6 +45,16 @@ async function start(): Promise<void> {
       await nats.connect(process.env.NATS_URL);
       nats.subscribe(`${ASSET_HUB_SUBJECT_PREFIX}.>`, async (event) => {
         logger.info({ event }, "worker received domain event via NATS");
+        const envelope = event as { eventType?: string; data?: Record<string, unknown> };
+        if (
+          envelope.eventType === "asset.created" ||
+          envelope.eventType === "asset.version.created"
+        ) {
+          const assetId = typeof envelope.data?.assetId === "string" ? envelope.data.assetId : "";
+          if (assetId) {
+            thumbnails.enqueue(assetId, envelope.eventType === "asset.version.created" ? 800 : 0);
+          }
+        }
       });
       logger.info({ url: process.env.NATS_URL }, "worker connected to NATS");
     } catch (err) {
@@ -56,11 +68,18 @@ async function start(): Promise<void> {
       { worker: hatchetConfig.workerName },
       "worker using shared Hatchet durable execution",
     );
-    const relay = new HatchetRelay(hatchetRuntime, api, state, logger, config.pollIntervalMs);
+    const relay = new HatchetRelay(
+      hatchetRuntime,
+      api,
+      state,
+      logger,
+      config.pollIntervalMs,
+      thumbnails,
+    );
     relay.start();
     stopExecutor = () => relay.stop();
   } else {
-    const executor = new Executor(api, state, storage, logger, config.maxConcurrent);
+    const executor = new Executor(api, state, storage, logger, config.maxConcurrent, thumbnails);
     const timer = setInterval(() => {
       void executor.poll();
     }, config.pollIntervalMs);
@@ -71,8 +90,14 @@ async function start(): Promise<void> {
     };
   }
   scheduler.start();
+  thumbnails.start();
   logger.info(
-    { profiles: config.profiles, api: config.apiBase, pollMs: config.pollIntervalMs },
+    {
+      profiles: config.profiles,
+      api: config.apiBase,
+      web: config.webBase,
+      pollMs: config.pollIntervalMs,
+    },
     "worker ready",
   );
 }
@@ -80,6 +105,7 @@ async function start(): Promise<void> {
 const shutdown = () => {
   stopExecutor?.();
   scheduler.stop();
+  thumbnails.stop();
   void nats.close();
   state.close();
   process.exit(0);

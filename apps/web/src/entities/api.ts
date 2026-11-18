@@ -151,6 +151,7 @@ export interface Asset {
   lockVersion: number;
   deletedAt: string | null;
   publishedUrl: string | null;
+  thumbnailRef?: string | null;
   createdAt: string;
   updatedAt: string;
   content?: {

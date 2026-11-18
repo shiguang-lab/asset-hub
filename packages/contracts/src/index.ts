@@ -141,6 +141,7 @@ export const assetSchema = z.object({
   lockVersion: z.number().default(1),
   deletedAt: z.string().nullable().default(null),
   publishedUrl: z.string().nullable().default(null),
+  thumbnailRef: z.string().nullable().optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
 });

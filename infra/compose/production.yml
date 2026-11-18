@@ -76,6 +76,7 @@ services:
     environment:
       NODE_ENV: production
       API_INTERNAL_BASE: http://api:3001
+      WEB_INTERNAL_BASE: http://web:8080
       WORKER_STATE_PATH: /var/lib/shiguang/worker/worker-state.db
     volumes:
       - worker-state:/var/lib/shiguang/worker

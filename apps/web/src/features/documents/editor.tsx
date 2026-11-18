@@ -759,7 +759,6 @@ export function DocumentEditorPage() {
             placeholder="输入文档标题…"
             className="zx-ed-title-input"
           />
-          <SaveBadge state={saveState} />
         </div>
 
         <div className="zx-ed-sub-pills" role="tablist" aria-label="文档工作区切换">
@@ -783,6 +782,7 @@ export function DocumentEditorPage() {
         </div>
 
         <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
+          {saveState !== "saved" ? <SaveBadge state={saveState} /> : null}
           {asset ? (
             <button
               type="button"
@@ -1151,7 +1151,11 @@ export function DocumentEditorPage() {
             <div ref={editorRef} className="sg-code-editor-host" />
             <div className="zx-md-footer tabular">
               <span>Markdown 源码</span>
-              <span>共 {content.length} 字 · 自动保存已开启</span>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 10 }}>
+                <span>共 {content.length} 字</span>
+                <span aria-hidden="true">·</span>
+                <SaveFooterStatus state={saveState} />
+              </span>
             </div>
           </section>
 
@@ -1287,6 +1291,28 @@ function SaveBadge({ state }: { state: SaveState }) {
   const tone = state === "saved" ? "emerald" : state === "saving" ? "neutral" : "rose";
   return (
     <span className={`zx-pill ${tone}`} aria-live="polite">
+      {label}
+    </span>
+  );
+}
+
+function SaveFooterStatus({ state }: { state: SaveState }) {
+  const label = state === "saved" ? "已自动保存" : state === "saving" ? "保存中…" : "保存失败";
+  const dotColor = state === "saved" ? "#34D399" : state === "saving" ? "#FBBF24" : "#FB7185";
+  const textColor = state === "failed" ? "#FB7185" : undefined;
+  return (
+    <span
+      aria-live="polite"
+      style={{ display: "inline-flex", alignItems: "center", gap: 6, color: textColor }}
+    >
+      <span
+        style={{
+          width: 6,
+          height: 6,
+          borderRadius: "50%",
+          background: dotColor,
+        }}
+      />
       {label}
     </span>
   );

@@ -9,6 +9,7 @@ import { DocumentsPage } from "../features/documents/documents.js";
 import { DocumentEditorPage } from "../features/documents/editor.js";
 import { HtmlEditorPage } from "../features/documents/html-editor.js";
 import { DocumentPreviewPage } from "../features/documents/preview.js";
+import { ThumbnailRenderPage } from "../features/documents/thumbnail-render.js";
 import { HomePage } from "../features/home/home.js";
 import {
   KnowledgeDetailPage,
@@ -33,6 +34,10 @@ import { TemplatesPage } from "../features/templates/templates.js";
 import { Shell } from "../shell/layout.js";
 
 export const router = createBrowserRouter([
+  {
+    path: "/render/thumbnail",
+    element: <ThumbnailRenderPage />,
+  },
   {
     path: "/",
     element: <Shell />,

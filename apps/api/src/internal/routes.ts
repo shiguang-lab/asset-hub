@@ -743,7 +743,7 @@ export function registerInternalRoutes(app: FastifyInstance): void {
         status: publish.status,
       },
       release: release
-      ? {
+        ? {
             id: release.id,
             etag: release.etag,
             assetVersionId: release.assetVersionId,
@@ -913,6 +913,99 @@ export function registerInternalRoutes(app: FastifyInstance): void {
       .parse(req.query);
     return { comments: await ctx.store.listComments(query.publishId, query.releaseId ?? null) };
   });
+
+  /* ---------------- thumbnails ---------------- */
+
+  app.get("/internal/v1/thumbnails/pending", async (req) => {
+    const query = z
+      .object({
+        limit: z.coerce.number().int().min(1).max(50).default(10),
+      })
+      .parse(req.query ?? {});
+    const items = await ctx.store.listAssetsMissingThumbnail(query.limit);
+    return { items };
+  });
+
+  app.get("/internal/v1/assets/:id/thumbnail-source", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const asset = await ctx.store.getAssetAny(id);
+    if (!asset || asset.deletedAt || !asset.currentVersionId) {
+      return reply.status(404).send({ code: "NOT_FOUND", detail: "资产不存在或已删除" });
+    }
+    const existingThumb = await ctx.store.getAssetThumbnail(id, asset.currentVersionId);
+    if (existingThumb) {
+      return {
+        id: asset.id,
+        workspaceId: asset.workspaceId,
+        type: asset.type,
+        title: asset.title,
+        currentVersionId: asset.currentVersionId,
+        hasCurrentThumbnail: true,
+        content: null,
+      };
+    }
+    const content = await ctx.store.readContent(id, asset.currentVersionId);
+    return {
+      id: asset.id,
+      workspaceId: asset.workspaceId,
+      type: asset.type,
+      title: asset.title,
+      currentVersionId: asset.currentVersionId,
+      hasCurrentThumbnail: false,
+      content,
+    };
+  });
+
+  app.get("/internal/v1/assets/:id/blob", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const asset = await ctx.store.getAssetAny(id);
+    if (!asset || asset.deletedAt) {
+      return reply.status(404).send({ code: "NOT_FOUND", detail: "资产不存在" });
+    }
+    const blob = await ctx.store.getAssetBlob(asset.workspaceId, id);
+    if (!blob) {
+      return reply.status(404).send({ code: "NOT_FOUND", detail: "文件内容不存在" });
+    }
+    const data = await ctx.storage.get(blob.objectKey);
+    if (!data) {
+      return reply.status(404).send({ code: "NOT_FOUND", detail: "对象缺失" });
+    }
+    return reply.type(blob.mediaType).header("content-length", String(data.byteLength)).send(data);
+  });
+
+  app.post(
+    "/internal/v1/assets/:id/thumbnail",
+    { bodyLimit: 4 * 1024 * 1024 },
+    async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const body = z
+        .object({
+          versionId: z.string().min(1).max(120),
+          mediaType: z.enum(["image/jpeg", "image/webp", "image/png"]).default("image/jpeg"),
+          dataBase64: z.string().min(1).max(3_000_000),
+        })
+        .parse(req.body);
+      const asset = await ctx.store.getAssetAny(id);
+      if (!asset || asset.deletedAt) {
+        return reply.status(404).send({ code: "NOT_FOUND", detail: "资产不存在" });
+      }
+      const data = Buffer.from(body.dataBase64, "base64");
+      if (data.byteLength === 0 || data.byteLength > 2 * 1024 * 1024) {
+        return reply.status(400).send({ code: "THUMBNAIL_INVALID", detail: "缩略图大小不合法" });
+      }
+      const saved = await ctx.store.saveAssetThumbnail(id, body.versionId, data, body.mediaType);
+      ctx.sse.broadcast(asset.workspaceId, {
+        id: nextId("evt"),
+        event: "asset.thumbnail.updated",
+        data: {
+          assetId: asset.id,
+          versionId: body.versionId,
+          thumbnailRef: saved.thumbnailRef,
+        },
+      });
+      return { ok: true, thumbnailRef: saved.thumbnailRef };
+    },
+  );
 }
 
 export function normalizeReleasePath(path: string): string | null {

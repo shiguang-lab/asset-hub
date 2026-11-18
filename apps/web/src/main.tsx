@@ -119,6 +119,10 @@ function renderBrokerError() {
 }
 
 async function bootstrap() {
+  if (window.location.pathname === "/render/thumbnail") {
+    renderApp();
+    return;
+  }
   try {
     const session = await requireAuthSession();
     if (session) renderApp();

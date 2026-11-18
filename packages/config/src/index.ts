@@ -183,6 +183,7 @@ export function loadCapabilityAgentId(): string {
 
 export interface WorkerConfig {
   apiBase: string;
+  webBase: string;
   workerToken: string;
   pollIntervalMs: number;
   maxConcurrent: number;
@@ -191,8 +192,11 @@ export interface WorkerConfig {
 }
 
 export function loadWorkerConfig(): WorkerConfig {
+  const apiBase = process.env.API_INTERNAL_BASE ?? "http://localhost:3001";
+  const defaultWebBase = apiBase.includes("://api:") ? "http://web:8080" : "http://localhost:5173";
   return {
-    apiBase: process.env.API_INTERNAL_BASE ?? "http://localhost:3001",
+    apiBase,
+    webBase: process.env.WEB_INTERNAL_BASE ?? defaultWebBase,
     workerToken: process.env.WORKER_TOKEN ?? "dev-worker-token",
     pollIntervalMs: Number(process.env.WORKER_POLL_INTERVAL_MS ?? 1500),
     maxConcurrent: Number(process.env.WORKER_MAX_CONCURRENT ?? 4),

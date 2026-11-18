@@ -107,8 +107,18 @@ function folderError(code: string, message: string): Error {
   return error;
 }
 
+const ASSET_THUMBNAIL_SELECT = `(
+  SELECT ab.version_id || ':' || ab.content_hash
+  FROM asset_blobs ab
+  JOIN asset_versions av ON av.id = ab.version_id
+  WHERE av.asset_id = a.id AND ab.role = 'thumbnail'
+  ORDER BY av.sequence DESC
+  LIMIT 1
+) AS thumbnail_ref`;
+
 function mapAsset(r: Row): Asset {
   const ownerDisplayName = str(r.owner_display_name).trim();
+  const thumbnailRef = str(r.thumbnail_ref).trim();
   return {
     id: str(r.id),
     workspaceId: str(r.workspace_id),
@@ -125,6 +135,7 @@ function mapAsset(r: Row): Asset {
     lockVersion: num(r.lock_version, 1),
     deletedAt: r.deleted_at === null ? null : str(r.deleted_at),
     publishedUrl: r.published_url === null ? null : str(r.published_url),
+    thumbnailRef: thumbnailRef || null,
     createdAt: str(r.created_at),
     updatedAt: str(r.updated_at),
   };
@@ -603,7 +614,7 @@ export class Store {
       .get(...(params as unknown[]))) as { n: number };
     const rows = (await this.db
       .prepare(
-        `SELECT a.*, owner_user.name AS owner_display_name
+        `SELECT a.*, owner_user.name AS owner_display_name, ${ASSET_THUMBNAIL_SELECT}
          FROM assets a
          LEFT JOIN users owner_user ON owner_user.subject = a.owner_subject
          WHERE ${where}
@@ -627,7 +638,7 @@ export class Store {
          FROM asset_blobs ab
          JOIN asset_versions av ON av.id = ab.version_id
          JOIN assets a ON a.id = av.asset_id
-         WHERE a.workspace_id = ?`,
+         WHERE a.workspace_id = ? AND ab.role <> 'thumbnail'`,
       )
       .get(workspaceId)) as { used_bytes?: number };
     return {
@@ -640,7 +651,7 @@ export class Store {
   async getAsset(workspaceId: string, assetId: string): Promise<Asset | null> {
     const row = (await this.db
       .prepare(
-        `SELECT a.*, owner_user.name AS owner_display_name
+        `SELECT a.*, owner_user.name AS owner_display_name, ${ASSET_THUMBNAIL_SELECT}
          FROM assets a
          LEFT JOIN users owner_user ON owner_user.subject = a.owner_subject
          WHERE a.id = ? AND a.workspace_id = ?`,
@@ -652,7 +663,7 @@ export class Store {
   async getAssetAny(assetId: string): Promise<Asset | null> {
     const row = (await this.db
       .prepare(
-        `SELECT a.*, owner_user.name AS owner_display_name
+        `SELECT a.*, owner_user.name AS owner_display_name, ${ASSET_THUMBNAIL_SELECT}
          FROM assets a
          LEFT JOIN users owner_user ON owner_user.subject = a.owner_subject
          WHERE a.id = ?`,
@@ -689,6 +700,114 @@ export class Store {
     };
   }
 
+  async getAssetThumbnail(
+    assetId: string,
+    versionId?: string,
+  ): Promise<{
+    versionId: string;
+    objectKey: string;
+    contentHash: string;
+    size: number;
+    mediaType: string;
+  } | null> {
+    const row = versionId
+      ? ((await this.db
+          .prepare(
+            `SELECT ab.version_id, ab.object_key, ab.content_hash, ab.size, ab.media_type
+             FROM asset_blobs ab
+             JOIN asset_versions av ON av.id = ab.version_id
+             WHERE av.asset_id = ? AND ab.version_id = ? AND ab.role = 'thumbnail'
+             LIMIT 1`,
+          )
+          .get(assetId, versionId)) as Row | undefined)
+      : ((await this.db
+          .prepare(
+            `SELECT ab.version_id, ab.object_key, ab.content_hash, ab.size, ab.media_type
+             FROM asset_blobs ab
+             JOIN asset_versions av ON av.id = ab.version_id
+             WHERE av.asset_id = ? AND ab.role = 'thumbnail'
+             ORDER BY av.sequence DESC
+             LIMIT 1`,
+          )
+          .get(assetId)) as Row | undefined);
+    if (!row) return null;
+    return {
+      versionId: str(row.version_id),
+      objectKey: str(row.object_key),
+      contentHash: str(row.content_hash),
+      size: num(row.size),
+      mediaType: str(row.media_type, "image/jpeg"),
+    };
+  }
+
+  async saveAssetThumbnail(
+    assetId: string,
+    versionId: string,
+    data: Buffer,
+    mediaType = "image/jpeg",
+  ): Promise<{
+    versionId: string;
+    objectKey: string;
+    contentHash: string;
+    size: number;
+    mediaType: string;
+    thumbnailRef: string;
+  }> {
+    const ext = mediaType === "image/webp" ? "webp" : mediaType === "image/png" ? "png" : "jpg";
+    const objectKey = `assets/${assetId}/versions/${versionId}/thumbnail.${ext}`;
+    const stored = await this.storage.put(objectKey, data, mediaType);
+    await this.db
+      .prepare("DELETE FROM asset_blobs WHERE version_id = ? AND role = 'thumbnail'")
+      .run(versionId);
+    await this.db
+      .prepare(
+        `INSERT INTO asset_blobs (id, version_id, role, object_key, content_hash, size, media_type)
+         VALUES (?, ?, 'thumbnail', ?, ?, ?, ?)`,
+      )
+      .run(nextId("blob"), versionId, objectKey, stored.hash, stored.size, mediaType);
+    return {
+      versionId,
+      objectKey,
+      contentHash: stored.hash,
+      size: stored.size,
+      mediaType,
+      thumbnailRef: `${versionId}:${stored.hash}`,
+    };
+  }
+
+  async listAssetsMissingThumbnail(limit = 10): Promise<
+    Array<{
+      id: string;
+      workspaceId: string;
+      type: AssetType;
+      title: string;
+      currentVersionId: string;
+    }>
+  > {
+    const rows = (await this.db
+      .prepare(
+        `SELECT a.id, a.workspace_id, a.type, a.title, a.current_version_id
+         FROM assets a
+         WHERE a.deleted_at IS NULL
+           AND a.current_version_id IS NOT NULL
+           AND a.type IN ('document', 'report', 'html', 'presentation')
+           AND NOT EXISTS (
+             SELECT 1 FROM asset_blobs ab
+             WHERE ab.version_id = a.current_version_id AND ab.role = 'thumbnail'
+           )
+         ORDER BY a.updated_at DESC
+         LIMIT ?`,
+      )
+      .all(limit)) as Row[];
+    return rows.map((r) => ({
+      id: str(r.id),
+      workspaceId: str(r.workspace_id),
+      type: str(r.type) as AssetType,
+      title: str(r.title),
+      currentVersionId: str(r.current_version_id),
+    }));
+  }
+
   async listAssetBlobKeys(workspaceId: string, assetId: string): Promise<string[]> {
     const asset = await this.getAsset(workspaceId, assetId);
     if (!asset) return [];
@@ -721,7 +840,7 @@ export class Store {
     params.push(`%${query}%`, `%${query}%`, limit);
     const rows = (await this.db
       .prepare(
-        `SELECT a.*, owner_user.name AS owner_display_name FROM assets a
+        `SELECT a.*, owner_user.name AS owner_display_name, ${ASSET_THUMBNAIL_SELECT} FROM assets a
          LEFT JOIN users owner_user ON owner_user.subject = a.owner_subject
          WHERE a.workspace_id = ? AND a.deleted_at IS NULL
            ${accessClause}

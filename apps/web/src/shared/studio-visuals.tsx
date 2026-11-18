@@ -1,4 +1,5 @@
-import type { Asset } from "../entities/api.js";
+import { useEffect, useState } from "react";
+import { API_BASE, type Asset } from "../entities/api.js";
 
 export type StudioBadgeKind = "research" | "write" | "slides" | "kb";
 
@@ -420,14 +421,78 @@ export function resolvePreviewKind(asset: Pick<Asset, "type" | "title" | "path">
   return "docReport";
 }
 
+const IMAGE_FILE_RE = /\.(?:png|jpe?g|webp|gif|svg|avif)$/i;
+
+function resolveThumbnailUrl(
+  asset?: Pick<Asset, "type" | "title" | "path"> & {
+    id?: string;
+    thumbnailRef?: string | null;
+  },
+): string | null {
+  if (!asset?.id) return null;
+  if (asset.thumbnailRef) {
+    return `${API_BASE}/assets/${asset.id}/thumbnail?v=${encodeURIComponent(asset.thumbnailRef)}`;
+  }
+  if (asset.type === "file" && IMAGE_FILE_RE.test(asset.path || asset.title)) {
+    return `${API_BASE}/assets/${asset.id}/download`;
+  }
+  return null;
+}
+
 export function AssetMiniPreview({
   asset,
   kind,
 }: {
-  asset?: Pick<Asset, "type" | "title" | "path">;
+  asset?: Pick<Asset, "type" | "title" | "path"> & {
+    id?: string;
+    thumbnailRef?: string | null;
+  };
   kind?: MiniPreviewKind;
 }) {
   const resolved = kind ?? (asset ? resolvePreviewKind(asset) : "docReport");
+  const thumbnailUrl = resolveThumbnailUrl(asset);
+  const [loadedUrl, setLoadedUrl] = useState<string | null>(null);
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    setFailedUrl(null);
+  }, [thumbnailUrl]);
+
+  const showImage = Boolean(thumbnailUrl && failedUrl !== thumbnailUrl);
+  const isLoaded = Boolean(thumbnailUrl && loadedUrl === thumbnailUrl);
+
+  if (!showImage) {
+    return <AssetMiniPlaceholder resolved={resolved} />;
+  }
+
+  return (
+    <div style={{ position: "relative", width: "100%", height: "100%", overflow: "hidden" }}>
+      <AssetMiniPlaceholder resolved={resolved} />
+      <img
+        src={thumbnailUrl ?? undefined}
+        alt={asset?.title ? `${asset.title} 封面预览` : "文档封面预览"}
+        loading="lazy"
+        decoding="async"
+        onLoad={() => setLoadedUrl(thumbnailUrl)}
+        onError={() => setFailedUrl(thumbnailUrl)}
+        style={{
+          position: "absolute",
+          inset: 0,
+          width: "100%",
+          height: "100%",
+          objectFit: "cover",
+          objectPosition: "top center",
+          opacity: isLoaded ? 1 : 0,
+          transition: "opacity 220ms ease",
+          display: "block",
+          background: "#0B0E1A",
+        }}
+      />
+    </div>
+  );
+}
+
+function AssetMiniPlaceholder({ resolved }: { resolved: MiniPreviewKind }) {
   const line = "rgba(255, 255, 255, 0.16)";
   const paper = "rgba(24, 29, 49, 0.94)";
 
