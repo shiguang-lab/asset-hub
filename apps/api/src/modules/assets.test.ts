@@ -26,6 +26,13 @@ describe("parseImportedDocumentFile", () => {
     });
   });
 
+  it("imports HTML files as normalized editable content", () => {
+    expect(parseImportedDocumentFile("交互看板.html", Buffer.from("<h1>Hi</h1>\r\n"))).toEqual({
+      title: "交互看板",
+      markdown: "<h1>Hi</h1>\n",
+    });
+  });
+
   it("keeps Office and PDF files outside the editable document type", () => {
     expect(() => parseImportedDocumentFile("报告.docx", Buffer.from("content"))).toThrowError(
       DomainError,

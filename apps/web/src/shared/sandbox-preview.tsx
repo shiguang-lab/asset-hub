@@ -1,5 +1,5 @@
 import { createStyles } from "antd-style";
-import { useMemo } from "react";
+import { type CSSProperties, useMemo } from "react";
 
 const useSandboxPreviewStyles = createStyles((_token, props: { minHeight: number }) => ({
   frame: {
@@ -18,9 +18,13 @@ const useSandboxPreviewStyles = createStyles((_token, props: { minHeight: number
 export function SandboxHtmlPreview({
   source,
   minHeight = 480,
+  className,
+  style,
 }: {
   source: string;
   minHeight?: number;
+  className?: string;
+  style?: CSSProperties;
 }) {
   const srcDoc = useMemo(() => source, [source]);
   const { styles } = useSandboxPreviewStyles({ minHeight });
@@ -29,7 +33,8 @@ export function SandboxHtmlPreview({
       title="HTML 沙箱预览"
       sandbox="allow-scripts allow-forms allow-popups allow-modals"
       srcDoc={srcDoc}
-      className={styles.frame}
+      className={className ? `${styles.frame} ${className}` : styles.frame}
+      style={style}
     />
   );
 }

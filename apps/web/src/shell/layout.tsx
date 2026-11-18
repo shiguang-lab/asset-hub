@@ -208,14 +208,16 @@ export function Shell() {
   const { styles } = useShellLayoutStyles();
   const runningTasksCount = home?.runningTasks?.length ?? 0;
   const unreadCount = home?.unreadNotifications ?? 0;
-  const isSlimRail = !paletteOpen && /^\/documents\/[^/]+$/.test(location.pathname);
+  const isDocumentRoute =
+    /^\/documents\/[^/]+$/.test(location.pathname) || /^\/html\/[^/]+$/.test(location.pathname);
+  const isSlimRail = !paletteOpen && isDocumentRoute;
   const isStudioRoute =
     !paletteOpen &&
     (location.pathname === "/" ||
       location.pathname === "/documents" ||
       location.pathname === "/assets" ||
       location.pathname === "/knowledge" ||
-      /^\/documents\/[^/]+$/.test(location.pathname));
+      isDocumentRoute);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -374,8 +376,8 @@ export function Shell() {
     for (const file of files) {
       const rel = (file as File & { webkitRelativePath?: string }).webkitRelativePath;
       const name = rel ? (rel.split("/").pop() ?? file.name) : file.name;
-      if (!/\.(?:md|markdown|txt)$/i.test(name)) continue;
-      const title = name.replace(/\.(?:md|markdown|txt)$/i, "").trim() || "未命名文档";
+      if (!/\.(?:md|markdown|txt|html|htm)$/i.test(name)) continue;
+      const title = name.replace(/\.(?:md|markdown|txt|html|htm)$/i, "").trim() || "未命名文档";
       titles.push(title);
     }
     return titles;
@@ -424,7 +426,7 @@ export function Shell() {
         return;
       }
       toast("success", "文档已导入");
-      navigate(`/documents/${result.id}`);
+      navigate(result.type === "html" ? `/html/${result.id}` : `/documents/${result.id}`);
     } catch (error) {
       toast("error", error instanceof Error ? error.message : "文档导入失败");
     }
@@ -432,7 +434,10 @@ export function Shell() {
 
   const contentViewportClass = !paletteOpen
     ? (() => {
-        if (/^\/documents\/[^/]+/.test(location.pathname)) {
+        if (
+          /^\/documents\/[^/]+/.test(location.pathname) ||
+          /^\/html\/[^/]+$/.test(location.pathname)
+        ) {
           return location.pathname.endsWith("/preview")
             ? "sg-content-viewport-document-preview"
             : "sg-content-viewport-document-editor";
@@ -470,7 +475,7 @@ export function Shell() {
             ref={documentFileInputRef}
             type="file"
             multiple
-            accept=".md,.markdown,.txt,.zip,text/markdown,text/plain,application/zip"
+            accept=".md,.markdown,.txt,.html,.htm,.zip,text/markdown,text/plain,text/html,application/zip"
             hidden
             onChange={(event) => {
               void importDocument(Array.from(event.target.files ?? []));
@@ -1055,9 +1060,11 @@ function SearchWorkspace({
             ? `/presentations/${asset.id}`
             : kind === "data"
               ? `/assets/${asset.id}`
-              : asset.type === "document" || asset.type === "report"
-                ? `/documents/${asset.id}`
-                : `/assets/${asset.id}`,
+              : asset.type === "html"
+                ? `/html/${asset.id}`
+                : asset.type === "document" || asset.type === "report"
+                  ? `/documents/${asset.id}`
+                  : `/assets/${asset.id}`,
         updatedAt: asset.updatedAt,
         owner: isOwnedBySession(asset, authSession)
           ? "我创建的"

@@ -847,6 +847,13 @@ select {
   grid-template-columns: 196px minmax(0, 880px);
   justify-content: center;
 }
+.zx-ed-workspace.html-split {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.08fr);
+}
+.zx-ed-workspace.html-edit,
+.zx-ed-workspace.html-preview {
+  grid-template-columns: minmax(0, 1fr);
+}
 
 .zx-outline-rail {
   height: 100%;

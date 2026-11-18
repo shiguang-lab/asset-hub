@@ -1,13 +1,7 @@
 import { autocompletion } from "@codemirror/autocomplete";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
-import {
-  bracketMatching,
-  defaultHighlightStyle,
-  HighlightStyle,
-  indentOnInput,
-  syntaxHighlighting,
-} from "@codemirror/language";
+import { bracketMatching, indentOnInput } from "@codemirror/language";
 import { Compartment, EditorState } from "@codemirror/state";
 import { EditorView, highlightActiveLine, keymap, lineNumbers } from "@codemirror/view";
 import { Empty, Scrollbar, useToast } from "@shiguang/ui";
@@ -40,6 +34,7 @@ import {
   publishedShortUrl,
   uploadFile,
 } from "../../entities/api.js";
+import { auroraEditorExtensions } from "../../shared/codemirror-aurora.js";
 import { loadDocumentLocal, saveDocumentLocal } from "../../shared/document-local.js";
 import { DocumentMarkdown } from "../../shared/document-markdown.js";
 import {
@@ -193,67 +188,6 @@ const useDocumentEditorStyles = createStyles(({ token }) => ({
     minHeight: 260,
   },
 }));
-
-const AURORA_COLOR_MAP: Record<string, string> = {
-  "#00f": "#C084FC",
-  "#219": "#A78BFA",
-  "#164": "#34D399",
-  "#a11": "#7DD3FC",
-  "#e40": "#FB7185",
-  "#085": "#38BDF8",
-  "#256": "#38BDF8",
-  "#00c": "#818CF8",
-  "#940": "#94A3B8",
-  "#404740": "#94A3B8",
-  "#7a757a": "#94A3B8",
-  "#f00": "#FDA4AF",
-};
-
-const auroraHighlightStyle = HighlightStyle.define(
-  defaultHighlightStyle.specs.map((spec) => ({
-    ...spec,
-    ...(spec.color ? { color: AURORA_COLOR_MAP[spec.color.toLowerCase()] ?? "#E2E8F0" } : {}),
-  })),
-);
-
-const auroraEditorTheme = EditorView.theme(
-  {
-    "&": {
-      color: "#CBD5E1",
-      backgroundColor: "transparent",
-    },
-    ".cm-content": {
-      caretColor: "#C084FC",
-      fontFamily: 'var(--sg-mono, "SF Mono", "JetBrains Mono", ui-monospace, monospace)',
-      fontSize: "13px",
-      lineHeight: "1.8",
-      padding: "18px 12px",
-    },
-    "&.cm-focused .cm-cursor, .cm-dropCursor": {
-      borderLeftColor: "#C084FC",
-    },
-    "&.cm-focused .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection": {
-      backgroundColor: "rgba(168, 85, 247, 0.28) !important",
-    },
-    ".cm-activeLine": {
-      backgroundColor: "rgba(168, 85, 247, 0.08)",
-    },
-    ".cm-activeLineGutter": {
-      backgroundColor: "rgba(168, 85, 247, 0.14)",
-      color: "#E9D5FF",
-    },
-    ".cm-gutters": {
-      backgroundColor: "rgba(255, 255, 255, 0.02)",
-      color: "#64748B",
-      borderRight: "1px solid rgba(255, 255, 255, 0.08)",
-    },
-    ".cm-lineNumbers .cm-gutterElement": {
-      padding: "0 12px 0 14px",
-      fontSize: "12px",
-    },
-  },
-  { dark: true },
-);
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -712,8 +646,7 @@ export function DocumentEditorPage() {
         history(),
         bracketMatching(),
         indentOnInput(),
-        auroraEditorTheme,
-        syntaxHighlighting(auroraHighlightStyle, { fallback: true }),
+        ...auroraEditorExtensions,
         keymap.of([...defaultKeymap, ...historyKeymap]),
         autocompletion(),
         langConf.of(markdown({ base: markdownLanguage })),

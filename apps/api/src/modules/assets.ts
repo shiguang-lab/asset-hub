@@ -256,15 +256,11 @@ export function registerAssets(app: FastifyInstance): void {
     const body = z
       .object({ titles: z.array(z.string()).max(2000) })
       .parse(req.body ?? { titles: [] });
-    const existing = await ctx.store.listAssets(req.actor.workspaceId, {
-      type: "document",
-      limit: 2000,
-    });
-    const byTitle = new Map(existing.items.map((asset) => [asset.title, asset.id]));
+    const byTitle = await loadExistingDocumentTitles(ctx, req.actor.workspaceId);
     const found: Record<string, string> = {};
     for (const title of body.titles) {
-      const id = byTitle.get(title);
-      if (id) found[title] = id;
+      const existing = byTitle.get(title);
+      if (existing) found[title] = existing.id;
     }
     return reply.send({ existing: found });
   });
@@ -712,7 +708,7 @@ function contentFromInput(
 }
 
 const MAX_IMPORTED_DOCUMENT_SIZE = 5 * 1024 * 1024;
-const IMPORTED_DOCUMENT_EXTENSIONS = new Set(["md", "markdown", "txt"]);
+const IMPORTED_DOCUMENT_EXTENSIONS = new Set(["md", "markdown", "txt", "html", "htm"]);
 
 export function parseImportedDocumentFile(
   fileName: string,
@@ -723,12 +719,12 @@ export function parseImportedDocumentFile(
   }
   const extension = fileName.split(".").at(-1)?.toLowerCase() ?? "";
   if (!IMPORTED_DOCUMENT_EXTENSIONS.has(extension)) {
-    throw badRequest("DOCUMENT_FORMAT_UNSUPPORTED", "仅支持 Markdown 和纯文本文档");
+    throw badRequest("DOCUMENT_FORMAT_UNSUPPORTED", "仅支持 Markdown、HTML 和纯文本文档");
   }
   if (buffer.includes(0)) {
     throw badRequest("DOCUMENT_CONTENT_INVALID", "文档不是有效的文本内容");
   }
-  const title = fileName.replace(/\.(?:md|markdown|txt)$/i, "").trim() || "未命名文档";
+  const title = fileName.replace(/\.(?:md|markdown|txt|html|htm)$/i, "").trim() || "未命名文档";
   const markdown = buffer
     .toString("utf8")
     .replace(/^\uFEFF/, "")
@@ -806,8 +802,12 @@ async function loadExistingDocumentTitles(
   ctx: AppContext,
   workspaceId: string,
 ): Promise<Map<string, Asset>> {
-  const existing = await ctx.store.listAssets(workspaceId, { type: "document", limit: 2000 });
-  return new Map(existing.items.map((asset) => [asset.title, asset]));
+  const pages = await Promise.all(
+    (["document", "html"] as const).map((type) =>
+      ctx.store.listAssets(workspaceId, { type, limit: 2000 }),
+    ),
+  );
+  return new Map(pages.flatMap((page) => page.items).map((asset) => [asset.title, asset]));
 }
 
 function uniqueTitle(base: string, used: Set<string>): string {
@@ -828,7 +828,7 @@ async function importDocumentEntries(
   const normalized = normalizeImportEntries(entries);
   const documents = normalized.filter((entry) => isImportedDocument(entry.path));
   if (documents.length === 0)
-    throw badRequest("NO_MARKDOWN_IN_FOLDER", "文件夹中未找到 Markdown 文档");
+    throw badRequest("NO_MARKDOWN_IN_FOLDER", "文件夹中未找到 Markdown 或 HTML 文档");
 
   const existingByTitle = await loadExistingDocumentTitles(ctx, actor.workspaceId);
   const usedTitles = new Set(existingByTitle.keys());
@@ -838,7 +838,10 @@ async function importDocumentEntries(
   const markdownByPath = new Map<string, string>();
 
   for (const entry of documents) {
-    const parsed = parseImportedDocumentFile(pathPosix.basename(entry.path), entry.data);
+    const baseName = pathPosix.basename(entry.path);
+    const parsed = parseImportedDocumentFile(baseName, entry.data);
+    const extension = baseName.split(".").at(-1)?.toLowerCase() ?? "";
+    const isHtml = extension === "html" || extension === "htm";
     const path = normalizeResourcePath(entry.path);
     const resolution = resolutions[parsed.title];
     if (resolution === "skip") continue;
@@ -848,20 +851,36 @@ async function importDocumentEntries(
     if (resolution === "replace" && existingByTitle.has(parsed.title)) {
       asset = existingByTitle.get(parsed.title) as Asset;
       replaced = true;
+      if (isHtml || asset.type === "html") {
+        const saved = await ctx.store.saveContent(
+          actor,
+          asset.id,
+          { kind: "html", text: parsed.markdown, manifest: null, refs: [] },
+          { changeKind: "import", metadata: { importPath: path } },
+        );
+        asset = saved.asset;
+      }
     } else {
       const title = resolution === "rename" ? uniqueTitle(parsed.title, usedTitles) : parsed.title;
       asset = await ctx.store.createAsset(actor, {
-        type: "document",
+        type: isHtml ? "html" : "document",
         title,
         // 导入路径同时写入正式 path 字段，使导入的目录结构对 Web 与插件都可见。
         path: importPathToAssetPath(withImportPrefix(pathPrefix, path)),
         sourceType: "upload",
         metadata: { importPath: path },
-        content: { kind: "markdown", text: parsed.markdown, manifest: null, refs: [] },
+        content: {
+          kind: isHtml ? "html" : "markdown",
+          text: parsed.markdown,
+          manifest: null,
+          refs: [],
+        },
       });
     }
     usedTitles.add(asset.title);
-    markdownByPath.set(path, parsed.markdown);
+    if (!isHtml) {
+      markdownByPath.set(path, parsed.markdown);
+    }
     items.push({ asset, path, replaced });
     pathToAsset.set(path, asset);
   }
@@ -873,6 +892,7 @@ async function importDocumentEntries(
   let uploadedResources = 0;
 
   for (const item of items) {
+    if (item.asset.type === "html") continue;
     const sourceMarkdown = markdownByPath.get(item.path) ?? "";
     const references = extractMarkdownReferences(sourceMarkdown);
     for (const ref of references) {
@@ -895,7 +915,7 @@ async function importDocumentEntries(
       return resource ? `asset:${resource.id}` : null;
     });
 
-    if (rewritten !== sourceMarkdown) {
+    if (rewritten !== sourceMarkdown || item.replaced) {
       const saved = await ctx.store.saveContent(
         actor,
         item.asset.id,

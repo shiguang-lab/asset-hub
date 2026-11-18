@@ -6,6 +6,8 @@ import { createStyles } from "antd-style";
 import {
   BarChart3,
   Check,
+  ChevronDown,
+  Code2,
   FileStack,
   FileText,
   Folder,
@@ -198,7 +200,7 @@ async function loadDocumentAssets(
   includeDeleted = false,
 ): Promise<{ items: Asset[]; total: number }> {
   const groups = await Promise.all(
-    ["document", "report"].map(async (assetType) => {
+    ["document", "report", "html"].map(async (assetType) => {
       const collected: Asset[] = [];
       let cursor: string | undefined;
       do {
@@ -236,15 +238,25 @@ function displayDate(iso: string): string {
   return `${date.getMonth() + 1}月${date.getDate()}日`;
 }
 
-function documentIcon(title: string) {
-  if (title.includes("Dashboard")) return BarChart3;
-  if (title.includes("消费金融") || title.includes("Agent")) return MonitorPlay;
+function documentHref(doc: Pick<Asset, "id" | "type">): string {
+  return doc.type === "html" ? `/html/${doc.id}` : `/documents/${doc.id}`;
+}
+
+function documentPreviewHref(doc: Pick<Asset, "id" | "type">): string {
+  return doc.type === "html" ? `/html/${doc.id}?preview=1` : `/documents/${doc.id}/preview`;
+}
+
+function documentIcon(doc: Pick<Asset, "type" | "title">) {
+  if (doc.type === "html") return Code2;
+  if (doc.title.includes("Dashboard")) return BarChart3;
+  if (doc.title.includes("消费金融") || doc.title.includes("Agent")) return MonitorPlay;
   return FileText;
 }
 
-function documentTone(title: string): string {
-  if (title.includes("Dashboard")) return "amber";
-  if (title.includes("消费金融") || title.includes("Agent")) return "violet";
+function documentTone(doc: Pick<Asset, "type" | "title">): string {
+  if (doc.type === "html") return "sky";
+  if (doc.title.includes("Dashboard")) return "amber";
+  if (doc.title.includes("消费金融") || doc.title.includes("Agent")) return "violet";
   return "indigo";
 }
 
@@ -402,6 +414,16 @@ export function DocumentsPage() {
   const newDocumentHref = folderScope
     ? `/documents/new?folder=${encodeURIComponent(folderScope)}`
     : "/documents/new";
+  const newHtmlHref = folderScope
+    ? `/html/new?folder=${encodeURIComponent(folderScope)}`
+    : "/html/new";
+  const createMenuItems: MenuProps["items"] = [
+    { key: "markdown", icon: <FileText size={15} />, label: "Markdown 文档" },
+    { key: "html", icon: <Code2 size={15} />, label: "交互式 HTML 页面" },
+  ];
+  const onCreateMenuClick: MenuProps["onClick"] = ({ key }) => {
+    navigate(key === "html" ? newHtmlHref : newDocumentHref);
+  };
 
   useEffect(() => {
     if (activeFolderId === ROOT_FOLDER_ID) return;
@@ -611,8 +633,8 @@ export function DocumentsPage() {
 
   const onDocumentMenuClick = (document: Asset, key: string) => {
     setOpenDocumentMenuId(null);
-    if (key === "open") navigate(`/documents/${document.id}`);
-    if (key === "preview") navigate(`/documents/${document.id}/preview`);
+    if (key === "open") navigate(documentHref(document));
+    if (key === "preview") navigate(documentPreviewHref(document));
     if (key === "copy") void copyLink(document);
     if (key === "favorite") toggleFavorite(document.id);
     if (key === "move") openMoveDialog(document);
@@ -797,7 +819,7 @@ export function DocumentsPage() {
             </div>
           </div>
           <p className="zx-studio-sub">
-            沉浸式 Markdown 与 AI 协同创作空间，支持多级目录整理与一键短链分享
+            沉浸式 Markdown、交互式 HTML 与 AI 协同创作空间，支持多级目录整理与一键短链分享
           </p>
         </div>
 
@@ -816,9 +838,16 @@ export function DocumentsPage() {
           >
             <FolderOpen size={14} /> 导入目录
           </button>
-          <button type="button" className="zx-btn-cta" onClick={() => navigate(newDocumentHref)}>
-            <Plus size={15} strokeWidth={2.3} /> 新建文档
-          </button>
+          <Dropdown
+            trigger={["click"]}
+            placement="bottomRight"
+            menu={{ items: createMenuItems, onClick: onCreateMenuClick }}
+          >
+            <button type="button" className="zx-btn-cta">
+              <Plus size={15} strokeWidth={2.3} /> 新建文档{" "}
+              <ChevronDown size={13} style={{ marginLeft: -2, opacity: 0.85 }} />
+            </button>
+          </Dropdown>
         </div>
       </div>
 
@@ -1008,13 +1037,16 @@ export function DocumentsPage() {
           hint="创建文档、上传文件或发起调研后，文档会展示在这里。"
           action={
             filter !== "trash" ? (
-              <button
-                type="button"
-                className="zx-btn-cta"
-                onClick={() => navigate(newDocumentHref)}
+              <Dropdown
+                trigger={["click"]}
+                placement="bottom"
+                menu={{ items: createMenuItems, onClick: onCreateMenuClick }}
               >
-                <Plus size={15} /> 新建文档
-              </button>
+                <button type="button" className="zx-btn-cta">
+                  <Plus size={15} /> 新建文档{" "}
+                  <ChevronDown size={13} style={{ marginLeft: -2, opacity: 0.85 }} />
+                </button>
+              </Dropdown>
             ) : undefined
           }
         />
@@ -1036,7 +1068,7 @@ export function DocumentsPage() {
                   event.dataTransfer.setData("application/x-shiguang-document", d.id);
                   event.dataTransfer.effectAllowed = "move";
                 }}
-                onClick={() => navigate(`/documents/${d.id}`)}
+                onClick={() => navigate(documentHref(d))}
               >
                 <div className="zx-paper-preview">
                   <AssetMiniPreview asset={d} />
@@ -1047,13 +1079,15 @@ export function DocumentsPage() {
                     <button
                       type="button"
                       className="zx-mini-act ai"
-                      title="进入 AI 协同编辑器"
+                      title={
+                        d.type === "html" ? "进入 HTML 代码与预览工作台" : "进入 AI 协同编辑器"
+                      }
                       onClick={(e) => {
                         e.stopPropagation();
-                        navigate(`/documents/${d.id}`);
+                        navigate(documentHref(d));
                       }}
                     >
-                      <Sparkles size={13.5} />
+                      {d.type === "html" ? <Code2 size={13.5} /> : <Sparkles size={13.5} />}
                     </button>
                     <button
                       type="button"
@@ -1094,12 +1128,20 @@ export function DocumentsPage() {
                 <div className="zx-paper-body">
                   <div className="zx-paper-title">
                     <span>{d.title}</span>
+                    {d.type === "html" && (
+                      <span className="zx-pill sky" style={{ fontSize: 10.5, padding: "1px 7px" }}>
+                        HTML
+                      </span>
+                    )}
                     {isStarred && (
                       <Star size={13.5} fill="#F59E0B" color="#F59E0B" style={{ flexShrink: 0 }} />
                     )}
                   </div>
                   <p className="zx-paper-desc">
-                    {d.description || "点击进入沉浸式编辑器撰写正文与引用知识库"}
+                    {d.description ||
+                      (d.type === "html"
+                        ? "交互式 HTML 页面，支持实时源码编辑与沙箱运行预览"
+                        : "点击进入沉浸式编辑器撰写正文与引用知识库")}
                   </p>
                   <div className="zx-paper-foot tabular">
                     <div style={{ display: "flex", alignItems: "center", gap: 7, minWidth: 0 }}>
@@ -1118,7 +1160,7 @@ export function DocumentsPage() {
           {paged.map((d) => {
             const vis = visMeta(d);
             const VisIcon = vis.icon;
-            const Icon = documentIcon(d.title);
+            const Icon = documentIcon(d);
             const badges = demoMode ? (DEMO_RELATIONS[d.id] ?? []) : relationBadges(relMap?.[d.id]);
             const primaryRel = badges[0] ?? (d.publishedUrl ? "已发布" : "草稿");
             const folderLabel = folderPathOf(d.path ?? "") || "未归类";
@@ -1134,14 +1176,11 @@ export function DocumentsPage() {
                 }}
                 onClick={(e) => {
                   if ((e.target as HTMLElement).closest("button, .ant-dropdown")) return;
-                  navigate(`/documents/${d.id}`);
+                  navigate(documentHref(d));
                 }}
               >
                 <div style={{ display: "flex", alignItems: "center", gap: 13, minWidth: 0 }}>
-                  <span
-                    className={`zx-jewel ${documentTone(d.title)}`}
-                    style={{ width: 38, height: 38 }}
-                  >
+                  <span className={`zx-jewel ${documentTone(d)}`} style={{ width: 38, height: 38 }}>
                     <Icon size={16} strokeWidth={1.9} />
                   </span>
                   <div style={{ minWidth: 0 }}>
@@ -1157,6 +1196,14 @@ export function DocumentsPage() {
                       >
                         {d.title}
                       </strong>
+                      {d.type === "html" && (
+                        <span
+                          className="zx-pill sky"
+                          style={{ fontSize: 10.5, padding: "1px 7px" }}
+                        >
+                          HTML
+                        </span>
+                      )}
                       {favoriteIds.includes(d.id) && (
                         <Star size={13} fill="#F59E0B" color="#F59E0B" style={{ flexShrink: 0 }} />
                       )}
@@ -1218,10 +1265,10 @@ export function DocumentsPage() {
                     size="small"
                     type="text"
                     className="sg-list-action-btn ai"
-                    title="AI 协同编辑"
-                    onClick={() => navigate(`/documents/${d.id}`)}
+                    title={d.type === "html" ? "HTML 代码与预览" : "AI 协同编辑"}
+                    onClick={() => navigate(documentHref(d))}
                   >
-                    <Sparkles size={15} />
+                    {d.type === "html" ? <Code2 size={15} /> : <Sparkles size={15} />}
                   </Button>
                   <Button
                     size="small"
