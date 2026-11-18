@@ -2,81 +2,57 @@ import { createStyles } from "antd-style";
 
 export const useSearchStyles = createStyles(({ css }) => ({
   root: css`
-/* Global search workspace: reference layout 2026-08-13. */
-.sg-header .sg-header-tools {
-  position: relative;
+/* Global search workspace inside V6 No-Topbar Studio Canvas */
+.zx-search-omni-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 1.5px;
+  border-radius: 18px;
+  background: var(--zx-omni-rim);
+  box-shadow: var(--zx-omni-shadow);
+  margin-bottom: 18px;
 }
-.sg-header .sg-search {
-  position: absolute;
-  top: 50%;
-  right: calc(100% + 14px);
-  z-index: 2;
-  transform: translateY(-50%);
-  transition:
-    width 240ms ease,
-    border-color 160ms ease,
-    background-color 160ms ease;
-  will-change: width;
+.zx-search-omni-inner {
+  flex: 1;
+  height: 52px;
+  padding: 0 14px 0 18px;
+  border-radius: 16.5px;
+  background: var(--zx-omni-bg);
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
-.sg-header.search-mode .sg-breadcrumb {
-  visibility: hidden;
-}
-.sg-header.search-mode .sg-search {
-  width: min(810px, 52vw);
-  max-width: 810px;
-  height: 40px;
-  border-color: #373241;
-  background: #151821;
-}
-.sg-header.search-mode .sg-search .ant-input {
+.zx-search-omni-inner input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--sg-fg);
   font-size: 15px;
 }
-.sg-search-suffix {
-  position: relative;
-  display: inline-flex;
-  width: 60px;
-  height: 25px;
-  align-items: center;
-  justify-content: flex-end;
-}
-.sg-search-suffix > button {
-  position: absolute;
-  left: 0;
-  display: inline-flex;
-  width: 25px;
-  height: 25px;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  border: 0;
-  border-radius: 4px;
+.zx-search-omni-inner input::placeholder {
   color: var(--sg-muted);
-  background: transparent;
+}
+.zx-search-esc-btn {
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 8px;
+  border: 1px solid var(--zx-border);
+  background: var(--zx-surface-subtle);
+  color: var(--sg-fg-2);
+  font-size: 11.5px;
+  font-weight: 600;
   cursor: pointer;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 140ms ease;
 }
-.sg-search-suffix.is-active > button {
-  opacity: 1;
-  pointer-events: auto;
-}
-.sg-search-suffix > button:hover {
+.zx-search-esc-btn:hover {
+  border-color: var(--zx-brand-border);
   color: var(--sg-fg);
-  background: var(--sg-bg-3);
-}
-.sg-search-suffix .sg-kbd {
-  position: absolute;
-  right: 0;
-}
-.sg-search-profile {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
 }
 .sg-search-content {
-  min-height: calc(100vh - 60px);
-  padding: var(--sg-page-gutter);
+  min-height: calc(100vh - 24px);
+  padding: 28px 36px;
 }
 .sg-global-search {
   position: relative;

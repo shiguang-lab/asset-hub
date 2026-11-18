@@ -11,5 +11,9 @@ export const AppDocumentReset = createGlobalStyle`
   #root {
     height: 100%;
     margin: 0;
+    background: #060811;
+    color: #F6F7FB;
+    -webkit-font-smoothing: antialiased;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
   }
 `;

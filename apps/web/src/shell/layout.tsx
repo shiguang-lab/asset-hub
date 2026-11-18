@@ -1,12 +1,11 @@
 import { cx, Scrollbar, useToast } from "@shiguang/ui";
 import { useQuery } from "@tanstack/react-query";
 import type { MenuProps } from "antd";
-import { Badge, Button, Checkbox, Dropdown, Flex, Input, Layout, Menu, Select, Space } from "antd";
+import { Button, Checkbox, Dropdown, Select } from "antd";
 import { createStyles } from "antd-style";
 import {
   ArrowRight,
   Bell,
-  Blocks,
   BookOpen,
   CheckCircle2,
   ChevronDown,
@@ -73,8 +72,6 @@ import {
 import { isOwnedBySession, ownerDisplayName } from "../shared/owner.js";
 import { useSse } from "../shared/sse.js";
 
-const { Header, Sider, Content } = Layout;
-
 type ShellBreadcrumb = { section: string; current?: string };
 type SetShellBreadcrumb = Dispatch<SetStateAction<ShellBreadcrumb | null>>;
 export type ImportedDocumentEntry = { asset: Asset; path: string };
@@ -119,27 +116,7 @@ export function useShellDocumentActions(): ShellDocumentActions | null {
   return useContext(ShellDocumentActionsContext);
 }
 
-const useShellStyles = createStyles(() => ({
-  root: {
-    height: "100vh",
-    minHeight: 0,
-    overflow: "hidden",
-  },
-  main: {
-    flex: "1 1 0",
-    minWidth: 0,
-    minHeight: 0,
-    overflow: "hidden",
-    display: "flex",
-    flexDirection: "column",
-  },
-  content: {
-    flex: "1 1 0",
-    minHeight: 0,
-    overflow: "hidden",
-    display: "flex",
-    flexDirection: "column",
-  },
+const useShellLayoutStyles = createStyles(() => ({
   viewport: {
     height: "auto",
     flex: "1 1 0",
@@ -147,33 +124,44 @@ const useShellStyles = createStyles(() => ({
     width: "100%",
     overflowY: "auto",
   },
-  sidebarViewport: {
-    height: "100%",
-    minHeight: 0,
-    width: "100%",
-    overflowY: "auto",
-  },
-  sidebarContent: {
-    height: "100%",
-    minHeight: "100%",
-  },
-  nav: {
-    background: "transparent",
-    border: "none",
-    flex: 1,
-  },
 }));
 
-const NAV = [
+const NAV_MAIN = [
   { to: "/", label: "首页", icon: Home },
   { to: "/documents", label: "文档", icon: FileText },
   { to: "/assets", label: "资产", icon: FolderKanban },
   { to: "/knowledge", label: "知识库", icon: BookOpen },
+];
+
+const NAV_STUDIO = [
   { to: "/research", label: "调研", icon: Search },
   { to: "/tasks", label: "任务", icon: CheckCircle2 },
   { to: "/presentations", label: "在线演示", icon: MonitorPlay },
   { to: "/templates", label: "模板", icon: LayoutTemplate },
 ];
+
+const NAV = [...NAV_MAIN, ...NAV_STUDIO];
+
+function BrandLogoMark() {
+  return (
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <rect x="3" y="3" width="7.5" height="7.5" rx="2.2" />
+      <rect x="13.5" y="3" width="7.5" height="7.5" rx="2.2" />
+      <rect x="3" y="13.5" width="7.5" height="7.5" rx="2.2" />
+      <path d="M14 17.25h6.5M17.25 14v6.5" />
+    </svg>
+  );
+}
 
 const BREADCRUMBS: Array<{ match: RegExp; label: string }> = [
   { match: /^\/assets/, label: "资产中心" },
@@ -191,18 +179,6 @@ const BREADCRUMBS: Array<{ match: RegExp; label: string }> = [
   { match: /^\/billing/, label: "积分余额" },
   { match: /^\/profile/, label: "个人中心" },
   { match: /^\/settings/, label: "设置" },
-];
-
-const CONTEXT_CREATE_ACTIONS: Array<{
-  match: RegExp;
-  label: string;
-  target: string;
-}> = [
-  { match: /^\/documents(?:\/|$)/, label: "新建文档", target: "/documents/new" },
-  { match: /^\/html(?:\/|$)/, label: "新建 HTML 页面", target: "/html/new" },
-  { match: /^\/knowledge(?:\/|$)/, label: "新建知识库", target: "/knowledge/new" },
-  { match: /^\/research(?:\/|$)/, label: "新建调研", target: "/research/new" },
-  { match: /^\/tasks(?:\/|$)/, label: "新建任务", target: "/tasks/new" },
 ];
 
 function accountInitial(displayName: string): string {
@@ -229,7 +205,17 @@ export function Shell() {
   const canWrite = canWriteWorkspace(authSession);
   const creditBalance = creditData?.balance ?? 0;
   const displayName = authSession?.displayName ?? "用户";
-  const { styles } = useShellStyles();
+  const { styles } = useShellLayoutStyles();
+  const runningTasksCount = home?.runningTasks?.length ?? 0;
+  const unreadCount = home?.unreadNotifications ?? 0;
+  const isSlimRail = !paletteOpen && /^\/documents\/[^/]+$/.test(location.pathname);
+  const isStudioRoute =
+    !paletteOpen &&
+    (location.pathname === "/" ||
+      location.pathname === "/documents" ||
+      location.pathname === "/assets" ||
+      location.pathname === "/knowledge" ||
+      /^\/documents\/[^/]+$/.test(location.pathname));
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -245,7 +231,7 @@ export function Shell() {
   useEffect(() => {
     if (!paletteOpen) return;
     const frame = window.requestAnimationFrame(() => {
-      document.querySelector<HTMLInputElement>(".sg-search input")?.focus();
+      document.querySelector<HTMLInputElement>(".zx-search-omni-inner input")?.focus();
     });
     return () => window.cancelAnimationFrame(frame);
   }, [paletteOpen]);
@@ -270,10 +256,6 @@ export function Shell() {
         : "页面未找到";
     document.title = `${pageTitle} | ${BRAND_TITLE}`;
   }, [breadcrumbCurrent, breadcrumbSection, location.pathname]);
-  const contextCreate = CONTEXT_CREATE_ACTIONS.find((action) =>
-    action.match.test(location.pathname),
-  );
-  const showCreateMenu = location.pathname === "/";
   const uploadInputRef = useRef<HTMLInputElement>(null);
   const documentFileInputRef = useRef<HTMLInputElement>(null);
   const documentFolderInputRef = useRef<HTMLInputElement>(null);
@@ -308,18 +290,9 @@ export function Shell() {
     return match?.to ?? "";
   }, [location.pathname]);
 
-  const menuItems: MenuProps["items"] = NAV.map((item) => {
-    const Icon = item.icon;
-    return {
-      key: item.to,
-      icon: <Icon size={17} strokeWidth={1.8} />,
-      label: item.label,
-    };
-  });
-
-  const onMenuClick: MenuProps["onClick"] = ({ key }) => {
+  const navigateTo = (target: string) => {
     setPaletteOpen(false);
-    navigate(key);
+    navigate(target);
   };
   const onCreate = (key: string) => {
     if (key === "upload") {
@@ -333,6 +306,7 @@ export function Shell() {
       research: "/research/new",
       presentation: "/presentations/new",
     };
+    setPaletteOpen(false);
     navigate(target[key] ?? "/");
   };
 
@@ -482,7 +456,7 @@ export function Shell() {
   return (
     <ShellBreadcrumbContext.Provider value={setPageBreadcrumb}>
       <ShellDocumentActionsContext.Provider value={documentActions}>
-        <Layout className={cx("sg-shell", styles.root)}>
+        <div className="sg-shell">
           <input
             ref={uploadInputRef}
             type="file"
@@ -515,169 +489,307 @@ export function Shell() {
               event.target.value = "";
             }}
           />
-          <Sider width={266} className="sg-sidebar" theme="dark">
-            <Scrollbar className={styles.sidebarViewport}>
-              <Flex vertical className={styles.sidebarContent}>
-                <Link to="/" className="sg-sidebar-logo">
-                  <span className="sg-brand-mark">
-                    <Blocks size={18} />
-                  </span>
-                  <span className="sg-sidebar-logo-copy">
-                    <b>知序</b>
-                    <small>AI 知识与创作空间</small>
-                  </span>
-                </Link>
-                <Menu
-                  mode="inline"
-                  items={menuItems}
-                  selectedKeys={[activeKey]}
-                  onClick={onMenuClick}
-                  className={cx("sg-nav", styles.nav)}
-                />
-                <div className="sg-sidebar-footer">
-                  <Link
-                    to="/settings"
-                    className={cx(
-                      "sg-sidebar-settings",
-                      location.pathname.startsWith("/settings") && "active",
-                    )}
-                  >
-                    <Settings size={17} />
-                    <span>设置</span>
-                    <ChevronRight size={15} />
-                  </Link>
-                  <Link to="/billing" className="sg-credits-box">
-                    <div className="sg-credits-head">
-                      <span className="sg-credits-title">
-                        <CircleDollarSign size={13} /> 积分余额
-                      </span>
-                      <span className="sg-credits-percent">
-                        {creditBalance.toLocaleString("zh-CN")} <small>积分</small>
-                      </span>
-                    </div>
-                  </Link>
-                </div>
-              </Flex>
-            </Scrollbar>
-          </Sider>
 
-          <Layout className={styles.main}>
-            <Header className={cx("sg-header", paletteOpen && "search-mode")}>
-              <div className="sg-breadcrumb">
-                {breadcrumbSection && (
-                  <span className="sg-breadcrumb-section">{breadcrumbSection}</span>
-                )}
-                {breadcrumbSection && breadcrumbCurrent && (
-                  <>
-                    <ChevronRight className="sg-breadcrumb-separator" size={15} />
-                    <strong className="sg-breadcrumb-current">{breadcrumbCurrent}</strong>
-                  </>
-                )}
-              </div>
-              <div className="sg-header-tools">
-                <Input
-                  className="sg-search"
-                  value={searchQuery}
-                  onFocus={() => setPaletteOpen(true)}
-                  onClick={() => setPaletteOpen(true)}
-                  onChange={(event) => {
-                    setSearchQuery(event.target.value);
-                    setPaletteOpen(true);
+          <aside className={cx("zx-studio-rail", isSlimRail && "slim")} aria-label="主导航栏">
+            {isSlimRail ? (
+              <>
+                <div
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    gap: 11,
                   }}
-                  placeholder="搜索模板、任务、文档…"
-                  prefix={<Search size={15} />}
-                  suffix={
-                    <span className={cx("sg-search-suffix", paletteOpen && "is-active")}>
-                      <button
-                        type="button"
-                        aria-label="关闭搜索"
-                        tabIndex={paletteOpen ? 0 : -1}
-                        onMouseDown={(event) => event.preventDefault()}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          setPaletteOpen(false);
-                        }}
-                      >
-                        <X size={15} />
-                      </button>
-                      <span className="sg-kbd">⌘K</span>
-                    </span>
-                  }
-                />
-                <Space size={12} className="sg-header-actions">
-                  {canWrite && contextCreate && !location.pathname.startsWith("/documents") ? (
-                    <Button
-                      className="sg-create-button is-context"
-                      type="primary"
-                      icon={<Plus size={17} />}
-                      onClick={() => navigate(contextCreate.target)}
-                    >
-                      {contextCreate.label}
-                    </Button>
-                  ) : canWrite && showCreateMenu ? (
+                >
+                  <Link
+                    to="/"
+                    className="zx-brand-gem"
+                    title="返回知序首页"
+                    onClick={() => setPaletteOpen(false)}
+                  >
+                    <BrandLogoMark />
+                  </Link>
+                  {canWrite && (
                     <Dropdown
                       trigger={["click"]}
-                      placement="bottomRight"
+                      placement="rightTop"
                       popupRender={() => (
                         <CreatePopover
                           onSelect={onCreate}
-                          onBrowse={() => navigate("/templates")}
+                          onBrowse={() => navigateTo("/templates")}
                         />
                       )}
                       rootClassName="sg-create-dropdown"
                     >
-                      <Button className="sg-create-button" type="primary" icon={<Plus size={17} />}>
-                        新建 <ChevronDown size={14} />
-                      </Button>
+                      <button
+                        type="button"
+                        className="zx-slim-create"
+                        title="新建创作"
+                        aria-label="新建创作"
+                      >
+                        <Plus size={16} strokeWidth={2.4} />
+                      </button>
                     </Dropdown>
-                  ) : null}
-                  {authSession && <SpaceSwitcher session={authSession} />}
+                  )}
+                  <button
+                    type="button"
+                    className="zx-slim-search"
+                    title="全局搜索 (⌘K)"
+                    aria-label="全局搜索"
+                    onClick={() => setPaletteOpen((v) => !v)}
+                  >
+                    <Search size={15} />
+                  </button>
+                  <div
+                    style={{
+                      width: 28,
+                      height: 1,
+                      background: "var(--zx-border)",
+                      margin: "2px 0",
+                    }}
+                  />
+                  {NAV.map((item) => {
+                    const Icon = item.icon;
+                    return (
+                      <button
+                        key={item.to}
+                        type="button"
+                        className={cx("zx-slim-btn", activeKey === item.to && "active")}
+                        title={item.label}
+                        aria-label={item.label}
+                        onClick={() => navigateTo(item.to)}
+                      >
+                        <Icon size={16} strokeWidth={1.9} />
+                      </button>
+                    );
+                  })}
+                </div>
+
+                <div
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    alignItems: "center",
+                    gap: 12,
+                    marginTop: "auto",
+                  }}
+                >
+                  <Link
+                    to="/settings"
+                    className={cx(
+                      "zx-ud-gear",
+                      location.pathname.startsWith("/settings") && "active",
+                    )}
+                    title="设置"
+                    aria-label="设置"
+                  >
+                    <Settings size={16} />
+                  </Link>
                   <Dropdown
                     trigger={["click"]}
-                    placement="bottomRight"
+                    placement="rightBottom"
                     menu={{ items: userMenuItems, onClick: onUserMenuClick }}
                     rootClassName="sg-user-dropdown"
                   >
                     <button
                       type="button"
-                      className="sg-header-user sg-search-profile"
+                      className="zx-ud-avatar"
                       aria-label={`${displayName}，打开用户菜单`}
-                      title={displayName}
+                      title={`${displayName} · ${creditBalance.toLocaleString("zh-CN")} 积分`}
                     >
-                      <span className="sg-header-account-avatar" aria-hidden="true">
-                        {accountInitial(displayName)}
-                      </span>
+                      {accountInitial(displayName)}
                     </button>
                   </Dropdown>
-                  <Badge count={home?.unreadNotifications ?? 0} size="small">
-                    <Button
-                      className="sg-header-notifications"
-                      type="text"
-                      icon={<Bell size={18} />}
-                      onClick={() => navigate("/notifications")}
-                      aria-label="通知"
-                    />
-                  </Badge>
-                </Space>
-              </div>
-            </Header>
-            <Content className={cx(styles.content, "sg-content-shell")}>
-              <Scrollbar className={cx(styles.viewport, contentViewportClass)}>
-                <div className={cx("sg-content", paletteOpen && "sg-search-content")}>
-                  {paletteOpen ? (
-                    <SearchWorkspace
-                      query={searchQuery}
-                      onQueryChange={setSearchQuery}
-                      onClose={() => setPaletteOpen(false)}
-                    />
-                  ) : (
-                    <Outlet />
-                  )}
                 </div>
-              </Scrollbar>
-            </Content>
-          </Layout>
-        </Layout>
+              </>
+            ) : (
+              <>
+                <div className="zx-rail-top">
+                  <div className="zx-ws-head">
+                    <div className="zx-ws-brand">
+                      <Link to="/" className="zx-brand-gem" onClick={() => setPaletteOpen(false)}>
+                        <BrandLogoMark />
+                      </Link>
+                      <div className="zx-ws-copy">
+                        <Link to="/" className="zx-ws-name" onClick={() => setPaletteOpen(false)}>
+                          知序
+                        </Link>
+                        {authSession && <SpaceSwitcher session={authSession} />}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      className="zx-notif-btn"
+                      onClick={() => navigateTo("/notifications")}
+                      aria-label="通知中心"
+                      title="通知中心"
+                    >
+                      <Bell size={15} strokeWidth={1.9} />
+                      {unreadCount > 0 && <i className="zx-notif-badge tabular">{unreadCount}</i>}
+                    </button>
+                  </div>
+
+                  <div className="zx-rail-actions">
+                    {canWrite && (
+                      <Dropdown
+                        trigger={["click"]}
+                        placement="bottomLeft"
+                        popupRender={() => (
+                          <CreatePopover
+                            onSelect={onCreate}
+                            onBrowse={() => navigateTo("/templates")}
+                          />
+                        )}
+                        rootClassName="sg-create-dropdown"
+                      >
+                        <button type="button" className="zx-rail-create">
+                          <Plus size={15} strokeWidth={2.4} />
+                          <span>新建创作</span>
+                        </button>
+                      </Dropdown>
+                    )}
+                    <button
+                      type="button"
+                      className={cx("zx-rail-search", paletteOpen && "active")}
+                      onClick={() => setPaletteOpen((v) => !v)}
+                    >
+                      <Search size={14} />
+                      <span>搜索全局内容…</span>
+                      <span className="zx-rail-kbd">⌘K</span>
+                    </button>
+                  </div>
+                </div>
+
+                <div className="zx-rail-scroll">
+                  <div className="zx-nav-stack">
+                    {NAV_MAIN.map((item) => {
+                      const Icon = item.icon;
+                      return (
+                        <button
+                          key={item.to}
+                          type="button"
+                          className={cx(
+                            "zx-nav-item",
+                            !paletteOpen && activeKey === item.to && "active",
+                          )}
+                          onClick={() => navigateTo(item.to)}
+                        >
+                          <span className="icn">
+                            <Icon size={16} strokeWidth={1.9} />
+                          </span>
+                          <span>{item.label}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  <div className="zx-nav-group-lbl">AI 创作工具</div>
+                  <div className="zx-nav-stack">
+                    {NAV_STUDIO.map((item) => {
+                      const Icon = item.icon;
+                      const showTaskBadge = item.to === "/tasks" && runningTasksCount > 0;
+                      return (
+                        <button
+                          key={item.to}
+                          type="button"
+                          className={cx(
+                            "zx-nav-item",
+                            !paletteOpen && activeKey === item.to && "active",
+                          )}
+                          onClick={() => navigateTo(item.to)}
+                        >
+                          <span className="icn">
+                            <Icon size={16} strokeWidth={1.9} />
+                          </span>
+                          <span>{item.label}</span>
+                          {showTaskBadge && (
+                            <span className="zx-nav-badge tabular">{runningTasksCount}</span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="zx-user-dock">
+                  <div className="zx-ud-top">
+                    <Dropdown
+                      trigger={["click"]}
+                      placement="topLeft"
+                      menu={{ items: userMenuItems, onClick: onUserMenuClick }}
+                      rootClassName="sg-user-dropdown"
+                    >
+                      <button
+                        type="button"
+                        className="zx-ud-avatar"
+                        aria-label={`${displayName}，打开用户菜单`}
+                      >
+                        {accountInitial(displayName)}
+                      </button>
+                    </Dropdown>
+                    <div className="zx-ud-meta">
+                      <Dropdown
+                        trigger={["click"]}
+                        placement="topLeft"
+                        menu={{ items: userMenuItems, onClick: onUserMenuClick }}
+                        rootClassName="sg-user-dropdown"
+                      >
+                        <button type="button" className="zx-ud-name-btn">
+                          <strong className="zx-ud-name">{displayName}</strong>
+                        </button>
+                      </Dropdown>
+                      <Link
+                        to="/billing"
+                        className="zx-ud-credits tabular"
+                        onClick={() => setPaletteOpen(false)}
+                      >
+                        <CircleDollarSign size={13} color="#F59E0B" />
+                        <span>{creditBalance.toLocaleString("zh-CN")} 积分</span>
+                      </Link>
+                    </div>
+                    <Link
+                      to="/settings"
+                      className={cx(
+                        "zx-ud-gear",
+                        location.pathname.startsWith("/settings") && "active",
+                      )}
+                      title="设置"
+                      aria-label="设置"
+                      onClick={() => setPaletteOpen(false)}
+                    >
+                      <Settings size={15} />
+                    </Link>
+                  </div>
+                  <div className="zx-ud-bar">
+                    <i />
+                  </div>
+                </div>
+              </>
+            )}
+          </aside>
+
+          <main className="zx-studio-canvas">
+            <Scrollbar className={cx(styles.viewport, contentViewportClass)}>
+              <div
+                className={cx(
+                  "sg-content",
+                  isStudioRoute && "zx-studio-route",
+                  paletteOpen && "sg-search-content",
+                )}
+              >
+                {paletteOpen ? (
+                  <SearchWorkspace
+                    query={searchQuery}
+                    onQueryChange={setSearchQuery}
+                    onClose={() => setPaletteOpen(false)}
+                  />
+                ) : (
+                  <Outlet />
+                )}
+              </div>
+            </Scrollbar>
+          </main>
+        </div>
       </ShellDocumentActionsContext.Provider>
       <ImportConflictModal
         open={conflictModal !== null}
@@ -708,18 +820,12 @@ function SpaceSwitcher({ session }: { session: AuthSession }) {
 
   const currentLabel =
     session.tenantType === "org" ? (session.organizationName ?? "Group 空间") : "个人空间";
-  const CurrentIcon = session.tenantType === "org" ? UsersRound : UserRound;
 
   if (session.localBroker) {
     return (
-      <Button
-        type="text"
-        className="sg-space-switcher"
-        icon={<CurrentIcon size={16} />}
-        title="本地 Broker 的空间由环境配置决定"
-      >
+      <span className="sg-space-switcher" title="本地 Broker 的空间由环境配置决定">
         <span>{currentLabel}</span>
-      </Button>
+      </span>
     );
   }
 
@@ -765,23 +871,21 @@ function SpaceSwitcher({ session }: { session: AuthSession }) {
   return (
     <Dropdown
       trigger={["click"]}
-      placement="bottomRight"
+      placement="bottomLeft"
       onOpenChange={(open) => {
         if (open) void loadOrganizations();
       }}
       menu={{ items, selectable: true, selectedKeys: [selectedKey], onClick: onSelect }}
       rootClassName="sg-space-dropdown"
     >
-      <Button
-        type="text"
+      <button
+        type="button"
         className="sg-space-switcher"
-        loading={switching}
-        icon={!switching ? <CurrentIcon size={16} /> : undefined}
         aria-label={`当前空间：${currentLabel}，点击切换`}
       >
         <span>{currentLabel}</span>
-        <ChevronDown size={14} />
-      </Button>
+        <ChevronDown size={12} />
+      </button>
     </Dropdown>
   );
 }
@@ -1073,6 +1177,31 @@ function SearchWorkspace({
 
   return (
     <div className="sg-global-search">
+      <div className="zx-search-omni-bar">
+        <div className="zx-search-omni-inner">
+          <Search size={17} color="#C084FC" />
+          <input
+            value={query}
+            onChange={(event) => onQueryChange(event.target.value)}
+            placeholder="搜索整个工作区的文档、知识库、调研任务、数据集与在线演示…"
+            aria-label="全局搜索关键词"
+          />
+          {query && (
+            <button
+              type="button"
+              className="zx-search-esc-btn"
+              onClick={() => onQueryChange("")}
+              aria-label="清空关键词"
+            >
+              <X size={13} />
+            </button>
+          )}
+          <button type="button" className="zx-search-esc-btn" onClick={onClose}>
+            ESC 关闭
+          </button>
+        </div>
+      </div>
+
       <Scrollbar as="nav" className="sg-global-search-tabs" aria-label="搜索类型">
         {categoryTabs.map((item) => {
           const TabIcon = item.icon;

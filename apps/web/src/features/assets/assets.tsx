@@ -1,12 +1,10 @@
 import { Empty, formatRelative, Loading, useToast } from "@shiguang/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { MenuProps } from "antd";
-import { Button, Dropdown, Input, Progress, Select } from "antd";
-import { createStyles } from "antd-style";
+import { Button, Dropdown, Select } from "antd";
 import {
   BookOpen,
   ChartNoAxesCombined,
-  Clock,
   Code2,
   Database,
   FileText,
@@ -19,28 +17,18 @@ import {
   MoreHorizontal,
   Plus,
   Search,
-  Star,
-  Trash2,
   Upload,
-  User,
-  Users,
+  X,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { canWriteWorkspace, getAuthSession } from "../../auth/session.js";
 import { type Asset, api } from "../../entities/api.js";
 import { AppPagination } from "../../shared/AppPagination.js";
-import { AppTable } from "../../shared/AppTable.js";
-import { AppTabs } from "../../shared/AppTabs.js";
 import { OwnerAvatar } from "../../shared/OwnerAvatar.js";
 import { isOwnedBySession, ownerDisplayName } from "../../shared/owner.js";
+import { AssetMiniPreview } from "../../shared/studio-visuals.js";
 import { useDeleteConfirm } from "../../shared/useDeleteConfirm";
-
-const useAssetsPageStyles = createStyles(() => ({
-  headerActions: {
-    gap: 8,
-  },
-}));
 
 const TYPE_ORDER = [
   { id: "all", label: "全部" },
@@ -59,17 +47,17 @@ const TYPE_META: Record<
   {
     label: string;
     icon: typeof FileText;
-    tone: "violet" | "blue" | "green" | "teal" | "orange" | "purple" | "red" | "gray" | "cyan";
+    tone: string;
   }
 > = {
-  document: { label: "文档", icon: FileText, tone: "violet" },
-  html: { label: "HTML", icon: Code2, tone: "blue" },
-  dataset: { label: "数据", icon: Database, tone: "green" },
-  report: { label: "报告", icon: ChartNoAxesCombined, tone: "orange" },
-  presentation: { label: "在线演示", icon: MonitorPlay, tone: "purple" },
-  knowledge: { label: "知识库", icon: BookOpen, tone: "teal" },
-  image: { label: "图片", icon: ImageIcon, tone: "cyan" },
-  source: { label: "来源", icon: Link2, tone: "blue" },
+  document: { label: "文档", icon: FileText, tone: "indigo" },
+  html: { label: "HTML", icon: Code2, tone: "sky" },
+  dataset: { label: "数据集", icon: Database, tone: "emerald" },
+  report: { label: "调研报告", icon: ChartNoAxesCombined, tone: "amber" },
+  presentation: { label: "在线演示", icon: MonitorPlay, tone: "violet" },
+  knowledge: { label: "知识库", icon: BookOpen, tone: "indigo" },
+  image: { label: "图片", icon: ImageIcon, tone: "sky" },
+  source: { label: "来源", icon: Link2, tone: "sky" },
   file: { label: "文件", icon: FileUp, tone: "gray" },
   other: { label: "其他", icon: FileText, tone: "gray" },
 };
@@ -110,15 +98,7 @@ function statusOf(a: Asset): { label: string; tone: "ok" | "warn" | "muted" | "e
   }
 }
 
-const QUICK_FILTERS = [
-  { id: "mine", label: "我创建的", icon: User },
-  { id: "shared", label: "我参与的", icon: Users },
-  { id: "recent", label: "最近打开", icon: Clock },
-  { id: "favorites", label: "收藏", icon: Star },
-  { id: "trash", label: "回收站", icon: Trash2 },
-] as const;
-
-type QuickId = "all" | (typeof QUICK_FILTERS)[number]["id"];
+type QuickId = "all" | "mine" | "shared" | "trash";
 
 interface AssetPage {
   items: Asset[];
@@ -156,13 +136,8 @@ async function loadAllAssets(): Promise<Asset[]> {
   return [...active, ...deleted];
 }
 
-function withinDays(iso: string, days: number): boolean {
-  return Date.now() - new Date(iso).getTime() < days * 24 * 3600 * 1000;
-}
-
 export function AssetsPage() {
   const navigate = useNavigate();
-  const { styles } = useAssetsPageStyles();
   const toast = useToast();
   const { confirmDelete } = useDeleteConfirm();
   const queryClient = useQueryClient();
@@ -170,14 +145,10 @@ export function AssetsPage() {
   const workspaceWritable = canWriteWorkspace(authSession);
   const [type, setType] = useState("all");
   const [q, setQ] = useState("");
-  const [visibility, setVisibility] = useState("all");
-  const [owner, setOwner] = useState("all");
-  const [modified, setModified] = useState("all");
   const [quick, setQuick] = useState<QuickId>("all");
   const [sort, setSort] = useState("updatedAt");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
   const [openAssetMenuId, setOpenAssetMenuId] = useState<string | null>(null);
 
   const includeDeleted = quick === "trash";
@@ -195,8 +166,7 @@ export function AssetsPage() {
     mutationFn: (input: { action: "delete" | "restore"; ids: string[] }) =>
       api("/assets:batch", { method: "POST", body: input }),
     onSuccess: () => {
-      toast("success", "批量操作成功");
-      setSelected(new Set());
+      toast("success", "操作成功");
       void queryClient.invalidateQueries({ queryKey: ["assets"] });
       void queryClient.invalidateQueries({ queryKey: ["assets", "storage"] });
       void queryClient.invalidateQueries({ queryKey: ["home"] });
@@ -216,7 +186,7 @@ export function AssetsPage() {
 
   const items = useMemo(() => {
     return all
-      .filter((a) => (includeDeleted ? !!a.deletedAt : !a.deletedAt))
+      .filter((a) => (includeDeleted ? Boolean(a.deletedAt) : !a.deletedAt))
       .filter((a) =>
         quick === "mine"
           ? isOwnedBySession(a, authSession)
@@ -224,24 +194,9 @@ export function AssetsPage() {
             ? !isOwnedBySession(a, authSession)
             : true,
       )
-      .filter((a) => (quick === "recent" ? withinDays(a.updatedAt, 7) : true))
       .filter((a) =>
         type === "all" ? true : type === "other" ? !TYPE_META[a.type] : a.type === type,
       )
-      .filter((a) => (visibility === "all" ? true : a.visibility === visibility))
-      .filter((a) =>
-        owner === "all"
-          ? true
-          : owner === "mine"
-            ? isOwnedBySession(a, authSession)
-            : !isOwnedBySession(a, authSession),
-      )
-      .filter((a) => {
-        if (modified === "all") return true;
-        if (modified === "today") return withinDays(a.updatedAt, 1);
-        if (modified === "7d") return withinDays(a.updatedAt, 7);
-        return withinDays(a.updatedAt, 30);
-      })
       .filter((a) =>
         q.trim() ? `${a.title} ${a.description}`.toLowerCase().includes(q.toLowerCase()) : true,
       )
@@ -250,7 +205,7 @@ export function AssetsPage() {
           ? a.title.localeCompare(b.title)
           : new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
       );
-  }, [all, authSession, includeDeleted, quick, type, visibility, owner, modified, q, sort]);
+  }, [all, authSession, includeDeleted, q, quick, sort, type]);
 
   const paged = useMemo(
     () => items.slice((page - 1) * pageSize, page * pageSize),
@@ -259,7 +214,7 @@ export function AssetsPage() {
 
   useEffect(() => {
     setPage(1);
-  }, [type, q, visibility, owner, modified, quick, pageSize]);
+  }, [type, q, quick, pageSize]);
 
   const typeCount = (id: string) =>
     all.filter((a) =>
@@ -271,15 +226,12 @@ export function AssetsPage() {
     ).length;
 
   const quickCount = (id: QuickId): number => {
-    if (id === "all") return all.filter((a) => !a.deletedAt).length;
     if (id === "mine")
       return all.filter((a) => !a.deletedAt && isOwnedBySession(a, authSession)).length;
     if (id === "shared")
       return all.filter((a) => !a.deletedAt && !isOwnedBySession(a, authSession)).length;
-    if (id === "recent")
-      return all.filter((a) => !a.deletedAt && withinDays(a.updatedAt, 7)).length;
-    if (id === "trash") return all.filter((a) => !!a.deletedAt).length;
-    return 0; // favorites
+    if (id === "trash") return all.filter((a) => Boolean(a.deletedAt)).length;
+    return all.filter((a) => !a.deletedAt).length;
   };
 
   const recentOpen = useMemo(
@@ -287,14 +239,9 @@ export function AssetsPage() {
       all
         .filter((a) => !a.deletedAt)
         .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
-        .slice(0, 5),
+        .slice(0, 3),
     [all],
   );
-
-  const assetSummary = useMemo(() => {
-    const active = all.filter((a) => !a.deletedAt).length;
-    return { active, deleted: all.length - active };
-  }, [all]);
 
   const storageSummary = useMemo(() => {
     const usedBytes = Math.max(0, storage?.usedBytes ?? 0);
@@ -307,354 +254,309 @@ export function AssetsPage() {
   }, [storage]);
 
   const visibleType = (a: Asset) => {
-    if (a.visibility === "public") return { icon: Globe, cls: "public", label: "公开" };
-    if (a.visibility === "link") return { icon: Link2, cls: "link", label: "知道链接的人" };
-    return { icon: Lock, cls: "private", label: "私有" };
+    if (a.visibility === "public") return { icon: Globe, tone: "emerald", label: "公开" };
+    if (a.visibility === "link") return { icon: Link2, tone: "sky", label: "链接可见" };
+    return { icon: Lock, tone: "neutral", label: "私有" };
   };
 
+  const showSpotlight =
+    !isLoading && quick === "all" && type === "all" && !q.trim() && recentOpen.length > 0;
+
   return (
-    <div className="sg-assets">
-      <div className="sg-assets-body">
-        <div className="sg-assets-list">
-          <div className="sg-assets-head">
-            <div>
-              <h1 className="sg-h1">资产中心</h1>
-              <p className="sg-assets-sub">统一管理你的所有内容</p>
-            </div>
-            <div className={`sg-row ${styles.headerActions}`}>
-              <Button className="sg-assets-head-btn" onClick={() => navigate("/documents/new")}>
-                <Plus size={15} /> 新建
-              </Button>
-              <Button className="sg-assets-head-btn" onClick={() => navigate("/knowledge/new")}>
-                <Upload size={14} /> 导入
-              </Button>
-            </div>
+    <div className="zx-ast-studio">
+      <div className="zx-ast-head">
+        <div>
+          <h1>资产中心</h1>
+          <p>跨形态收纳文档、交互式 HTML、数据集、调研报告、演示文稿与知识库</p>
+        </div>
+
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <div className="zx-storage-pill tabular" title={`存储已用 ${storageSummary.pct}%`}>
+            <span>
+              空间 <b>{storageSummary.used}</b> / {storageSummary.quota}
+            </span>
+            <span className="zx-mini-meter">
+              <i style={{ width: `${Math.max(4, storageSummary.pct)}%` }} />
+            </span>
           </div>
+          <button type="button" className="zx-btn-glass" onClick={() => navigate("/knowledge/new")}>
+            <Upload size={14} /> 导入
+          </button>
+          <button type="button" className="zx-btn-cta" onClick={() => navigate("/documents/new")}>
+            <Plus size={15} strokeWidth={2.3} /> 新建资产
+          </button>
+        </div>
+      </div>
 
-          <AppTabs
-            items={TYPE_ORDER.map((t) => ({ key: t.id, label: t.label, count: typeCount(t.id) }))}
-            activeKey={type}
-            onChange={(key) => {
-              setType(key);
-              setSelected(new Set());
-            }}
-          />
+      <div className="zx-type-bar tabular">
+        <div className="zx-type-seg" role="tablist" aria-label="资产类型筛选">
+          {TYPE_ORDER.filter((t) => t.id !== "other" || typeCount("other") > 0).map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              role="tab"
+              aria-selected={type === t.id}
+              className={`zx-t-pill ${type === t.id ? "active" : ""}`}
+              onClick={() => setType(t.id)}
+            >
+              <span>{t.label}</span>
+              <small>{typeCount(t.id)}</small>
+            </button>
+          ))}
+        </div>
 
-          <div className="sg-assets-toolbar">
-            <Input
-              className="sg-assets-search"
-              placeholder="搜索文件名、内容…"
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+          {(
+            [
+              { id: "mine", label: "我创建的" },
+              { id: "shared", label: "我参与的" },
+              { id: "trash", label: "回收站" },
+            ] as const
+          ).map((qf) => (
+            <button
+              key={qf.id}
+              type="button"
+              className={`zx-qf-pill ${quick === qf.id ? "active" : ""}`}
+              onClick={() => setQuick(quick === qf.id ? "all" : qf.id)}
+            >
+              {qf.label} · {quickCount(qf.id)}
+            </button>
+          ))}
+
+          <div className="zx-doc-search-pill" style={{ width: 204, height: 34 }}>
+            <Search size={14} />
+            <input
+              placeholder="搜索资产…"
               value={q}
               onChange={(e) => setQ(e.target.value)}
-              prefix={<Search size={15} />}
-              allowClear
+              aria-label="搜索资产"
             />
-            <Select
-              value={owner}
-              onChange={setOwner}
-              className="sg-assets-select"
-              options={[
-                { value: "all", label: "所有者" },
-                { value: "mine", label: "我" },
-                { value: "others", label: "其他成员" },
-              ]}
-            />
-            <Select
-              value={modified}
-              onChange={setModified}
-              className="sg-assets-select"
-              options={[
-                { value: "all", label: "修改时间" },
-                { value: "today", label: "今天" },
-                { value: "7d", label: "近 7 天" },
-                { value: "30d", label: "近 30 天" },
-              ]}
-            />
-            <Select
-              value={visibility}
-              onChange={setVisibility}
-              className="sg-assets-select"
-              options={[
-                { value: "all", label: "可见性" },
-                { value: "private", label: "私有" },
-                { value: "link", label: "链接" },
-                { value: "public", label: "公开" },
-              ]}
-            />
+            {q && (
+              <button
+                type="button"
+                style={{
+                  border: 0,
+                  background: "transparent",
+                  color: "var(--sg-muted)",
+                  cursor: "pointer",
+                  padding: 0,
+                  display: "flex",
+                }}
+                onClick={() => setQ("")}
+                aria-label="清空搜索"
+              >
+                <X size={13} />
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {showSpotlight && (
+        <section>
+          <div style={{ fontSize: 13, fontWeight: 700, color: "var(--sg-fg-2)", marginBottom: 10 }}>
+            最近打开
+          </div>
+          <div className="zx-spot-grid">
+            {recentOpen.map((a) => {
+              const meta = TYPE_META[typeOf(a)];
+              return (
+                <button
+                  key={a.id}
+                  type="button"
+                  className="zx-spot-card"
+                  onClick={() => navigate(assetHref(a))}
+                >
+                  <div className="zx-spot-thumb">
+                    <AssetMiniPreview asset={a} />
+                  </div>
+                  <div style={{ minWidth: 0, flex: 1 }}>
+                    <div
+                      style={{
+                        fontSize: 14,
+                        fontWeight: 700,
+                        color: "var(--sg-fg)",
+                        whiteSpace: "nowrap",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                      }}
+                    >
+                      {a.title}
+                    </div>
+                    <div
+                      style={{
+                        marginTop: 7,
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 8,
+                        fontSize: 12,
+                        color: "var(--sg-muted)",
+                      }}
+                      className="tabular"
+                    >
+                      <span className={`zx-pill ${meta.tone}`}>{meta.label}</span>
+                      <span>{formatRelative(a.updatedAt)}</span>
+                    </div>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </section>
+      )}
+
+      {isLoading ? (
+        <Loading loading minHeight={320} />
+      ) : paged.length === 0 ? (
+        <Empty
+          title={includeDeleted ? "回收站为空" : "没有匹配的资产"}
+          hint="创建文档、上传文件或发起调研后，资产会出现在这里。"
+        />
+      ) : (
+        <div className="zx-strip-list">
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              fontSize: 13,
+              fontWeight: 700,
+              color: "var(--sg-fg-2)",
+              marginBottom: 2,
+            }}
+          >
+            <span>{includeDeleted ? "回收站资产" : "全部资产流"}</span>
             <Select
               value={sort}
               onChange={setSort}
-              className="sg-assets-select"
+              variant="borderless"
+              style={{ minWidth: 120 }}
               options={[
-                { value: "updatedAt", label: "更新时间" },
-                { value: "title", label: "名称" },
+                { value: "updatedAt", label: "按最近更新" },
+                { value: "title", label: "按名称排序" },
               ]}
             />
-            {selected.size > 0 && (
-              <div className="sg-row sg-assets-batch">
-                {!includeDeleted && (
-                  <Button
-                    size="small"
-                    type="primary"
-                    danger
-                    onClick={() =>
-                      confirmDeleteAssets(
-                        all
-                          .filter((a) => selected.has(a.id))
-                          .map((a) => ({ id: a.id, title: a.title })),
-                      )
-                    }
-                  >
-                    删除
-                  </Button>
-                )}
-                {includeDeleted && (
-                  <Button
-                    size="small"
-                    onClick={() => batchMutation.mutate({ action: "restore", ids: [...selected] })}
-                  >
-                    恢复
-                  </Button>
-                )}
-                <Button size="small" type="text" onClick={() => setSelected(new Set())}>
-                  取消
-                </Button>
-              </div>
-            )}
           </div>
 
-          {isLoading ? (
-            <Loading loading minHeight={320} />
-          ) : paged.length === 0 ? (
-            <Empty
-              title={
-                includeDeleted
-                  ? "回收站为空"
-                  : quick === "favorites"
-                    ? "暂无收藏"
-                    : "没有匹配的资产"
-              }
-              hint="创建文档、上传文件或发起调研后，资产会出现在这里。"
-            />
-          ) : (
-            <div className="sg-assets-table-wrap">
-              <AppTable<Asset>
-                rowKey="id"
-                dataSource={paged}
-                pagination={false}
-                size="middle"
-                rowSelection={{
-                  selectedRowKeys: [...selected],
-                  onChange: (keys) => setSelected(new Set(keys as string[])),
+          {paged.map((asset) => {
+            const meta = TYPE_META[typeOf(asset)];
+            const Icon = meta.icon;
+            const st = statusOf(asset);
+            const vis = visibleType(asset);
+            const VisIcon = vis.icon;
+
+            return (
+              <div
+                key={asset.id}
+                className="zx-asset-strip"
+                onClick={(e) => {
+                  if ((e.target as HTMLElement).closest(".ant-dropdown, button")) return;
+                  navigate(assetHref(asset));
                 }}
-                onRow={(asset) => ({
-                  style: { cursor: "pointer" },
-                  onClick: (e) => {
-                    if ((e.target as HTMLElement).closest("label, .ant-dropdown, button")) return;
-                    navigate(assetHref(asset));
-                  },
-                })}
-                columns={[
-                  {
-                    title: "名称",
-                    dataIndex: "title",
-                    render: (_v, asset) => {
-                      const meta = TYPE_META[typeOf(asset)];
-                      const Icon = meta.icon;
-                      return (
-                        <div className="sg-asset-name">
-                          <span className={`sg-asset-icn ${meta.tone}`}>
-                            <Icon size={16} strokeWidth={1.9} />
-                          </span>
-                          <span className="sg-asset-name-copy">
-                            <span className="sg-asset-title">{asset.title}</span>
-                          </span>
-                        </div>
-                      );
-                    },
-                  },
-                  {
-                    title: "类型",
-                    dataIndex: "type",
-                    width: 96,
-                    render: (_v, asset) => (
-                      <span className="sg-subtle">{TYPE_META[typeOf(asset)].label}</span>
-                    ),
-                  },
-                  {
-                    title: "所有者",
-                    dataIndex: "ownerDisplayName",
-                    width: 72,
-                    render: (_v, asset) => (
-                      <OwnerAvatar name={ownerDisplayName(asset, authSession)} />
-                    ),
-                  },
-                  {
-                    title: "更新时间",
-                    dataIndex: "updatedAt",
-                    width: 104,
-                    render: (v) => <span className="sg-subtle">{formatRelative(v)}</span>,
-                  },
-                  {
-                    title: "状态",
-                    dataIndex: "status",
-                    width: 104,
-                    render: (_v, asset) => {
-                      const st = statusOf(asset);
-                      return (
-                        <span className="sg-status">
-                          <span className={`sg-status-dot ${st.tone}`} />
-                          {st.label}
-                        </span>
-                      );
-                    },
-                  },
-                  {
-                    title: "可见性",
-                    dataIndex: "visibility",
-                    width: 128,
-                    render: (_v, asset) => {
-                      const vis = visibleType(asset);
-                      const VisIcon = vis.icon;
-                      return (
-                        <span className={`sg-vis ${vis.cls}`}>
-                          <VisIcon size={13} />
-                          {vis.label}
-                        </span>
-                      );
-                    },
-                  },
-                  {
-                    title: "",
-                    key: "menu",
-                    width: 60,
-                    render: (_v, asset) => (
-                      <Dropdown
-                        trigger={["hover"]}
-                        mouseEnterDelay={0}
-                        mouseLeaveDelay={0.15}
-                        placement="bottomRight"
-                        open={openAssetMenuId === asset.id}
-                        onOpenChange={(open) => setOpenAssetMenuId(open ? asset.id : null)}
-                        menu={{
-                          items: [
-                            { key: "open", label: "打开资产" },
-                            ...(workspaceWritable && !includeDeleted
-                              ? [{ key: "edit", label: "编辑资产" }]
-                              : []),
-                            includeDeleted
-                              ? { key: "restore", label: "恢复" }
-                              : { key: "delete", label: "删除", danger: true },
-                          ] satisfies MenuProps["items"],
-                          onClick: ({ key }) => {
-                            if (key === "open") navigate(assetHref(asset));
-                            if (key === "edit") navigate(`/assets/${asset.id}/edit`);
-                            if (key === "delete") {
-                              confirmDeleteAssets([{ id: asset.id, title: asset.title }]);
-                            }
-                            if (key === "restore") {
-                              batchMutation.mutate({ action: "restore", ids: [asset.id] });
-                            }
-                          },
-                        }}
-                      >
-                        <Button
-                          size="small"
-                          type="text"
-                          className="sg-list-action-btn"
-                          onClick={(e) => e.stopPropagation()}
-                          onFocus={() => setOpenAssetMenuId(asset.id)}
-                          onKeyDown={(e) => {
-                            if (e.key === "Escape") setOpenAssetMenuId(null);
-                          }}
-                          aria-label="更多操作"
-                        >
-                          <MoreHorizontal size={16} />
-                        </Button>
-                      </Dropdown>
-                    ),
-                  },
-                ]}
-              />
-            </div>
-          )}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: 13, minWidth: 0 }}>
+                  <span className={`zx-jewel ${meta.tone}`} style={{ width: 38, height: 38 }}>
+                    <Icon size={16} strokeWidth={1.9} />
+                  </span>
+                  <strong
+                    style={{
+                      fontSize: 14,
+                      fontWeight: 660,
+                      whiteSpace: "nowrap",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                    }}
+                  >
+                    {asset.title}
+                  </strong>
+                </div>
 
-          {!isLoading && paged.length > 0 && (
-            <AppPagination
-              total={items.length}
-              current={page}
-              pageSize={pageSize}
-              onChange={setPage}
-              onPageSizeChange={setPageSize}
-            />
-          )}
-        </div>
+                <div>
+                  <span className={`zx-pill ${meta.tone}`}>{meta.label}</span>
+                </div>
 
-        <aside className="sg-assets-side">
-          <div className="sg-side-card">
-            <h3 className="sg-h3 sg-side-title">快捷筛选</h3>
-            <div className="sg-qf-list">
-              {QUICK_FILTERS.map(({ id, label, icon: Icon }) => (
-                <button
-                  key={id}
-                  type="button"
-                  className={`sg-qf-item ${quick === id ? "active" : ""}`}
-                  onClick={() => {
-                    setQuick(quick === id ? "all" : id);
-                    setSelected(new Set());
+                <div className="hide-md">
+                  <span className="sg-status" style={{ fontSize: 12.5, color: "var(--sg-fg-2)" }}>
+                    <span className={`sg-status-dot ${st.tone}`} />
+                    {st.label}
+                  </span>
+                </div>
+
+                <div>
+                  <span className={`zx-pill ${vis.tone}`}>
+                    <VisIcon size={12} /> {vis.label}
+                  </span>
+                </div>
+
+                <div
+                  className="hide-md tabular"
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 7,
+                    fontSize: 12,
+                    color: "var(--sg-muted)",
                   }}
                 >
-                  <span className="sg-qf-icn">
-                    <Icon size={14} />
-                  </span>
-                  {label}
-                  <span className="sg-qf-count">{quickCount(id)}</span>
-                </button>
-              ))}
-            </div>
-          </div>
+                  <OwnerAvatar name={ownerDisplayName(asset, authSession)} />
+                  <span>{formatRelative(asset.updatedAt)}</span>
+                </div>
 
-          <div className="sg-side-card">
-            <div className="sg-row-between">
-              <h3 className="sg-h3 sg-side-title">存储空间</h3>
-              <span className="sg-subtle">{storageSummary.pct}%</span>
-            </div>
-            <div className="sg-storage-num">
-              {storageSummary.used} <em>/ {storageSummary.quota}</em>
-            </div>
-            <div className="sg-storage-bar">
-              <Progress percent={Math.max(0, Math.min(100, storageSummary.pct))} />
-            </div>
-            <div className="sg-subtle">
-              {assetSummary.active} 个资产 · 回收站 {assetSummary.deleted} 个
-            </div>
-          </div>
-
-          <div className="sg-side-card">
-            <h3 className="sg-h3 sg-side-title">最近打开</h3>
-            <div className="sg-recent-list">
-              {recentOpen.map((a) => {
-                const meta = TYPE_META[typeOf(a)];
-                const Icon = meta.icon;
-                return (
-                  <button
-                    key={a.id}
-                    type="button"
-                    className="sg-recent-item"
-                    onClick={() => navigate(assetHref(a))}
+                <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                  <Dropdown
+                    trigger={["click"]}
+                    placement="bottomRight"
+                    open={openAssetMenuId === asset.id}
+                    onOpenChange={(open) => setOpenAssetMenuId(open ? asset.id : null)}
+                    menu={{
+                      items: [
+                        { key: "open", label: "打开资产" },
+                        ...(workspaceWritable && !includeDeleted
+                          ? [{ key: "edit", label: "编辑资产" }]
+                          : []),
+                        includeDeleted
+                          ? { key: "restore", label: "恢复" }
+                          : { key: "delete", label: "删除", danger: true },
+                      ] satisfies MenuProps["items"],
+                      onClick: ({ key }) => {
+                        setOpenAssetMenuId(null);
+                        if (key === "open") navigate(assetHref(asset));
+                        if (key === "edit") navigate(`/assets/${asset.id}/edit`);
+                        if (key === "delete") {
+                          confirmDeleteAssets([{ id: asset.id, title: asset.title }]);
+                        }
+                        if (key === "restore") {
+                          batchMutation.mutate({ action: "restore", ids: [asset.id] });
+                        }
+                      },
+                    }}
                   >
-                    <span className={`sg-asset-icn ${meta.tone} sm`}>
-                      <Icon size={13} strokeWidth={1.9} />
-                    </span>
-                    <span className="sg-recent-name">{a.title}</span>
-                    <span className="sg-recent-time">{formatRelative(a.updatedAt)}</span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        </aside>
-      </div>
+                    <Button
+                      size="small"
+                      type="text"
+                      className="sg-list-action-btn"
+                      onClick={(e) => e.stopPropagation()}
+                      aria-label="更多操作"
+                    >
+                      <MoreHorizontal size={16} />
+                    </Button>
+                  </Dropdown>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {!isLoading && paged.length > 0 && (
+        <AppPagination
+          total={items.length}
+          current={page}
+          pageSize={pageSize}
+          onChange={setPage}
+          onPageSizeChange={setPageSize}
+        />
+      )}
     </div>
   );
 }

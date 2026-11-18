@@ -1,7 +1,7 @@
-import { Avatar, Empty, Field, formatRelative, StatusBadge, useToast } from "@shiguang/ui";
+import { Empty, Field, formatRelative, StatusBadge, useToast } from "@shiguang/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { MenuProps } from "antd";
-import { Button, Card, Dropdown, Input, Segmented, Select, Tabs } from "antd";
+import { Button, Card, Dropdown, Input, Select, Tabs } from "antd";
 import { createStyles } from "antd-style";
 import {
   BarChart3,
@@ -10,18 +10,18 @@ import {
   Code2,
   Database,
   FileText,
-  Folder,
-  Grid2X2,
+  Globe,
   HelpCircle,
-  List,
-  Lock,
   MoreHorizontal,
+  Plus,
   Search,
   ShieldCheck,
   SlidersHorizontal,
   Sparkles,
   Star,
+  Upload,
   Users,
+  X,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
@@ -33,13 +33,11 @@ import {
   uploadFile,
 } from "../../entities/api.js";
 import { AppPagination } from "../../shared/AppPagination.js";
-import { AppTabs } from "../../shared/AppTabs.js";
 import { Markdown } from "../../shared/markdown.js";
 
 type KnowledgeScope = "mine" | "team" | "public";
-type KnowledgeView = "list" | "compact" | "grid";
 
-const useKnowledgeStyles = createStyles(({ token }) => ({
+const useKnowledgeDetailStyles = createStyles(({ token }) => ({
   newDescription: {
     minHeight: 90,
   },
@@ -73,7 +71,7 @@ const useKnowledgeStyles = createStyles(({ token }) => ({
 }));
 
 type KnowledgeListItem = KnowledgeBase & {
-  accent: "violet" | "blue" | "green" | "orange" | "rose";
+  accent: "violet" | "sky" | "emerald" | "amber" | "rose" | "indigo";
   category: "document" | "technical" | "analysis" | "feedback" | "internal";
   ownerNames: string[];
   visibility: "available" | "restricted";
@@ -84,24 +82,26 @@ type KnowledgeListItem = KnowledgeBase & {
   demo?: boolean;
 };
 
+const AVATAR_BG = ["#6366F1", "#EC4899", "#0EA5E9", "#10B981", "#F59E0B", "#64748B"];
+
 const DEMO_KNOWLEDGE_BASES: KnowledgeListItem[] = [
   {
     id: "demo-vietnam-finance",
     workspaceId: "demo",
     name: "越南消费金融市场研究",
-    description: "越南消费金融行业的市场规模、竞争格局、主要玩家、产品特征与发展趋势研究",
+    description: "越南消费金融行业的市场规模、竞争格局、持牌头部机构对比与监管演进研究。",
     status: "ready",
     sourceCount: 128,
     chunkCount: 3246,
-    createdAt: "2024-05-10T09:30:00+08:00",
-    updatedAt: "2024-05-20T14:30:00+08:00",
+    createdAt: "2026-05-10T09:30:00+08:00",
+    updatedAt: "2026-05-20T14:30:00+08:00",
     accent: "violet",
     category: "document",
     ownerNames: ["张伟", "李然", "+2"],
     visibility: "available",
     storageLabel: "2.34 GB",
     citations: 3842,
-    teamName: "市场研究团队",
+    teamName: "市场研究组",
     scope: "mine",
     demo: true,
   },
@@ -109,18 +109,18 @@ const DEMO_KNOWLEDGE_BASES: KnowledgeListItem[] = [
     id: "demo-product",
     workspaceId: "demo",
     name: "公司产品知识库",
-    description: "公司产品文档、功能说明、使用指南、常见问题等",
+    description: "核心产品架构文档、功能说明、发布说明与常见问题等结构化资料沉淀。",
     status: "ready",
     sourceCount: 96,
     chunkCount: 2180,
-    createdAt: "2024-04-12T10:00:00+08:00",
-    updatedAt: "2024-05-19T16:20:00+08:00",
-    accent: "blue",
+    createdAt: "2026-04-12T10:00:00+08:00",
+    updatedAt: "2026-05-19T16:20:00+08:00",
+    accent: "sky",
     category: "document",
-    ownerNames: ["张伟", "周宁", "+5"],
+    ownerNames: ["周宁", "林知夏", "+5"],
     visibility: "available",
     storageLabel: "1.86 GB",
-    citations: 2961,
+    citations: 4120,
     teamName: "产品团队",
     scope: "mine",
     demo: true,
@@ -128,20 +128,20 @@ const DEMO_KNOWLEDGE_BASES: KnowledgeListItem[] = [
   {
     id: "demo-technical",
     workspaceId: "demo",
-    name: "技术文档与规范",
-    description: "开发规范、技术方案、API 文档、架构设计等",
+    name: "技术文档与工程规范",
+    description: "前后端开发规范、API 契约、技术架构评审方案与线上排障手册库。",
     status: "ready",
-    sourceCount: 74,
+    sourceCount: 84,
     chunkCount: 1924,
-    createdAt: "2024-03-18T09:00:00+08:00",
-    updatedAt: "2024-05-18T10:15:00+08:00",
-    accent: "green",
+    createdAt: "2026-03-18T09:00:00+08:00",
+    updatedAt: "2026-05-18T10:15:00+08:00",
+    accent: "emerald",
     category: "technical",
-    ownerNames: ["张伟", "陈敏", "+3"],
+    ownerNames: ["陈默", "张伟", "+3"],
     visibility: "available",
     storageLabel: "1.42 GB",
-    citations: 2350,
-    teamName: "研发团队",
+    citations: 1980,
+    teamName: "研发架构组",
     scope: "mine",
     demo: true,
   },
@@ -149,70 +149,70 @@ const DEMO_KNOWLEDGE_BASES: KnowledgeListItem[] = [
     id: "demo-competitors",
     workspaceId: "demo",
     name: "竞品分析资料库",
-    description: "行业竞品的产品信息、功能对比、用户评价、商业模式等",
+    description: "东南亚与全球 AI 知识工具的产品体验拆解、定价策略与商业化壁垒对比。",
     status: "ready",
-    sourceCount: 63,
+    sourceCount: 54,
     chunkCount: 1680,
-    createdAt: "2024-03-06T09:00:00+08:00",
-    updatedAt: "2024-05-17T09:40:00+08:00",
-    accent: "orange",
+    createdAt: "2026-03-06T09:00:00+08:00",
+    updatedAt: "2026-05-17T09:40:00+08:00",
+    accent: "amber",
     category: "analysis",
-    ownerNames: ["张伟", "李然", "+1"],
+    ownerNames: ["林知夏", "李然"],
     visibility: "available",
     storageLabel: "1.18 GB",
-    citations: 1836,
-    teamName: "战略分析团队",
+    citations: 960,
+    teamName: "战略分析组",
     scope: "mine",
     demo: true,
   },
   {
     id: "demo-feedback",
     workspaceId: "demo",
-    name: "客户反馈与需求",
-    description: "用户反馈、需求收集、调研结果、用户画像等",
+    name: "客户访谈与需求洞察",
+    description: "深度用户访谈录音纪要、核心痛点清单、场景画像与需求验证结论沉淀。",
     status: "ready",
-    sourceCount: 41,
+    sourceCount: 40,
     chunkCount: 856,
-    createdAt: "2024-02-22T09:00:00+08:00",
-    updatedAt: "2024-05-16T18:30:00+08:00",
+    createdAt: "2026-02-22T09:00:00+08:00",
+    updatedAt: "2026-05-16T18:30:00+08:00",
     accent: "rose",
     category: "feedback",
     ownerNames: ["张伟"],
     visibility: "available",
     storageLabel: "820 MB",
-    citations: 1124,
-    teamName: "用户研究团队",
+    citations: 518,
+    teamName: "用户研究组",
     scope: "mine",
     demo: true,
   },
   {
     id: "demo-internal",
     workspaceId: "demo",
-    name: "内部资料库",
-    description: "公司内部管理资料、制度流程、培训资料等",
+    name: "东南亚宏观与央行年报库",
+    description: "越南 SBV、印尼 OJK 等监管机构公开年报、征信渗透率统计与行业白皮书。",
     status: "ready",
-    sourceCount: 52,
+    sourceCount: 62,
     chunkCount: 1088,
-    createdAt: "2024-01-16T09:00:00+08:00",
-    updatedAt: "2024-05-15T11:20:00+08:00",
-    accent: "violet",
+    createdAt: "2026-01-16T09:00:00+08:00",
+    updatedAt: "2026-05-15T11:20:00+08:00",
+    accent: "indigo",
     category: "internal",
-    ownerNames: ["张伟"],
-    visibility: "restricted",
+    ownerNames: ["张伟", "周宁"],
+    visibility: "available",
     storageLabel: "960 MB",
-    citations: 964,
-    teamName: "Shiguang Lab",
+    citations: 1290,
+    teamName: "宏观研究组",
     scope: "mine",
     demo: true,
   },
 ];
 
 const CATEGORY_ICON = {
-  document: Folder,
+  document: BookOpen,
   technical: Code2,
   analysis: BarChart3,
   feedback: Users,
-  internal: Lock,
+  internal: Globe,
 } as const;
 
 function knowledgeDate(iso: string): string {
@@ -227,12 +227,19 @@ function knowledgeDate(iso: string): string {
 }
 
 function toKnowledgeListItem(kb: KnowledgeBase, index: number): KnowledgeListItem {
-  const accents: KnowledgeListItem["accent"][] = ["violet", "blue", "green", "orange", "rose"];
+  const accents: KnowledgeListItem["accent"][] = [
+    "violet",
+    "sky",
+    "emerald",
+    "amber",
+    "rose",
+    "indigo",
+  ];
   return {
     ...kb,
     accent: accents[index % accents.length],
     category: "document",
-    ownerNames: ["张伟"],
+    ownerNames: ["我"],
     visibility: ["failed", "error", "disabled", "restricted"].includes(kb.status)
       ? "restricted"
       : "available",
@@ -258,10 +265,12 @@ function KnowledgeMoreMenu({
     items: [
       { key: "open", label: "打开知识库" },
       { key: "documents", label: "查看文档" },
-      { key: "new-document", label: "新建文档" },
+      { key: "new-document", label: "新建关联文档" },
       { key: "copy", label: "复制链接" },
     ],
-    onClick: ({ key }) => {
+    onClick: ({ key, domEvent }) => {
+      domEvent.stopPropagation();
+      setOpen(false);
       if (key === "open" || key === "documents" || key === "new-document" || key === "copy") {
         onAction(item, key);
       }
@@ -270,9 +279,7 @@ function KnowledgeMoreMenu({
 
   return (
     <Dropdown
-      trigger={["hover"]}
-      mouseEnterDelay={0}
-      mouseLeaveDelay={0.15}
+      trigger={["click"]}
       placement="bottomRight"
       open={open}
       onOpenChange={setOpen}
@@ -281,22 +288,12 @@ function KnowledgeMoreMenu({
       <Button
         size="small"
         type="text"
-        className="sg-list-action-btn sg-knowledge-more"
+        className="sg-list-action-btn"
         aria-label="更多操作"
         title="更多操作"
         onClick={(event) => event.stopPropagation()}
-        onFocus={() => setOpen(true)}
-        onKeyDown={(event) => {
-          if (event.key === "Enter" || event.key === " ") {
-            event.preventDefault();
-            event.stopPropagation();
-            setOpen(true);
-          } else if (event.key === "Escape") {
-            setOpen(false);
-          }
-        }}
       >
-        <MoreHorizontal size={16} />
+        <MoreHorizontal size={15} />
       </Button>
     </Dropdown>
   );
@@ -306,14 +303,13 @@ export function KnowledgePage() {
   const navigate = useNavigate();
   const toast = useToast();
   const [scope, setScope] = useState<KnowledgeScope>("mine");
-  const [category, setCategory] = useState("all");
-  const [status, setStatus] = useState("all");
   const [query, setQuery] = useState("");
-  const [sort, setSort] = useState("updated");
-  const [view, setView] = useState<KnowledgeView>("list");
   const [page, setPage] = useState(1);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detailTab, setDetailTab] = useState("overview");
+  const [quickQuestion, setQuickQuestion] = useState("");
+  const [quickAnswer, setQuickAnswer] = useState("");
+
   const { data } = useQuery<KnowledgeBase[]>({
     queryKey: ["knowledge"],
     queryFn: () => api<KnowledgeBase[]>("/knowledge-bases"),
@@ -328,36 +324,23 @@ export function KnowledgePage() {
     () =>
       all
         .filter((item) => item.scope === scope)
-        .filter((item) => category === "all" || item.category === category)
-        .filter(
-          (item) =>
-            status === "all" ||
-            (status === "available" && item.visibility === "available") ||
-            (status === "restricted" && item.visibility === "restricted"),
-        )
         .filter((item) =>
           query.trim()
             ? `${item.name} ${item.description}`.toLowerCase().includes(query.trim().toLowerCase())
             : true,
         )
-        .sort((a, b) =>
-          sort === "name"
-            ? a.name.localeCompare(b.name, "zh-CN")
-            : sort === "documents"
-              ? b.sourceCount - a.sourceCount
-              : new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
-        ),
-    [all, category, query, scope, sort, status],
+        .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()),
+    [all, query, scope],
   );
 
-  const pageSize = view === "grid" ? 6 : 5;
+  const pageSize = 6;
   const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
   const paged = useMemo(
     () => filtered.slice((page - 1) * pageSize, page * pageSize),
-    [filtered, page, pageSize],
+    [filtered, page],
   );
 
-  useEffect(() => setPage(1), [category, query, scope, sort, status, view]);
+  useEffect(() => setPage(1), [query, scope]);
   useEffect(() => setPage((current) => Math.min(current, pageCount)), [pageCount]);
   useEffect(() => {
     if (filtered.length === 0) {
@@ -375,64 +358,49 @@ export function KnowledgePage() {
     queryFn: () => api(`/knowledge-bases/${selectedId}`),
     enabled: Boolean(selectedId && !selected?.demo),
   });
+
   const selectedSources = selected?.demo
     ? [
-        { id: "demo-pdf", title: "越南消费金融市场规模与趋势分析.pdf", sourceType: "upload" },
-        { id: "demo-xlsx", title: "越南主要消费金融公司对比分析.xlsx", sourceType: "upload" },
-        { id: "demo-docx", title: "越南消费金融监管政策解读.docx", sourceType: "asset" },
-        { id: "demo-pptx", title: "越南用户画像与需求分析.pptx", sourceType: "asset" },
-        { id: "demo-html", title: "越南消费金融行业新闻汇总.html", sourceType: "url" },
+        { id: "demo-pdf", title: "越南消费金融市场规模与趋势.pdf", sourceType: "upload" },
+        { id: "demo-xlsx", title: "头部消金机构财务对比矩阵.xlsx", sourceType: "upload" },
+        { id: "demo-docx", title: "SBV 零售信贷监管政策解读.docx", sourceType: "asset" },
       ]
     : (liveDetail?.sources ?? []);
 
-  const stats = demoMode
-    ? [
-        { label: "知识库总数", value: "28", note: "比上月 +4", icon: BookOpen, tone: "violet" },
-        { label: "文档总数", value: "12,842", note: "比上月 +1,284", icon: FileText, tone: "blue" },
-        {
-          label: "已使用存储",
-          value: "86.3 GB",
-          note: "总计 100 MB",
-          icon: Database,
-          tone: "green",
-        },
-        {
-          label: "被引用次数",
-          value: "24,731",
-          note: "比上月 +18.6%",
-          icon: BarChart3,
-          tone: "orange",
-        },
-      ]
-    : [
-        {
-          label: "知识库总数",
-          value: String(all.length),
-          note: "当前工作区",
-          icon: BookOpen,
-          tone: "violet",
-        },
-        {
-          label: "文档总数",
-          value: String(all.reduce((sum, item) => sum + item.sourceCount, 0)),
-          note: "已接入来源",
-          icon: FileText,
-          tone: "blue",
-        },
-        { label: "已使用存储", value: "--", note: "存储统计中", icon: Database, tone: "green" },
-        {
-          label: "被引用次数",
-          value: String(all.reduce((sum, item) => sum + item.citations, 0)),
-          note: "累计引用",
-          icon: BarChart3,
-          tone: "orange",
-        },
-      ];
+  const quickAskMutation = useMutation({
+    mutationFn: async (qText: string) => {
+      if (!selected) throw new Error("未选择知识库");
+      if (selected.demo) {
+        return {
+          answer: `根据《${selectedSources[0]?.title ?? selected.name}》：头部持牌机构合计占据约 67% 份额，征信交叉核验后不良率已回落 1.8% [1]。`,
+        };
+      }
+      return api<{ answer: string }>(`/knowledge-bases/${selected.id}/ask`, {
+        method: "POST",
+        body: { query: qText, topK: 4 },
+      });
+    },
+    onSuccess: (res) => {
+      setQuickAnswer(res.answer);
+    },
+    onError: (err: Error) => toast("error", err.message),
+  });
+
+  const summaryMetrics = useMemo(() => {
+    if (demoMode) {
+      return { spaces: "28", docs: "402", cites: "11,420" };
+    }
+    return {
+      spaces: String(all.length),
+      docs: String(all.reduce((sum, item) => sum + item.sourceCount, 0)),
+      cites: all.reduce((sum, item) => sum + item.citations, 0).toLocaleString("zh-CN"),
+    };
+  }, [all, demoMode]);
 
   const openSelected = () => {
     if (!selected) return;
     if (selected.demo) {
-      toast("info", "这是开发环境演示数据，创建知识库后即可管理真实资料");
+      toast("info", "这是开发环境演示数据，创建真实知识库后即可进入完整问答与资料管理台");
       return;
     }
     navigate(`/knowledge/${selected.id}`);
@@ -470,211 +438,180 @@ export function KnowledgePage() {
   };
 
   return (
-    <div className="sg-knowledge-page">
-      <div className="sg-knowledge-head">
+    <div className="zx-kb-studio">
+      <div className="zx-kb-top">
         <div>
-          <h1 className="sg-h1">知识库</h1>
-          <p>集中管理企业知识资产，让 AI 更懂你的业务</p>
+          <div style={{ display: "flex", alignItems: "baseline", gap: 14, flexWrap: "wrap" }}>
+            <h1>知识库</h1>
+            <span className="zx-whisper-metrics tabular">
+              已沉淀 <b>{summaryMetrics.spaces}</b> 座空间 · <b>{summaryMetrics.docs}</b> 篇源文档 ·
+              累计 <b>{summaryMetrics.cites}</b> 次溯源引用
+            </span>
+          </div>
+          <p className="zx-studio-sub">
+            把多源文档、研报与网页沉淀为可溯源 AI 笔记本，随时发起 Citation 问答
+          </p>
         </div>
-        <button
-          type="button"
-          className="sg-knowledge-help"
-          onClick={() => toast("info", "将文档、文件或网页导入知识库后，即可进行检索与 AI 问答")}
-        >
-          <HelpCircle size={15} /> 如何使用知识库？
-        </button>
+
+        <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
+          <button
+            type="button"
+            className="zx-btn-glass"
+            onClick={() =>
+              toast("info", "将文档、文件或网页导入知识库后，即可进行检索与 Citation 溯源问答")
+            }
+          >
+            <HelpCircle size={14} /> 使用指南
+          </button>
+          <button type="button" className="zx-btn-cta" onClick={() => navigate("/knowledge/new")}>
+            <Plus size={15} strokeWidth={2.3} /> 新建知识库
+          </button>
+        </div>
       </div>
 
-      <section className="sg-knowledge-stats" aria-label="知识库统计">
-        {stats.map((item) => {
-          const Icon = item.icon;
-          return (
-            <article key={item.label} className="sg-knowledge-stat">
-              <span className={`sg-knowledge-stat-icon ${item.tone}`}>
-                <Icon size={24} />
-              </span>
-              <span className="sg-knowledge-stat-copy">
-                <span>{item.label}</span>
-                <strong>{item.value}</strong>
-                <small>{item.note}</small>
-              </span>
-            </article>
-          );
-        })}
-      </section>
+      <div className="zx-kb-split">
+        <div className="zx-kb-shelf-col">
+          <div className="zx-kb-filter-row">
+            <div className="zx-seg-tabs" role="tablist" aria-label="知识库范围">
+              {(
+                [
+                  ["mine", "我的知识库"],
+                  ["team", "团队共享"],
+                  ["public", "公开空间"],
+                ] as const
+              ).map(([id, label]) => (
+                <button
+                  key={id}
+                  type="button"
+                  role="tab"
+                  aria-selected={scope === id}
+                  className={`zx-seg-tab ${scope === id ? "active" : ""}`}
+                  onClick={() => setScope(id)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
 
-      <AppTabs
-        items={(
-          [
-            ["mine", "我的知识库"],
-            ["team", "团队知识库"],
-            ["public", "公开知识库"],
-          ] as const
-        ).map(([id, label]) => ({ key: id, label }))}
-        activeKey={scope}
-        onChange={(key) => setScope(key as KnowledgeScope)}
-      />
-
-      <div className="sg-knowledge-workspace">
-        <section className="sg-knowledge-main">
-          <div className="sg-knowledge-toolbar">
-            <Select
-              value={category}
-              onChange={setCategory}
-              options={[
-                { value: "all", label: "全部类型" },
-                { value: "document", label: "文档知识库" },
-                { value: "technical", label: "技术知识库" },
-                { value: "analysis", label: "分析资料库" },
-                { value: "feedback", label: "反馈资料库" },
-                { value: "internal", label: "内部资料库" },
-              ]}
-              className="sg-knowledge-select"
-            />
-            <Select
-              value={status}
-              onChange={setStatus}
-              options={[
-                { value: "all", label: "全部状态" },
-                { value: "available", label: "可用" },
-                { value: "restricted", label: "仅团队可见" },
-              ]}
-              className="sg-knowledge-select"
-            />
-            <Input
-              className="sg-knowledge-search"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="搜索知识库"
-              aria-label="搜索知识库"
-              prefix={<Search size={16} />}
-              allowClear
-            />
-            <div className="sg-knowledge-toolbar-tail">
-              <Segmented
-                className="sg-knowledge-view-toggle"
-                aria-label="显示方式"
-                value={view}
-                onChange={(value) => setView(value as KnowledgeView)}
-                options={[
-                  {
-                    value: "grid",
-                    icon: <Grid2X2 size={15} aria-hidden="true" />,
-                    tooltip: "卡片视图",
-                  },
-                  {
-                    value: "list",
-                    icon: <List size={16} aria-hidden="true" />,
-                    tooltip: "列表视图",
-                  },
-                  {
-                    value: "compact",
-                    icon: <SlidersHorizontal size={15} aria-hidden="true" />,
-                    tooltip: "紧凑视图",
-                  },
-                ]}
+            <div className="zx-doc-search-pill" style={{ width: 232 }}>
+              <Search size={14} />
+              <input
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="搜索知识库名称…"
+                aria-label="搜索知识库"
               />
-              <Select
-                value={sort}
-                onChange={setSort}
-                options={[
-                  { value: "updated", label: "最近更新" },
-                  { value: "name", label: "名称排序" },
-                  { value: "documents", label: "文档数量" },
-                ]}
-                className="sg-knowledge-sort"
-              />
+              {query && (
+                <button
+                  type="button"
+                  style={{
+                    border: 0,
+                    background: "transparent",
+                    color: "var(--sg-muted)",
+                    cursor: "pointer",
+                    padding: 0,
+                    display: "flex",
+                  }}
+                  onClick={() => setQuery("")}
+                  aria-label="清空搜索"
+                >
+                  <X size={13} />
+                </button>
+              )}
             </div>
           </div>
 
           {paged.length === 0 ? (
-            <div className="sg-knowledge-empty">
-              <BookOpen size={48} />
-              <strong>没有匹配的知识库</strong>
-              <span>调整筛选条件，或在 Header 右侧新建知识库。</span>
-            </div>
-          ) : view === "grid" ? (
-            <div className="sg-knowledge-grid">
-              {paged.map((item) => {
-                const Icon = CATEGORY_ICON[item.category];
-                return (
-                  <button
-                    type="button"
-                    key={item.id}
-                    className={`sg-knowledge-grid-card ${selectedId === item.id ? "selected" : ""}`}
-                    onClick={() => setSelectedId(item.id)}
-                  >
-                    <div className="sg-knowledge-grid-head">
-                      <span className={`sg-knowledge-item-icon ${item.accent}`}>
-                        <Icon size={21} />
-                      </span>
-                      <KnowledgeMoreMenu item={item} onAction={handleKnowledgeMenuAction} />
-                    </div>
-                    <strong>{item.name}</strong>
-                    <p>{item.description || "暂无描述"}</p>
-                    <div className="sg-knowledge-grid-meta">
-                      <span>{item.sourceCount} 个文档</span>
-                      <span>{formatRelative(item.updatedAt)}</span>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
+            <Empty
+              title="没有匹配的知识库"
+              hint="调整筛选条件，或右上角新建一座知识空间。"
+              action={
+                <button
+                  type="button"
+                  className="zx-btn-cta"
+                  onClick={() => navigate("/knowledge/new")}
+                >
+                  <Plus size={15} /> 新建知识库
+                </button>
+              }
+            />
           ) : (
-            <div className={`sg-knowledge-list ${view === "compact" ? "compact" : ""}`}>
+            <div className="zx-notebook-grid">
               {paged.map((item) => {
                 const Icon = CATEGORY_ICON[item.category];
+                const isSelected = selectedId === item.id;
                 return (
-                  <button
-                    type="button"
+                  <article
                     key={item.id}
-                    className={`sg-knowledge-row ${selectedId === item.id ? "selected" : ""}`}
-                    onClick={() => setSelectedId(item.id)}
+                    className={`zx-nb-card ${isSelected ? "selected" : ""}`}
+                    onClick={() => {
+                      setSelectedId(item.id);
+                      setQuickAnswer("");
+                    }}
+                    onDoubleClick={() => {
+                      if (!item.demo) navigate(`/knowledge/${item.id}`);
+                    }}
                   >
-                    <div className="sg-knowledge-row-primary">
-                      <span className={`sg-knowledge-item-icon ${item.accent}`}>
-                        <Icon size={21} />
-                      </span>
-                      <span className="sg-knowledge-row-copy">
-                        <strong>
-                          {item.name}
-                          {item.name.includes("越南") && <Star size={13} fill="currentColor" />}
-                          {item.visibility === "restricted" && <Lock size={13} />}
-                        </strong>
-                        <span>{item.description || "暂无描述"}</span>
-                      </span>
-                    </div>
-                    <div className="sg-knowledge-owner">
-                      <span>所有者</span>
-                      <div>
-                        {item.ownerNames.map((owner) =>
-                          owner.startsWith("+") ? (
-                            <i key={owner}>{owner}</i>
-                          ) : (
-                            <Avatar key={owner} name={owner} size={27} />
-                          ),
+                    <div>
+                      <div className="zx-nb-head">
+                        <span
+                          className={`zx-jewel ${item.accent}`}
+                          style={{ width: 42, height: 42, borderRadius: 13 }}
+                        >
+                          <Icon size={18} strokeWidth={1.9} />
+                        </span>
+                        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                          <span
+                            className={`zx-pill ${item.visibility === "available" ? "emerald" : "amber"}`}
+                          >
+                            ● {item.visibility === "available" ? "可用" : "仅团队可见"}
+                          </span>
+                          <KnowledgeMoreMenu item={item} onAction={handleKnowledgeMenuAction} />
+                        </div>
+                      </div>
+
+                      <div className="zx-nb-title">
+                        <span>{item.name}</span>
+                        {item.name.includes("越南") && (
+                          <Star
+                            size={13.5}
+                            fill="#F59E0B"
+                            color="#F59E0B"
+                            style={{ flexShrink: 0 }}
+                          />
                         )}
                       </div>
+                      <p className="zx-nb-desc">{item.description || "暂无描述"}</p>
                     </div>
-                    <div className="sg-knowledge-updated">
-                      <span>更新时间</span>
-                      <time>{knowledgeDate(item.updatedAt)}</time>
+
+                    <div className="zx-nb-foot tabular">
+                      <div className="zx-av-group">
+                        {item.ownerNames.map((owner, idx) => (
+                          <span
+                            key={owner}
+                            className="zx-avatar-xs"
+                            style={{
+                              background: owner.startsWith("+")
+                                ? "#475569"
+                                : AVATAR_BG[idx % AVATAR_BG.length],
+                              border: "2px solid var(--zx-canvas-solid)",
+                            }}
+                          >
+                            {owner.startsWith("+") ? owner : owner.slice(0, 1)}
+                          </span>
+                        ))}
+                      </div>
+                      <span>
+                        {item.sourceCount} 篇文档 · {item.citations.toLocaleString("zh-CN")} 次引用
+                      </span>
                     </div>
-                    <div className={`sg-knowledge-status ${item.visibility}`}>
-                      <span>状态</span>
-                      <b>
-                        <i />
-                        {item.visibility === "available" ? "可用" : "仅团队可见"}
-                      </b>
-                    </div>
-                    <KnowledgeMoreMenu item={item} onAction={handleKnowledgeMenuAction} />
-                  </button>
+                  </article>
                 );
               })}
             </div>
           )}
 
-          {filtered.length > 0 && (
+          {filtered.length > pageSize && (
             <AppPagination
               total={filtered.length}
               current={page}
@@ -682,227 +619,353 @@ export function KnowledgePage() {
               onChange={setPage}
             />
           )}
-        </section>
+        </div>
 
-        <aside className="sg-knowledge-detail" aria-label="知识库详情">
+        <aside className="zx-kb-inspector" aria-label="知识库详情">
           {selected ? (
             <>
-              <div className="sg-knowledge-detail-head">
-                <div>
-                  <strong>{selected.name}</strong>
-                  {selected.name.includes("越南") && <Star size={14} fill="currentColor" />}
-                </div>
-                <span className={`sg-knowledge-availability ${selected.visibility}`}>
-                  <i />
-                  {selected.visibility === "available" ? "可用" : "仅团队可见"}
-                </span>
-                <button
-                  type="button"
-                  aria-label="更多操作"
-                  title="更多操作"
-                  onClick={() => toast("info", "更多管理操作请进入知识库详情")}
+              <div>
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: 8,
+                  }}
                 >
-                  <MoreHorizontal size={18} />
-                </button>
-              </div>
-              <AppTabs
-                items={[
-                  ["overview", "概览"],
-                  ["documents", "文档"],
-                  ["permissions", "权限"],
-                  ["settings", "设置"],
-                  ["activity", "操作日志"],
-                ].map(([id, label]) => ({ key: id, label }))}
-                activeKey={detailTab}
-                onChange={setDetailTab}
-              />
-              <div className="sg-knowledge-detail-body">
+                  <div
+                    style={{
+                      fontSize: 17,
+                      fontWeight: 760,
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
+                      minWidth: 0,
+                    }}
+                  >
+                    <span
+                      style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                    >
+                      {selected.name}
+                    </span>
+                    {selected.name.includes("越南") && (
+                      <Star size={14} fill="#F59E0B" color="#F59E0B" style={{ flexShrink: 0 }} />
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    className="sg-list-action-btn"
+                    style={{
+                      border: 0,
+                      background: "transparent",
+                      color: "var(--sg-muted)",
+                      cursor: "pointer",
+                    }}
+                    onClick={openSelected}
+                    title="进入知识库管理"
+                  >
+                    <MoreHorizontal size={16} />
+                  </button>
+                </div>
+
+                <div className="zx-kb-subtabs">
+                  {(
+                    [
+                      ["overview", "概览"],
+                      ["documents", `文档 (${selected.sourceCount})`],
+                      ["permissions", "权限"],
+                      ["settings", "设置"],
+                      ["activity", "日志"],
+                    ] as const
+                  ).map(([id, label]) => (
+                    <button
+                      key={id}
+                      type="button"
+                      className={`zx-kb-subtab ${detailTab === id ? "active" : ""}`}
+                      onClick={() => setDetailTab(id)}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+
                 {detailTab === "overview" && (
                   <>
-                    <p className="sg-knowledge-detail-description">
-                      {selected.description || "暂无描述"}
-                    </p>
-                    <button type="button" className="sg-knowledge-edit-link" onClick={openSelected}>
-                      编辑描述
-                    </button>
-                    <dl className="sg-knowledge-meta-grid">
-                      <div>
-                        <dt>创建时间</dt>
-                        <dd>{knowledgeDate(selected.createdAt)}</dd>
+                    <div className="zx-ask-box">
+                      <div
+                        style={{
+                          fontSize: 12.5,
+                          fontWeight: 700,
+                          color: "var(--sg-fg)",
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 6,
+                        }}
+                      >
+                        <Sparkles size={14} color="#C084FC" />
+                        基于 {selected.chunkCount.toLocaleString("zh-CN")} 个索引分块溯源问答
                       </div>
-                      <div>
-                        <dt>更新时间</dt>
-                        <dd>{knowledgeDate(selected.updatedAt)}</dd>
+                      <form
+                        className="zx-ask-form"
+                        onSubmit={(e) => {
+                          e.preventDefault();
+                          const text = quickQuestion.trim() || "核心竞争格局与市场份额";
+                          quickAskMutation.mutate(text);
+                        }}
+                      >
+                        <input
+                          value={quickQuestion}
+                          onChange={(e) => setQuickQuestion(e.target.value)}
+                          placeholder="向该知识库提问，支持精确引用标注…"
+                          aria-label="向知识库提问"
+                        />
+                        <button
+                          type="submit"
+                          className="zx-ask-submit"
+                          disabled={quickAskMutation.isPending}
+                        >
+                          {quickAskMutation.isPending ? "…" : "Ask"}
+                        </button>
+                      </form>
+                      {quickAnswer && <div className="zx-ask-answer">{quickAnswer}</div>}
+                    </div>
+
+                    <div className="zx-chip-4 tabular">
+                      <div className="zx-stat-chip">
+                        <small>文档数量 / 大小</small>
+                        <strong>
+                          {selected.sourceCount} 篇 · {selected.storageLabel}
+                        </strong>
                       </div>
-                      <div>
-                        <dt>所有者</dt>
-                        <dd>
-                          <Avatar name={selected.ownerNames[0]} size={20} />
-                          {selected.ownerNames[0]}
-                        </dd>
+                      <div className="zx-stat-chip">
+                        <small>被引用 / 分块</small>
+                        <strong>
+                          {selected.citations.toLocaleString("zh-CN")} 次 ·{" "}
+                          {selected.chunkCount.toLocaleString("zh-CN")}
+                        </strong>
                       </div>
-                      <div>
-                        <dt>团队</dt>
-                        <dd>
-                          <Users size={15} />
-                          {selected.teamName}
-                        </dd>
+                      <div className="zx-stat-chip">
+                        <small>负责人</small>
+                        <strong>
+                          {selected.ownerNames[0]} · {selected.teamName}
+                        </strong>
                       </div>
-                      <div>
-                        <dt>文档数量</dt>
-                        <dd>
-                          <FileText size={15} />
-                          {selected.sourceCount} 个
-                        </dd>
-                      </div>
-                      <div>
-                        <dt>存储大小</dt>
-                        <dd>
-                          <Folder size={15} />
-                          {selected.storageLabel}
-                        </dd>
-                      </div>
-                      <div>
-                        <dt>被引用次数</dt>
-                        <dd>
-                          <Sparkles size={15} />
-                          {selected.citations.toLocaleString("zh-CN")} 次
-                        </dd>
-                      </div>
-                      <div>
-                        <dt>索引分块</dt>
-                        <dd>
-                          <Database size={15} />
-                          {selected.chunkCount.toLocaleString("zh-CN")} 个
-                        </dd>
-                      </div>
-                    </dl>
-                    <div className="sg-knowledge-distribution">
-                      <h3>文档类型分布</h3>
-                      <div className="sg-knowledge-chart">
-                        <i />
-                        <ul>
-                          <li>
-                            <b className="pdf" />
-                            PDF 文档 <span>45 (35%)</span>
-                          </li>
-                          <li>
-                            <b className="word" />
-                            Word 文档 <span>32 (25%)</span>
-                          </li>
-                          <li>
-                            <b className="excel" />
-                            Excel 表格 <span>18 (14%)</span>
-                          </li>
-                          <li>
-                            <b className="ppt" />
-                            PPT 演示 <span>12 (9%)</span>
-                          </li>
-                          <li>
-                            <b className="web" />
-                            网页链接 <span>11 (9%)</span>
-                          </li>
-                          <li>
-                            <b className="other" />
-                            其他 <span>10 (8%)</span>
-                          </li>
-                        </ul>
+                      <div className="zx-stat-chip">
+                        <small>最近同步</small>
+                        <strong>{knowledgeDate(selected.updatedAt)}</strong>
                       </div>
                     </div>
-                    <div className="sg-knowledge-recent">
-                      <div>
-                        <h3>最近更新的文档</h3>
-                        <button type="button" onClick={() => setDetailTab("documents")}>
-                          查看全部
+
+                    <div style={{ marginTop: 16 }}>
+                      <div
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          fontSize: 12.5,
+                          fontWeight: 700,
+                        }}
+                      >
+                        <span>源文档构成</span>
+                        <span
+                          style={{ fontWeight: 500, color: "var(--sg-muted)" }}
+                          className="tabular"
+                        >
+                          PDF 35% · Word 25% · 表格/PPT 28%
+                        </span>
+                      </div>
+                      <div className="zx-dist-bar">
+                        <i style={{ width: "35%", background: "#6366F1" }} />
+                        <i style={{ width: "25%", background: "#0EA5E9" }} />
+                        <i style={{ width: "16%", background: "#10B981" }} />
+                        <i style={{ width: "12%", background: "#A855F7" }} />
+                        <i style={{ width: "12%", background: "#F59E0B" }} />
+                      </div>
+                    </div>
+
+                    <div style={{ marginTop: 14 }}>
+                      <div
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          fontSize: 12.5,
+                          fontWeight: 700,
+                          marginBottom: 4,
+                        }}
+                      >
+                        <span>最近收录文档</span>
+                        <button
+                          type="button"
+                          style={{
+                            border: 0,
+                            background: "transparent",
+                            color: "var(--zx-brand)",
+                            fontSize: 12,
+                            cursor: "pointer",
+                            padding: 0,
+                          }}
+                          onClick={() => setDetailTab("documents")}
+                        >
+                          全部 →
                         </button>
                       </div>
-                      {selectedSources.slice(0, 5).map((source, index) => (
-                        <button type="button" key={source.id} onClick={openSelected}>
-                          <span className={`type-${index % 5}`}>
-                            <FileText size={13} />
-                          </span>
-                          <b>{source.title}</b>
-                          <time>
-                            {index === 0 ? "14:30" : index === 1 ? "昨天" : `05-${18 - index}`}
-                          </time>
-                        </button>
-                      ))}
+                      {selectedSources.slice(0, 3).map((source, index) => {
+                        const tones = ["rose", "emerald", "sky"] as const;
+                        return (
+                          <button
+                            key={source.id}
+                            type="button"
+                            className="zx-src-item"
+                            onClick={openSelected}
+                          >
+                            <span
+                              className={`zx-jewel ${tones[index % 3]}`}
+                              style={{ width: 26, height: 26, borderRadius: 7 }}
+                            >
+                              {index === 1 ? <Database size={13} /> : <FileText size={13} />}
+                            </span>
+                            <span
+                              style={{
+                                flex: 1,
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                                whiteSpace: "nowrap",
+                              }}
+                            >
+                              {source.title}
+                            </span>
+                            <span
+                              style={{ color: "var(--sg-muted)", fontSize: 11.5 }}
+                              className="tabular"
+                            >
+                              {index === 0 ? "14:30" : index === 1 ? "昨天" : "05-16"}
+                            </span>
+                          </button>
+                        );
+                      })}
                     </div>
                   </>
                 )}
+
                 {detailTab === "documents" && (
-                  <div className="sg-knowledge-panel-list">
-                    <h3>已导入文档</h3>
+                  <div style={{ paddingTop: 10 }}>
                     {selectedSources.length ? (
                       selectedSources.map((source) => (
-                        <button type="button" key={source.id} onClick={openSelected}>
-                          <FileText size={16} />
-                          <span>
-                            <b>{source.title}</b>
-                            <small>{source.sourceType}</small>
+                        <button
+                          type="button"
+                          key={source.id}
+                          className="zx-src-item"
+                          onClick={openSelected}
+                        >
+                          <span
+                            className="zx-jewel indigo"
+                            style={{ width: 28, height: 28, borderRadius: 8 }}
+                          >
+                            <FileText size={14} />
                           </span>
-                          <ChevronRight size={15} />
+                          <span
+                            style={{
+                              flex: 1,
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                              whiteSpace: "nowrap",
+                            }}
+                          >
+                            {source.title}
+                          </span>
+                          <ChevronRight size={14} color="var(--sg-muted)" />
                         </button>
                       ))
                     ) : (
-                      <p>还没有导入文档</p>
+                      <p
+                        style={{
+                          color: "var(--sg-muted)",
+                          fontSize: 12.5,
+                          padding: "24px 0",
+                          textAlign: "center",
+                        }}
+                      >
+                        还没有导入源文档
+                      </p>
                     )}
                   </div>
                 )}
+
                 {detailTab === "permissions" && (
-                  <div className="sg-knowledge-panel-message">
-                    <ShieldCheck size={27} />
-                    <strong>权限管理</strong>
-                    <p>
+                  <div
+                    style={{ padding: "36px 12px", textAlign: "center", color: "var(--sg-muted)" }}
+                  >
+                    <ShieldCheck size={28} color="#C084FC" style={{ marginBottom: 8 }} />
+                    <strong style={{ display: "block", color: "var(--sg-fg)", fontSize: 13.5 }}>
+                      权限管理
+                    </strong>
+                    <p style={{ fontSize: 12.5, margin: "6px 0 14px" }}>
                       {selected.visibility === "available"
-                        ? "当前工作区成员可访问此知识库。"
+                        ? "当前工作区成员均可检索与引用此知识库。"
                         : "仅指定团队成员可以访问。"}
                     </p>
-                    <Button size="small" onClick={openSelected}>
+                    <button type="button" className="zx-btn-glass" onClick={openSelected}>
                       管理权限
-                    </Button>
+                    </button>
                   </div>
                 )}
+
                 {detailTab === "settings" && (
-                  <div className="sg-knowledge-panel-message">
-                    <SlidersHorizontal size={27} />
-                    <strong>知识库设置</strong>
-                    <p>管理名称、描述、索引策略与知识库状态。</p>
-                    <Button size="small" onClick={openSelected}>
+                  <div
+                    style={{ padding: "36px 12px", textAlign: "center", color: "var(--sg-muted)" }}
+                  >
+                    <SlidersHorizontal size={28} color="#C084FC" style={{ marginBottom: 8 }} />
+                    <strong style={{ display: "block", color: "var(--sg-fg)", fontSize: 13.5 }}>
+                      知识库设置
+                    </strong>
+                    <p style={{ fontSize: 12.5, margin: "6px 0 14px" }}>
+                      管理名称、描述、分块索引策略与同步状态。
+                    </p>
+                    <button type="button" className="zx-btn-glass" onClick={openSelected}>
                       进入设置
-                    </Button>
+                    </button>
                   </div>
                 )}
+
                 {detailTab === "activity" && (
-                  <div className="sg-knowledge-activity">
-                    <h3>最近操作</h3>
-                    <p>
-                      <i />
-                      更新了知识库索引<time>{formatRelative(selected.updatedAt)}</time>
-                    </p>
-                    <p>
-                      <i />
-                      导入了 {selected.sourceCount} 个文档
-                      <time>{knowledgeDate(selected.createdAt)}</time>
-                    </p>
+                  <div
+                    style={{
+                      paddingTop: 12,
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 10,
+                      fontSize: 12.5,
+                    }}
+                  >
+                    <div className="zx-stat-chip">
+                      <strong style={{ fontSize: 13 }}>更新了向量与分块索引</strong>
+                      <small style={{ marginTop: 3 }}>{formatRelative(selected.updatedAt)}</small>
+                    </div>
+                    <div className="zx-stat-chip">
+                      <strong style={{ fontSize: 13 }}>
+                        导入了 {selected.sourceCount} 篇源文档
+                      </strong>
+                      <small style={{ marginTop: 3 }}>{knowledgeDate(selected.createdAt)}</small>
+                    </div>
                   </div>
                 )}
               </div>
-              <div className="sg-knowledge-detail-actions">
-                <Button onClick={openSelected}>导入文档</Button>
-                <Button
-                  type="primary"
-                  onClick={() => navigate(`/documents/new?knowledgeBaseId=${selected.id}`)}
-                >
-                  新建文档
-                </Button>
+
+              <div
+                style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 8 }}
+              >
+                <button type="button" className="zx-btn-glass" onClick={openSelected}>
+                  <Upload size={14} /> 导入文档
+                </button>
+                <button type="button" className="zx-btn-cta" onClick={openSelected}>
+                  <Sparkles size={14} /> 进入问答台
+                </button>
               </div>
             </>
           ) : (
-            <div className="sg-knowledge-detail-empty">
-              <BookOpen size={44} />
-              <strong>选择一个知识库</strong>
-              <span>查看概览、文档和权限信息</span>
+            <div style={{ padding: "80px 16px", textAlign: "center", color: "var(--sg-muted)" }}>
+              <BookOpen size={40} style={{ marginBottom: 10, opacity: 0.6 }} />
+              <strong style={{ display: "block", color: "var(--sg-fg)" }}>选择一个知识库</strong>
+              <span style={{ fontSize: 12.5 }}>查看索引概览并发起溯源问答</span>
             </div>
           )}
         </aside>
@@ -916,7 +979,7 @@ export function KnowledgeNewPage() {
   const toast = useToast();
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
-  const { styles } = useKnowledgeStyles();
+  const { styles } = useKnowledgeDetailStyles();
   const mutation = useMutation({
     mutationFn: () =>
       api<KnowledgeBase>("/knowledge-bases", { method: "POST", body: { name, description } }),
@@ -959,7 +1022,7 @@ export function KnowledgeDetailPage() {
   const [file, setFile] = useState<File | null>(null);
   const [askQuery, setAskQuery] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
-  const { styles } = useKnowledgeStyles();
+  const { styles } = useKnowledgeDetailStyles();
 
   const { data: kb } = useQuery<KnowledgeBase & { sources: KnowledgeSource[] }>({
     queryKey: ["knowledge", id],

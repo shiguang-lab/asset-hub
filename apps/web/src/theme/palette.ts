@@ -1,37 +1,36 @@
 /**
  * Asset Hub 平台级视觉 token，单一事实来源。
- * 颜色沿用 72 张设计稿的紫/深色体系，主题色为 #5B36F5；
- * 结构对齐 superagents/apps/web 的 palette/tokens 模式。
+ * 采用 V6「极光流彩暗色 (Aurora Nebula Glass)」C 端视觉体系。
  */
 export const platformPalette = {
-  colorPrimary: "#5B36F5",
-  colorSuccess: "#43D19E",
-  colorWarning: "#FFB14A",
-  colorError: "#FF5D66",
-  colorInfo: "#5B36F5",
+  colorPrimary: "#9333EA",
+  colorSuccess: "#34D399",
+  colorWarning: "#FBBF24",
+  colorError: "#FB7185",
+  colorInfo: "#38BDF8",
 
-  borderRadius: 6,
-  borderRadiusLG: 10,
+  borderRadius: 11,
+  borderRadiusLG: 18,
   fontSize: 14,
   // Keep antd's default middle control height.
-  controlHeight: 32,
+  controlHeight: 34,
   fontFamily:
-    '"Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif',
+    '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Inter", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif',
 
   scheme: {
     light: {
-      colorBgLayout: "#F5F7FA",
+      colorBgLayout: "#F2F3F0",
       colorBgContainer: "#FFFFFF",
       colorBgElevated: "#FFFFFF",
-      colorBorder: "#E4E8ED",
-      colorBorderSecondary: "#EEF1F4",
+      colorBorder: "rgba(15, 23, 42, 0.08)",
+      colorBorderSecondary: "rgba(15, 23, 42, 0.05)",
     },
     dark: {
-      colorBgLayout: "#0B0A0F",
-      colorBgContainer: "#121116",
-      colorBgElevated: "#1A181F",
-      colorBorder: "#2A2731",
-      colorBorderSecondary: "#23272E",
+      colorBgLayout: "#060811",
+      colorBgContainer: "#13172B",
+      colorBgElevated: "#191F38",
+      colorBorder: "rgba(255, 255, 255, 0.095)",
+      colorBorderSecondary: "rgba(255, 255, 255, 0.065)",
     },
   },
 } as const;

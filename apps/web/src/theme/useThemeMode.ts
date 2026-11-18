@@ -1,5 +1,4 @@
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
 
 export type ThemeMode = "light" | "dark";
 
@@ -9,13 +8,8 @@ interface ThemeModeState {
   toggle: () => void;
 }
 
-export const useThemeMode = create<ThemeModeState>()(
-  persist(
-    (set, get) => ({
-      mode: "dark",
-      setMode: (mode) => set({ mode }),
-      toggle: () => set({ mode: get().mode === "dark" ? "light" : "dark" }),
-    }),
-    { name: "sg-theme-mode" },
-  ),
-);
+export const useThemeMode = create<ThemeModeState>()(() => ({
+  mode: "dark",
+  setMode: () => {},
+  toggle: () => {},
+}));

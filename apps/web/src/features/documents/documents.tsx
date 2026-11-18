@@ -1,19 +1,15 @@
 import { Empty, Field, Loading, Scrollbar, useToast } from "@shiguang/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { MenuProps } from "antd";
-import { App, Button, Dropdown, Input, Modal, Segmented, Select } from "antd";
+import { App, Button, Dropdown, Input, Modal, Select } from "antd";
 import { createStyles } from "antd-style";
 import {
   BarChart3,
   Check,
-  ChevronDown,
-  ChevronRight,
-  Clock3,
   FileStack,
   FileText,
   Folder,
   FolderOpen,
-  FolderPlus,
   Globe,
   Grid2X2,
   Link2,
@@ -21,22 +17,18 @@ import {
   Lock,
   MonitorPlay,
   MoreHorizontal,
-  PenLine,
   Plus,
   Search,
-  Send,
   Share2,
   Sparkles,
   Star,
-  Trash2,
-  Users,
+  X,
 } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { getAuthSession } from "../../auth/session.js";
 import { type Asset, api, publishedShortUrl } from "../../entities/api.js";
 import { AppPagination } from "../../shared/AppPagination.js";
-import { AppTable } from "../../shared/AppTable.js";
 import {
   legacyFolderNames,
   readLegacyFolderMigration,
@@ -56,33 +48,12 @@ import {
 } from "../../shared/document-path.js";
 import { OwnerAvatar } from "../../shared/OwnerAvatar.js";
 import { isOwnedBySession, ownerDisplayName } from "../../shared/owner.js";
+import { AssetMiniPreview } from "../../shared/studio-visuals.js";
 import { useDeleteConfirm } from "../../shared/useDeleteConfirm";
 import { useShellBreadcrumb, useShellDocumentActions } from "../../shell/layout.js";
 import { PublishDialog } from "../publishing/publish-dialog.js";
 
 const useDocumentsPageStyles = createStyles(() => ({
-  recentHeader: {
-    marginBottom: 12,
-  },
-  allHeader: {
-    marginBottom: 10,
-  },
-  sectionTitle: {
-    margin: 0,
-  },
-  relationBadge: {
-    marginRight: 6,
-    whiteSpace: "nowrap",
-  },
-  folderDepth0: { paddingLeft: 4 },
-  folderDepth1: { paddingLeft: 20 },
-  folderDepth2: { paddingLeft: 36 },
-  folderDepth3: { paddingLeft: 52 },
-  folderDepth4: { paddingLeft: 68 },
-  folderDepth5: { paddingLeft: 84 },
-  folderDepth6: { paddingLeft: 100 },
-  folderDepth7: { paddingLeft: 116 },
-  folderDepth8: { paddingLeft: 132 },
   moveDepth0: { paddingLeft: 14 },
   moveDepth1: { paddingLeft: 36 },
   moveDepth2: { paddingLeft: 58 },
@@ -105,7 +76,7 @@ const DEMO_DOCUMENTS: Asset[] = [
     type: "document",
     title: "2024 新能源汽车行业研究报告",
     path: "研究/行业报告/2024 新能源汽车行业研究报告",
-    description: "深入分析全球新能源汽车市场趋势，竞争格局与技术...",
+    description: "深入分析全球新能源汽车市场趋势、竞争格局与供应链策略",
     visibility: "public",
     status: "ready",
     sourceType: "manual",
@@ -123,7 +94,7 @@ const DEMO_DOCUMENTS: Asset[] = [
     type: "report",
     title: "越南消费金融市场分析",
     path: "研究/行业报告/越南消费金融市场分析",
-    description: "聚焦越南消费金融市场现状与未来机遇，包含市场...",
+    description: "聚焦越南消费金融市场现状与机遇，包含头部持牌机构对比",
     visibility: "link",
     status: "ready",
     sourceType: "research",
@@ -141,7 +112,7 @@ const DEMO_DOCUMENTS: Asset[] = [
     type: "document",
     title: "AI Agent 产品设计规范",
     path: "产品/设计规范/AI Agent 产品设计规范",
-    description: "定义 AI Agent 产品的设计原则、功能模块与交互...",
+    description: "定义 AI Agent 产品的设计原则、多轮协同模块与交互边界",
     visibility: "link",
     status: "ready",
     sourceType: "manual",
@@ -159,8 +130,8 @@ const DEMO_DOCUMENTS: Asset[] = [
     type: "document",
     title: "Shiguang Lab 产品需求文档",
     path: "产品/需求文档/Shiguang Lab 产品需求文档",
-    description: "Shiguang Lab 核心功能需求、用户场景与验收标...",
-    visibility: "link",
+    description: "Shiguang Lab 核心功能需求、C 端创作工作流与验收标准",
+    visibility: "private",
     status: "ready",
     sourceType: "manual",
     currentVersionId: "demo-4",
@@ -177,7 +148,7 @@ const DEMO_DOCUMENTS: Asset[] = [
     type: "document",
     title: "行业数据 Dashboard",
     path: "数据与看板/行业数据 Dashboard",
-    description: "可视化展示行业关键指标与趋势数据，支持多维度...",
+    description: "可视化展示行业关键指标与趋势数据，支持多维度漏斗分析",
     visibility: "public",
     status: "ready",
     sourceType: "manual",
@@ -208,6 +179,8 @@ const FILTERS = [
 ] as const;
 
 type FilterId = (typeof FILTERS)[number]["id"];
+
+const FOLDER_COLORS = ["#F59E0B", "#818CF8", "#34D399", "#38BDF8", "#F472B6", "#C084FC"];
 
 interface RelationRow {
   relation: { relationType: string; targetAssetId: string };
@@ -260,38 +233,34 @@ function displayDate(iso: string): string {
   if (days === 0) return `今天 ${time}`;
   if (days === 1) return `昨天 ${time}`;
   if (days === 2) return `前天 ${time}`;
-  return `${date.getMonth() + 1}月${date.getDate()}日 ${time}`;
+  return `${date.getMonth() + 1}月${date.getDate()}日`;
 }
 
 function documentIcon(title: string) {
   if (title.includes("Dashboard")) return BarChart3;
-  if (title.includes("新能源") || title.includes("PRD")) return FileText;
   if (title.includes("消费金融") || title.includes("Agent")) return MonitorPlay;
   return FileText;
 }
 
 function documentTone(title: string): string {
-  if (title.includes("Dashboard")) return "orange";
+  if (title.includes("Dashboard")) return "amber";
   if (title.includes("消费金融") || title.includes("Agent")) return "violet";
-  if (title.includes("PRD")) return "blue";
-  return "blue";
+  return "indigo";
 }
 
-/** 移动目标路径：优先沿用已有文件名，尚未归类的文档用标题兜底。 */
 function destinationPath(document: Asset, folderPath: string): string {
   const leaf = fileNameOf(document.path) || leafFromTitle(document.title) || document.id;
   return joinFolderPath(folderPath, leaf);
 }
 
-/** 目录树的两个 id 语义：真实目录用路径本身，全部文档用哨兵。 */
 function toFolderScope(activeFolderId: string): string {
   return activeFolderId === ROOT_FOLDER_ID ? "" : activeFolderId;
 }
 
-function visMeta(a: Asset): { icon: typeof Globe; cls: string; label: string } {
-  if (a.visibility === "public") return { icon: Globe, cls: "public", label: "公开" };
-  if (a.visibility === "link") return { icon: Link2, cls: "link", label: "团队可见" };
-  return { icon: Lock, cls: "private", label: "私有" };
+function visMeta(a: Asset): { icon: typeof Globe; pillTone: string; label: string } {
+  if (a.visibility === "public") return { icon: Globe, pillTone: "emerald", label: "公开" };
+  if (a.visibility === "link") return { icon: Link2, pillTone: "sky", label: "链接可见" };
+  return { icon: Lock, pillTone: "neutral", label: "私有" };
 }
 
 function relationBadges(relations: RelationRow[] | undefined): string[] {
@@ -305,20 +274,16 @@ function relationBadges(relations: RelationRow[] | undefined): string[] {
   return [...badges];
 }
 
+function relationPillTone(label: string): string {
+  if (label.includes("演示")) return "violet";
+  if (label.includes("知识库")) return "indigo";
+  if (label === "草稿") return "neutral";
+  return "emerald";
+}
+
 export function DocumentsPage() {
   const navigate = useNavigate();
   const { styles } = useDocumentsPageStyles();
-  const folderDepthClasses = [
-    styles.folderDepth0,
-    styles.folderDepth1,
-    styles.folderDepth2,
-    styles.folderDepth3,
-    styles.folderDepth4,
-    styles.folderDepth5,
-    styles.folderDepth6,
-    styles.folderDepth7,
-    styles.folderDepth8,
-  ];
   const moveDepthClasses = [
     styles.moveDepth0,
     styles.moveDepth1,
@@ -339,14 +304,11 @@ export function DocumentsPage() {
   const migrationCheckedRef = useRef(false);
   const [filter, setFilter] = useState<FilterId>("all");
   const [q, setQ] = useState("");
-  const [type, setType] = useState("all");
   const [sort, setSort] = useState("updated");
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(20);
-  const [viewMode, setViewMode] = useState<"list" | "grid">("list");
+  const [pageSize, setPageSize] = useState(18);
+  const [viewMode, setViewMode] = useState<"list" | "grid">("grid");
   const [activeFolderId, setActiveFolderId] = useState(ROOT_FOLDER_ID);
-  const [treePanelOpen, setTreePanelOpen] = useState(false);
-  const [expandedFolderIds, setExpandedFolderIds] = useState<string[]>([]);
   const [openFolderMenuId, setOpenFolderMenuId] = useState<string | null>(null);
   const [folderDialog, setFolderDialog] = useState<
     { mode: "create"; parentPath: string } | { mode: "rename"; folderId: string } | null
@@ -354,9 +316,7 @@ export function DocumentsPage() {
   const [moveDialog, setMoveDialog] = useState<{
     documentId: string;
     documentTitle: string;
-    /** 选中的已有目录，空串代表「全部文档」。 */
     folderId: string;
-    /** 直接输入的新目录路径，非空时优先于上面的选择。 */
     newFolderPath: string;
   } | null>(null);
   const [openDocumentMenuId, setOpenDocumentMenuId] = useState<string | null>(null);
@@ -381,7 +341,6 @@ export function DocumentsPage() {
 
   useEffect(() => {
     if (!documentActions?.registerImportHandler) return;
-    // 导入的目录结构由服务端按导入路径写入 `path`，前端只需刷新列表。
     return documentActions.registerImportHandler(() => {
       void queryClient.invalidateQueries({ queryKey: ["assets", "document"] });
       void queryClient.invalidateQueries({ queryKey: ["home"] });
@@ -440,23 +399,33 @@ export function DocumentsPage() {
     [all, persistedFolders],
   );
   const folderScope = toFolderScope(activeFolderId);
-  // 在当前目录下新建文档：新建时就把 `path` 定下来，文档不会凭空落到根目录。
   const newDocumentHref = folderScope
     ? `/documents/new?folder=${encodeURIComponent(folderScope)}`
     : "/documents/new";
 
-  // 目录是文档路径的投影，最后一批文档被移走后目录会消失，此时退回全部文档。
   useEffect(() => {
     if (activeFolderId === ROOT_FOLDER_ID) return;
     if (folders.some((folder) => folder.id === activeFolderId)) return;
     setActiveFolderId(ROOT_FOLDER_ID);
   }, [activeFolderId, folders]);
 
+  const liveDocs = useMemo(() => all.filter((a) => !a.deletedAt), [all]);
+
+  const filterCounts = useMemo<Record<FilterId, number>>(
+    () => ({
+      all: liveDocs.length,
+      recent: liveDocs.filter((a) => withinDays(a.updatedAt, 30)).length,
+      mine: liveDocs.filter((a) => isOwnedBySession(a, authSession)).length,
+      shared: liveDocs.filter((a) => !isOwnedBySession(a, authSession)).length,
+      favorites: liveDocs.filter((a) => favoriteIds.includes(a.id)).length,
+      published: liveDocs.filter((a) => Boolean(a.publishedUrl)).length,
+      trash: deleted.filter((a) => Boolean(a.deletedAt)).length,
+    }),
+    [authSession, deleted, favoriteIds, liveDocs],
+  );
+
   const items = useMemo(() => {
-    const base =
-      filter === "trash"
-        ? deleted.filter((a) => Boolean(a.deletedAt))
-        : all.filter((a) => !a.deletedAt);
+    const base = filter === "trash" ? deleted.filter((a) => Boolean(a.deletedAt)) : liveDocs;
     return base
       .filter((a) =>
         filter === "mine"
@@ -471,13 +440,6 @@ export function DocumentsPage() {
                   ? Boolean(a.publishedUrl)
                   : true,
       )
-      .filter((a) =>
-        type === "all"
-          ? true
-          : type === "document"
-            ? a.type === "document" || a.type === "report"
-            : a.type === type,
-      )
       .filter((a) => isInFolder(a.path ?? "", folderScope))
       .filter((a) =>
         q.trim() ? `${a.title} ${a.description}`.toLowerCase().includes(q.toLowerCase()) : true,
@@ -489,31 +451,20 @@ export function DocumentsPage() {
             ? new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
             : new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
       );
-  }, [all, authSession, deleted, favoriteIds, filter, type, q, sort, folderScope]);
+  }, [authSession, deleted, favoriteIds, filter, folderScope, liveDocs, q, sort]);
 
   useEffect(() => {
     setPage(1);
-  }, [activeFolderId, filter, q, type, sort, pageSize]);
+  }, [activeFolderId, filter, q, sort, pageSize]);
 
   const stats = useMemo(() => {
-    if (demoMode) return { total: 128, weekCreated: 12, weekEdited: 23, published: 18 };
-    const live = all.filter((a) => !a.deletedAt);
+    if (demoMode) return { total: 28, weekCreated: 6, published: 8 };
     return {
-      total: live.length,
-      weekCreated: live.filter((a) => withinDays(a.createdAt, 7)).length,
-      weekEdited: live.filter((a) => withinDays(a.updatedAt, 7)).length,
-      published: live.filter((a) => Boolean(a.publishedUrl)).length,
+      total: liveDocs.length,
+      weekCreated: liveDocs.filter((a) => withinDays(a.createdAt, 7)).length,
+      published: liveDocs.filter((a) => Boolean(a.publishedUrl)).length,
     };
-  }, [all, demoMode]);
-
-  const recent = useMemo(
-    () =>
-      all
-        .filter((a) => !a.deletedAt)
-        .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
-        .slice(0, 3),
-    [all],
-  );
+  }, [demoMode, liveDocs]);
 
   const pageCount = Math.max(1, Math.ceil(items.length / pageSize));
   useEffect(() => {
@@ -524,7 +475,6 @@ export function DocumentsPage() {
     [items, page, pageSize],
   );
 
-  // Batch-load relations for the current page so the "关联" column is accurate.
   const { data: relMap } = useQuery<Record<string, RelationRow[]>>({
     queryKey: ["doc-relations", paged.map((d) => d.id).join(",")],
     queryFn: async () => {
@@ -544,13 +494,10 @@ export function DocumentsPage() {
       toast("info", "该文档尚未发布，请先发布后再复制链接");
       return;
     }
-    const done = () => toast("success", "链接已复制");
     if (navigator.clipboard?.writeText) {
       await navigator.clipboard.writeText(shortUrl);
-      done();
-    } else {
-      done();
     }
+    toast("success", "链接已复制");
   };
 
   const shareDocument = (document: Asset) => {
@@ -564,7 +511,6 @@ export function DocumentsPage() {
     toast("success", favoriteIds.includes(id) ? "已取消收藏" : "已加入收藏");
   };
 
-  /** 文档移动仍以 `path` 为同步真源；目录 CRUD 由独立接口持久化空目录。 */
   const assignPaths = useCallback(
     async (
       updates: Array<{ id: string; lockVersion: number; path: string }>,
@@ -598,23 +544,10 @@ export function DocumentsPage() {
         : [{ id: document.id, lockVersion: document.lockVersion, path: next }];
     });
 
-  /** 展开某目录的所有上级，改名或移动后仍能看到它。 */
-  const expandAncestors = (folderPath: string) => {
-    const ancestors: string[] = [];
-    let current = folderPathOf(folderPath);
-    while (current) {
-      ancestors.push(current);
-      current = folderPathOf(current);
-    }
-    if (ancestors.length === 0) return;
-    setExpandedFolderIds((current) => [...new Set([...current, ...ancestors])]);
-  };
-
   const moveToFolder = async (documentId: string, folderPath: string) => {
     const document = all.find((item) => item.id === documentId);
     if (!document) return;
     const next = destinationPath(document, folderPath);
-    // 服务端以 `path` 唯一，落到同一个路径会报 ASSET_PATH_CONFLICT。
     if (next === (document.path ?? "")) {
       toast("info", "文档已在该目录下");
       return;
@@ -626,7 +559,6 @@ export function DocumentsPage() {
       toast("error", failures[0] as string);
       return;
     }
-    expandAncestors(folderPath);
     toast("success", folderPath ? `已移动到「${folderPath}」` : "已移到全部文档");
   };
 
@@ -639,8 +571,6 @@ export function DocumentsPage() {
     try {
       await api("/document-folders", { method: "POST", body: { path } });
       refreshFolders();
-      expandAncestors(path);
-      setExpandedFolderIds((current) => [...new Set([...current, folderPathOf(path)])]);
       toast("success", `目录「${fileNameOf(path)}」已创建`);
     } catch (error) {
       toast("error", error instanceof Error ? error.message : "目录创建失败");
@@ -651,7 +581,6 @@ export function DocumentsPage() {
     try {
       await api("/document-folders", { method: "DELETE", params: { path } });
       refreshFolders();
-      setExpandedFolderIds((current) => current.filter((id) => id !== path));
       if (activeFolderId === path) setActiveFolderId(folderPathOf(path) || ROOT_FOLDER_ID);
       toast("success", `目录「${fileNameOf(path)}」已删除`);
     } catch (error) {
@@ -710,19 +639,11 @@ export function DocumentsPage() {
   const selectSystemView = (nextFilter: FilterId) => {
     setFilter(nextFilter);
     setActiveFolderId(ROOT_FOLDER_ID);
-    setTreePanelOpen(false);
   };
 
   const selectFolder = (folderId: string) => {
     setFilter("all");
     setActiveFolderId(folderId);
-    setTreePanelOpen(false);
-  };
-
-  const toggleFolder = (folderId: string) => {
-    setExpandedFolderIds((current) =>
-      current.includes(folderId) ? current.filter((id) => id !== folderId) : [...current, folderId],
-    );
   };
 
   const openRenameFolder = (folder: DocumentFolder) => {
@@ -761,7 +682,6 @@ export function DocumentsPage() {
       else if (isInFolder(activeFolderId, from)) {
         setActiveFolderId(rewriteFolderPrefix(activeFolderId, from, target) ?? ROOT_FOLDER_ID);
       }
-      expandAncestors(target);
       toast("success", `目录已重命名为「${fileNameOf(target)}」`);
     } catch (error) {
       toast("error", error instanceof Error ? error.message : "目录重命名失败");
@@ -783,7 +703,6 @@ export function DocumentsPage() {
     });
   };
 
-  // 目录归属曾经只存在本机 localStorage，这里做一次上传，避免改造变成静默丢数据。
   useEffect(() => {
     if (migrationCheckedRef.current || !docs) return;
     migrationCheckedRef.current = true;
@@ -814,85 +733,21 @@ export function DocumentsPage() {
     });
   }, [assignPaths, docs, modal, toast]);
 
-  const renderFolderTree = (parentId: string | null, depth = 0): ReactNode =>
-    folders
-      .filter((folder) => folder.parentId === parentId)
-      .map((folder) => {
-        const hasChildren = folders.some((candidate) => candidate.parentId === folder.id);
-        const expanded = expandedFolderIds.includes(folder.id);
-        return (
-          <div key={folder.id} className="sg-docs-tree-branch">
-            <div
-              className={`sg-docs-tree-row ${activeFolderId === folder.id ? "active" : ""} ${folderDepthClasses[Math.min(depth, folderDepthClasses.length - 1)]}`}
-              role="treeitem"
-              aria-selected={activeFolderId === folder.id}
-              aria-expanded={hasChildren ? expanded : undefined}
-              tabIndex={-1}
-              onDragOver={(event) => event.preventDefault()}
-              onDrop={(event) => {
-                event.preventDefault();
-                const documentId = event.dataTransfer.getData("application/x-shiguang-document");
-                if (documentId) moveToFolder(documentId, folder.id);
-              }}
-            >
-              {hasChildren ? (
-                <button
-                  type="button"
-                  className="sg-docs-tree-toggle"
-                  onClick={() => toggleFolder(folder.id)}
-                  aria-label={expanded ? `收起${folder.name}` : `展开${folder.name}`}
-                >
-                  {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-                </button>
-              ) : (
-                <span className="sg-docs-tree-toggle" />
-              )}
-              <button
-                type="button"
-                className="sg-docs-tree-label"
-                onClick={() => selectFolder(folder.id)}
-              >
-                {activeFolderId === folder.id ? <FolderOpen size={15} /> : <Folder size={15} />}
-                <span>{folder.name}</span>
-              </button>
-              <Dropdown
-                trigger={["hover"]}
-                mouseEnterDelay={0}
-                mouseLeaveDelay={0.15}
-                placement="bottomRight"
-                open={openFolderMenuId === folder.id}
-                onOpenChange={(open) => setOpenFolderMenuId(open ? folder.id : null)}
-                menu={{
-                  items: [
-                    { key: "create-child", label: "新建子目录" },
-                    { key: "rename", label: "重命名" },
-                    { key: "delete", label: "删除目录", danger: true },
-                  ],
-                  onClick: ({ key }) => {
-                    if (key === "create-child") openCreateFolder(folder.id);
-                    if (key === "rename") openRenameFolder(folder);
-                    if (key === "delete") deleteFolder(folder);
-                  },
-                }}
-              >
-                <Button
-                  size="small"
-                  type="text"
-                  className="sg-list-action-btn sg-docs-tree-more"
-                  onFocus={() => setOpenFolderMenuId(folder.id)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Escape") setOpenFolderMenuId(null);
-                  }}
-                  aria-label={`${folder.name}目录操作`}
-                >
-                  <MoreHorizontal size={14} />
-                </Button>
-              </Dropdown>
-            </div>
-            {hasChildren && expanded && renderFolderTree(folder.id, depth + 1)}
-          </div>
-        );
-      });
+  // Visible folder chips: top-level folders + direct children of active folder
+  const visibleFolders = useMemo(() => {
+    const roots = folders.filter((f) => f.parentId === null);
+    if (activeFolderId === ROOT_FOLDER_ID) return roots;
+    const children = folders.filter((f) => f.parentId === activeFolderId);
+    const activeNode = folders.find((f) => f.id === activeFolderId);
+    const merged = new Map<string, DocumentFolder>();
+    for (const r of roots) merged.set(r.id, r);
+    if (activeNode) merged.set(activeNode.id, activeNode);
+    for (const c of children) merged.set(c.id, c);
+    return [...merged.values()];
+  }, [activeFolderId, folders]);
+
+  const folderDocCount = (folderPath: string) =>
+    liveDocs.filter((d) => isInFolder(d.path ?? "", folderPath)).length;
 
   const renderMoveFolderOptions = (parentId: string | null, depth = 0): ReactNode =>
     folders
@@ -922,551 +777,496 @@ export function DocumentsPage() {
       });
 
   return (
-    <div className="sg-docs">
-      <div className="sg-assets-head">
+    <div className="zx-doc-studio">
+      <div className="zx-studio-top">
         <div>
-          <h1 className="sg-h1">文档</h1>
-          <p className="sg-assets-sub">创建、管理和整理你的在线文档</p>
-        </div>
-        <div className="sg-docs-head-actions">
-          <Button
-            className="sg-assets-head-btn"
-            onClick={() => documentActions?.openDocumentFilePicker({ pathPrefix: folderScope })}
-          >
-            <FileText size={15} /> 导入文件
-          </Button>
-          <Button
-            className="sg-assets-head-btn"
-            onClick={() => documentActions?.openDocumentFolderPicker({ pathPrefix: folderScope })}
-          >
-            <FolderOpen size={15} /> 导入目录
-          </Button>
-          <Button type="primary" onClick={() => navigate(newDocumentHref)}>
-            <Plus size={15} /> 新建文档
-          </Button>
-        </div>
-      </div>
-
-      <div className="sg-docs-stats">
-        {[
-          { label: "全部文档", value: stats.total, icon: FileStack, tone: "blue" },
-          { label: "本周创建", value: stats.weekCreated, icon: FolderPlus, tone: "violet" },
-          { label: "最近编辑", value: stats.weekEdited, icon: PenLine, tone: "green" },
-          { label: "已发布", value: stats.published, icon: Send, tone: "orange" },
-        ].map((s) => (
-          <div key={s.label} className="sg-docs-stat">
-            <span className={`sg-docs-stat-icon ${s.tone}`}>
-              <s.icon size={21} strokeWidth={1.9} />
-            </span>
-            <span className="sg-docs-stat-copy">
-              <span className="label">{s.label}</span>
-              <span className="value">{s.value}</span>
-            </span>
-          </div>
-        ))}
-      </div>
-
-      <div className="sg-docs-workspace">
-        <aside
-          className={`sg-docs-tree-panel ${treePanelOpen ? "open" : ""}`}
-          aria-label="文档目录树"
-        >
-          <div className="sg-docs-tree-heading">
-            <strong>文档目录</strong>
-            <div>
-              <button
-                type="button"
-                className="sg-docs-tree-collapse"
-                onClick={() => setTreePanelOpen((current) => !current)}
-                aria-label={treePanelOpen ? "收起目录面板" : "展开目录面板"}
-              >
-                {treePanelOpen ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
-              </button>
+          <div className="zx-title-pack">
+            <h1>文档</h1>
+            <div className="zx-whisper-metrics tabular">
+              <span>
+                共 <b>{stats.total}</b> 篇
+              </span>
+              <span>·</span>
+              <span>
+                本周新建 <b>{stats.weekCreated}</b>
+              </span>
+              <span>·</span>
+              <span>
+                已发布 <b>{stats.published}</b>
+              </span>
             </div>
           </div>
-          <Scrollbar className="sg-docs-tree-scroll">
-            <nav className="sg-docs-system-views" aria-label="文档系统视图">
-              {[
-                { id: "all", label: "全部文档", icon: FileStack },
-                { id: "recent", label: "最近编辑", icon: Clock3 },
-                { id: "mine", label: "我的文档", icon: FileText },
-                { id: "shared", label: "与我共享", icon: Users },
-                { id: "favorites", label: "收藏", icon: Star },
-                { id: "published", label: "已发布", icon: Send },
-                { id: "trash", label: "回收站", icon: Trash2 },
-              ].map((view) => (
+          <p className="zx-studio-sub">
+            沉浸式 Markdown 与 AI 协同创作空间，支持多级目录整理与一键短链分享
+          </p>
+        </div>
+
+        <div style={{ display: "flex", alignItems: "center", gap: 9, flexWrap: "wrap" }}>
+          <button
+            type="button"
+            className="zx-btn-glass"
+            onClick={() => documentActions?.openDocumentFilePicker({ pathPrefix: folderScope })}
+          >
+            <FileText size={14} /> 导入文件
+          </button>
+          <button
+            type="button"
+            className="zx-btn-glass"
+            onClick={() => documentActions?.openDocumentFolderPicker({ pathPrefix: folderScope })}
+          >
+            <FolderOpen size={14} /> 导入目录
+          </button>
+          <button type="button" className="zx-btn-cta" onClick={() => navigate(newDocumentHref)}>
+            <Plus size={15} strokeWidth={2.3} /> 新建文档
+          </button>
+        </div>
+      </div>
+
+      <div className="zx-filter-deck">
+        <div className="zx-scope-bar">
+          <div className="zx-seg-tabs tabular" role="tablist" aria-label="文档筛选范围">
+            {FILTERS.map((view) => {
+              const active = filter === view.id && activeFolderId === ROOT_FOLDER_ID;
+              return (
                 <button
                   key={view.id}
                   type="button"
-                  className={filter === view.id && activeFolderId === "root" ? "active" : ""}
-                  onClick={() => selectSystemView(view.id as FilterId)}
+                  role="tab"
+                  aria-selected={active}
+                  className={`zx-seg-tab ${active ? "active" : ""}`}
+                  onClick={() => selectSystemView(view.id)}
                 >
-                  <view.icon size={15} />
                   <span>{view.label}</span>
+                  <small>{filterCounts[view.id]}</small>
                 </button>
-              ))}
-            </nav>
-            <div className="sg-docs-tree-divider" />
-            <div className="sg-docs-tree-subheading">
-              <span>我的目录</span>
-              <Button
-                type="text"
-                size="small"
-                icon={<FolderPlus size={14} />}
-                onClick={() => openCreateFolder()}
-                aria-label="新建目录"
-                title="新建目录"
+              );
+            })}
+          </div>
+
+          <div style={{ display: "flex", alignItems: "center", gap: 9, flexWrap: "wrap" }}>
+            <div className="zx-doc-search-pill">
+              <Search size={14} />
+              <input
+                placeholder="筛选文档标题…"
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                aria-label="筛选文档标题"
               />
-            </div>
-            <div className="sg-docs-tree" role="tree" aria-label="我的目录">
-              {renderFolderTree(null)}
-            </div>
-          </Scrollbar>
-        </aside>
-
-        <div className="sg-docs-main">
-          <div className="sg-docs-location">
-            <div>
-              <span>当前位置</span>
-              <strong>{activeFolderPath}</strong>
-            </div>
-            <span>共 {items.length} 项</span>
-          </div>
-
-          <div className="sg-assets-toolbar">
-            <Input
-              className="sg-assets-search"
-              placeholder="搜索文档"
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              prefix={<Search size={15} />}
-              allowClear
-            />
-            <Select
-              value={type}
-              onChange={setType}
-              className="sg-assets-select"
-              options={[
-                { value: "all", label: "全部类型" },
-                { value: "document", label: "Markdown 文档" },
-                { value: "report", label: "调研报告" },
-              ]}
-            />
-            <Select
-              value={sort}
-              onChange={setSort}
-              className="sg-assets-select"
-              options={[
-                { value: "updated", label: "最近更新" },
-                { value: "created", label: "最近创建" },
-                { value: "title", label: "名称" },
-              ]}
-            />
-            <Segmented
-              className="sg-docs-view-toggle"
-              aria-label="显示方式"
-              value={viewMode}
-              onChange={(value) => setViewMode(value as typeof viewMode)}
-              options={[
-                {
-                  value: "list",
-                  icon: <List size={17} aria-hidden="true" />,
-                  tooltip: "列表视图",
-                },
-                {
-                  value: "grid",
-                  icon: <Grid2X2 size={17} aria-hidden="true" />,
-                  tooltip: "网格视图",
-                },
-              ]}
-            />
-          </div>
-
-          {listLoading ? <Loading loading minHeight={360} /> : null}
-
-          {!listLoading && filter === "all" && activeFolderId === ROOT_FOLDER_ID && (
-            <section className="sg-docs-recent-section">
-              <div className={`sg-row-between ${styles.recentHeader}`}>
-                <h2 className={`sg-h3 ${styles.sectionTitle}`}>最近编辑</h2>
+              {q && (
                 <button
                   type="button"
-                  className="sg-side-link"
-                  onClick={() => {
-                    setFilter("all");
-                    requestAnimationFrame(() =>
-                      document
-                        .querySelector(".sg-docs-all-section")
-                        ?.scrollIntoView({ behavior: "smooth" }),
-                    );
+                  style={{
+                    border: 0,
+                    background: "transparent",
+                    color: "var(--sg-muted)",
+                    cursor: "pointer",
+                    padding: 0,
+                    display: "flex",
                   }}
+                  onClick={() => setQ("")}
+                  aria-label="清空搜索"
                 >
-                  查看全部
+                  <X size={13} />
                 </button>
-              </div>
-              {recent.length === 0 ? (
-                <Empty
-                  title="还没有文档"
-                  hint="创建第一份 Markdown 文档，或从模板快速开始。"
-                  action={
-                    <Button type="primary" onClick={() => navigate(newDocumentHref)}>
-                      <Plus size={15} /> 新建文档
-                    </Button>
-                  }
-                />
-              ) : (
-                <div className="sg-docs-recent-grid">
-                  {recent.map((d) => (
-                    <button
-                      key={d.id}
-                      type="button"
-                      className="sg-docs-recent-card"
-                      onClick={() => navigate(`/documents/${d.id}`)}
-                    >
-                      <span className={`sg-asset-icn ${documentTone(d.title)}`}>
-                        {(() => {
-                          const Icon = documentIcon(d.title);
-                          return <Icon size={19} strokeWidth={1.9} />;
-                        })()}
-                      </span>
-                      <span className="sg-docs-recent-copy">
-                        <span className="sg-docs-recent-title">{d.title}</span>
-                        <span className="sg-docs-recent-meta">
-                          <OwnerAvatar name={ownerDisplayName(d, authSession)} />
-                          <span>{displayDate(d.updatedAt)}</span>
-                          <span className="sg-badge sg-badge-accent">文档</span>
-                        </span>
-                      </span>
-                    </button>
-                  ))}
-                </div>
               )}
-            </section>
-          )}
-
-          <section className="sg-docs-all-section">
-            <div className={`sg-row-between ${styles.allHeader}`}>
-              <h2 className={`sg-h3 ${styles.sectionTitle}`}>{activeFolderPath}</h2>
-              <span className="sg-subtle">共 {items.length} 项</span>
             </div>
 
-            {listLoading ? (
-              <Loading loading minHeight={300} />
-            ) : paged.length === 0 ? (
-              <Empty
-                title={
-                  filter === "trash"
-                    ? "回收站为空"
-                    : filter === "favorites"
-                      ? "暂无收藏"
-                      : "没有匹配的文档"
-                }
-                hint="创建文档、上传文件或发起调研后，文档会出现在这里。"
-              />
-            ) : viewMode === "grid" ? (
-              <div className="sg-docs-grid">
-                {paged.map((d) => {
-                  const vis = visMeta(d);
-                  const VisIcon = vis.icon;
-                  const badges = demoMode
-                    ? (DEMO_RELATIONS[d.id] ?? [])
-                    : relationBadges(relMap?.[d.id]);
-                  const Icon = documentIcon(d.title);
-                  return (
-                    <article
-                      key={d.id}
-                      className="sg-doc-card"
-                      draggable
-                      onDragStart={(event) => {
-                        event.dataTransfer.setData("application/x-shiguang-document", d.id);
-                        event.dataTransfer.effectAllowed = "move";
-                      }}
-                    >
-                      <div className="sg-doc-card-head">
-                        <span className={`sg-asset-icn ${documentTone(d.title)}`}>
-                          <Icon size={20} strokeWidth={1.9} />
-                        </span>
-                        <span className="sg-doc-card-type">
-                          {d.type === "report" ? "调研报告" : "文档"}
-                        </span>
-                        <Dropdown
-                          trigger={["hover"]}
-                          mouseEnterDelay={0}
-                          mouseLeaveDelay={0.15}
-                          placement="bottomRight"
-                          open={openDocumentMenuId === d.id}
-                          onOpenChange={(open) => setOpenDocumentMenuId(open ? d.id : null)}
-                          menu={{
-                            items: documentMenuItems(d),
-                            onClick: ({ key }) => onDocumentMenuClick(d, key),
-                          }}
-                        >
-                          <Button
-                            size="small"
-                            type="text"
-                            className="sg-list-action-btn"
-                            onClick={(e) => e.stopPropagation()}
-                            onFocus={() => setOpenDocumentMenuId(d.id)}
-                            onKeyDown={(event) => {
-                              if (event.key === "Escape") setOpenDocumentMenuId(null);
-                            }}
-                            aria-label="更多操作"
-                          >
-                            <MoreHorizontal size={16} />
-                          </Button>
-                        </Dropdown>
-                      </div>
-                      <div className="sg-doc-card-body">
-                        <button
-                          type="button"
-                          className="sg-doc-card-title"
-                          onClick={() => navigate(`/documents/${d.id}`)}
-                        >
-                          {d.title}
-                        </button>
-                        {d.description ? <p className="sg-doc-card-desc">{d.description}</p> : null}
-                      </div>
-                      <div className="sg-doc-card-meta">
-                        <OwnerAvatar name={ownerDisplayName(d, authSession)} />
-                        <span className="sg-subtle">{displayDate(d.updatedAt)}</span>
-                      </div>
-                      <div className="sg-doc-card-foot">
-                        <span className={`sg-vis ${vis.cls}`}>
-                          <VisIcon size={13} />
-                          {vis.label}
-                        </span>
-                        <span className="sg-doc-card-relations">
-                          {badges.slice(0, 1).map((b) => (
-                            <span key={b} className="sg-badge sg-badge-success">
-                              {b}
-                            </span>
-                          ))}
-                        </span>
-                        <div className="sg-docs-actions">
-                          <Button
-                            size="small"
-                            type="text"
-                            className="sg-list-action-btn ai"
-                            title="AI 助手"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              navigate(`/documents/${d.id}`);
-                            }}
-                          >
-                            <Sparkles size={16} />
-                          </Button>
-                          <Button
-                            size="small"
-                            type="text"
-                            className="sg-list-action-btn"
-                            title="分享"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              shareDocument(d);
-                            }}
-                          >
-                            <Share2 size={15} />
-                          </Button>
-                          <Button
-                            size="small"
-                            type="text"
-                            className="sg-list-action-btn"
-                            title={d.publishedUrl ? "复制发布链接" : "发布"}
-                            aria-label={d.publishedUrl ? "复制发布链接" : "发布"}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              shareDocument(d);
-                            }}
-                          >
-                            <Send size={15} />
-                          </Button>
-                        </div>
-                      </div>
-                    </article>
-                  );
-                })}
-              </div>
-            ) : (
-              <div className="sg-docs-table-wrap">
-                <AppTable<Asset>
-                  rowKey="id"
-                  dataSource={paged}
-                  pagination={false}
-                  size="middle"
-                  tableLayout="fixed"
-                  scroll={{ x: 1120 }}
-                  onRow={(d) => ({
-                    draggable: true,
-                    style: { cursor: "pointer" },
-                    onDragStart: (event) => {
-                      event.dataTransfer.setData("application/x-shiguang-document", d.id);
-                      event.dataTransfer.effectAllowed = "move";
-                    },
-                    onClick: (e) => {
-                      if ((e.target as HTMLElement).closest("button, .ant-dropdown")) return;
-                      navigate(`/documents/${d.id}`);
-                    },
-                  })}
-                  columns={[
-                    {
-                      title: "名称",
-                      dataIndex: "title",
-                      ellipsis: true,
-                      render: (_v, d) => (
-                        <div className="sg-asset-name">
-                          <span className={`sg-asset-icn ${documentTone(d.title)}`}>
-                            {(() => {
-                              const Icon = documentIcon(d.title);
-                              return <Icon size={16} strokeWidth={1.9} />;
-                            })()}
-                          </span>
-                          <span className="sg-asset-name-copy">
-                            <span className="sg-asset-title">{d.title}</span>
-                            {d.description ? (
-                              <span className="sg-docs-desc">{d.description}</span>
-                            ) : null}
-                          </span>
-                        </div>
-                      ),
-                    },
-                    {
-                      title: "所有者",
-                      dataIndex: "ownerDisplayName",
-                      width: 120,
-                      render: (_v, d) => <OwnerAvatar name={ownerDisplayName(d, authSession)} />,
-                    },
-                    {
-                      title: "更新时间",
-                      dataIndex: "updatedAt",
-                      width: 160,
-                      render: (v) => <span className="sg-subtle">{displayDate(v)}</span>,
-                    },
-                    {
-                      title: "可见范围",
-                      dataIndex: "visibility",
-                      width: 140,
-                      render: (_v, d) => {
-                        const vis = visMeta(d);
-                        const VisIcon = vis.icon;
-                        return (
-                          <span className={`sg-vis ${vis.cls}`}>
-                            <VisIcon size={13} />
-                            {vis.label}
-                          </span>
-                        );
-                      },
-                    },
-                    {
-                      title: "关联",
-                      dataIndex: "relations",
-                      width: 160,
-                      render: (_v, d) => {
-                        const badges = demoMode
-                          ? (DEMO_RELATIONS[d.id] ?? [])
-                          : relationBadges(relMap?.[d.id]);
-                        return badges.length === 0 ? (
-                          <span className="sg-subtle">—</span>
-                        ) : (
-                          badges.map((b) => (
-                            <span
-                              key={b}
-                              className={`sg-badge sg-badge-success ${styles.relationBadge}`}
-                            >
-                              {b}
-                            </span>
-                          ))
-                        );
-                      },
-                    },
-                    {
-                      title: "操作",
-                      key: "menu",
-                      width: 180,
-                      fixed: "right",
-                      render: (_v, d) => (
-                        <div className="sg-docs-actions">
-                          <Button
-                            size="small"
-                            type="text"
-                            className="sg-list-action-btn ai"
-                            title="AI 助手"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              navigate(`/documents/${d.id}`);
-                            }}
-                          >
-                            <Sparkles size={16} />
-                          </Button>
-                          <Button
-                            size="small"
-                            type="text"
-                            className="sg-list-action-btn"
-                            title="分享"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              shareDocument(d);
-                            }}
-                          >
-                            <Share2 size={15} />
-                          </Button>
-                          <Button
-                            size="small"
-                            type="text"
-                            className="sg-list-action-btn"
-                            title={d.publishedUrl ? "复制发布链接" : "发布"}
-                            aria-label={d.publishedUrl ? "复制发布链接" : "发布"}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              shareDocument(d);
-                            }}
-                          >
-                            <Send size={15} />
-                          </Button>
-                          <Dropdown
-                            trigger={["hover"]}
-                            mouseEnterDelay={0}
-                            mouseLeaveDelay={0.15}
-                            placement="bottomRight"
-                            open={openDocumentMenuId === d.id}
-                            onOpenChange={(open) => setOpenDocumentMenuId(open ? d.id : null)}
-                            menu={{
-                              items: documentMenuItems(d),
-                              onClick: ({ key }) => onDocumentMenuClick(d, key),
-                            }}
-                          >
-                            <Button
-                              size="small"
-                              type="text"
-                              className="sg-list-action-btn"
-                              onClick={(e) => e.stopPropagation()}
-                              onFocus={() => setOpenDocumentMenuId(d.id)}
-                              onKeyDown={(event) => {
-                                if (event.key === "Escape") setOpenDocumentMenuId(null);
-                              }}
-                              aria-label="更多操作"
-                            >
-                              <MoreHorizontal size={16} />
-                            </Button>
-                          </Dropdown>
-                        </div>
-                      ),
-                    },
-                  ]}
-                />
-              </div>
-            )}
+            <div className="zx-seg-tabs" style={{ borderRadius: 999, padding: 3 }}>
+              <button
+                type="button"
+                className={`zx-seg-tab ${viewMode === "grid" ? "active" : ""}`}
+                style={{ borderRadius: 999, padding: "0 11px", height: 28 }}
+                onClick={() => setViewMode("grid")}
+              >
+                <Grid2X2 size={14} /> 画廊
+              </button>
+              <button
+                type="button"
+                className={`zx-seg-tab ${viewMode === "list" ? "active" : ""}`}
+                style={{ borderRadius: 999, padding: "0 11px", height: 28 }}
+                onClick={() => setViewMode("list")}
+              >
+                <List size={14} /> 列表
+              </button>
+            </div>
+          </div>
+        </div>
 
-            {paged.length > 0 && (
-              <AppPagination
-                total={items.length}
-                current={page}
-                pageSize={pageSize}
-                onChange={setPage}
-                onPageSizeChange={setPageSize}
-              />
-            )}
-          </section>
+        <div className="zx-folder-strip">
+          <div className="zx-folder-chips tabular">
+            <div
+              className={`zx-f-chip-wrap ${activeFolderId === ROOT_FOLDER_ID ? "active" : ""}`}
+              onDragOver={(event) => event.preventDefault()}
+              onDrop={(event) => {
+                event.preventDefault();
+                const documentId = event.dataTransfer.getData("application/x-shiguang-document");
+                if (documentId) void moveToFolder(documentId, "");
+              }}
+            >
+              <button
+                type="button"
+                className="zx-f-chip"
+                style={{ paddingRight: 13 }}
+                onClick={() => setActiveFolderId(ROOT_FOLDER_ID)}
+              >
+                全部目录
+              </button>
+            </div>
+
+            {visibleFolders.map((folder, index) => {
+              const isActive = activeFolderId === folder.id;
+              const color = FOLDER_COLORS[index % FOLDER_COLORS.length];
+              const label = folder.parentId ? folderDisplayPath(folders, folder.id) : folder.name;
+              return (
+                <div
+                  key={folder.id}
+                  className={`zx-f-chip-wrap ${isActive ? "active" : ""}`}
+                  onDragOver={(event) => event.preventDefault()}
+                  onDrop={(event) => {
+                    event.preventDefault();
+                    const documentId = event.dataTransfer.getData(
+                      "application/x-shiguang-document",
+                    );
+                    if (documentId) void moveToFolder(documentId, folder.id);
+                  }}
+                >
+                  <button
+                    type="button"
+                    className="zx-f-chip"
+                    onClick={() => selectFolder(folder.id)}
+                  >
+                    <Folder size={13.5} fill={color} color={color} />
+                    <span>{label}</span>
+                    <span style={{ opacity: 0.72 }}>· {folderDocCount(folder.id)}</span>
+                  </button>
+                  <Dropdown
+                    trigger={["click"]}
+                    placement="bottomRight"
+                    open={openFolderMenuId === folder.id}
+                    onOpenChange={(open) => setOpenFolderMenuId(open ? folder.id : null)}
+                    menu={{
+                      items: [
+                        { key: "create-child", label: "新建子目录" },
+                        { key: "rename", label: "重命名" },
+                        { key: "delete", label: "删除目录", danger: true },
+                      ],
+                      onClick: ({ key }) => {
+                        setOpenFolderMenuId(null);
+                        if (key === "create-child") openCreateFolder(folder.id);
+                        if (key === "rename") openRenameFolder(folder);
+                        if (key === "delete") deleteFolder(folder);
+                      },
+                    }}
+                  >
+                    <button
+                      type="button"
+                      className="zx-f-chip-more"
+                      onClick={(e) => e.stopPropagation()}
+                      aria-label={`${folder.name}目录操作`}
+                    >
+                      <MoreHorizontal size={13} />
+                    </button>
+                  </Dropdown>
+                </div>
+              );
+            })}
+
+            <button
+              type="button"
+              className="zx-f-chip-create"
+              onClick={() => openCreateFolder(folderScope)}
+            >
+              + 新建目录
+            </button>
+          </div>
+
+          <Select
+            value={sort}
+            onChange={setSort}
+            variant="borderless"
+            style={{ minWidth: 136 }}
+            options={[
+              { value: "updated", label: "按最近更新排序" },
+              { value: "created", label: "按最近创建排序" },
+              { value: "title", label: "按标题字母排序" },
+            ]}
+          />
         </div>
       </div>
+
+      {listLoading ? (
+        <Loading loading minHeight={360} />
+      ) : paged.length === 0 ? (
+        <Empty
+          title={
+            filter === "trash"
+              ? "回收站为空"
+              : filter === "favorites"
+                ? "暂无收藏文档"
+                : "没有匹配的文档"
+          }
+          hint="创建文档、上传文件或发起调研后，文档会展示在这里。"
+          action={
+            filter !== "trash" ? (
+              <button
+                type="button"
+                className="zx-btn-cta"
+                onClick={() => navigate(newDocumentHref)}
+              >
+                <Plus size={15} /> 新建文档
+              </button>
+            ) : undefined
+          }
+        />
+      ) : viewMode === "grid" ? (
+        <div className="zx-doc-gallery">
+          {paged.map((d) => {
+            const vis = visMeta(d);
+            const VisIcon = vis.icon;
+            const badges = demoMode ? (DEMO_RELATIONS[d.id] ?? []) : relationBadges(relMap?.[d.id]);
+            const primaryRel = badges[0] ?? (d.publishedUrl ? "已发布" : "草稿");
+            const isStarred = favoriteIds.includes(d.id);
+
+            return (
+              <article
+                key={d.id}
+                className="zx-paper-card"
+                draggable
+                onDragStart={(event) => {
+                  event.dataTransfer.setData("application/x-shiguang-document", d.id);
+                  event.dataTransfer.effectAllowed = "move";
+                }}
+                onClick={() => navigate(`/documents/${d.id}`)}
+              >
+                <div className="zx-paper-preview">
+                  <AssetMiniPreview asset={d} />
+                  <span className={`zx-float-vis zx-pill ${vis.pillTone}`}>
+                    <VisIcon size={12} /> {vis.label}
+                  </span>
+                  <div className="zx-float-acts">
+                    <button
+                      type="button"
+                      className="zx-mini-act ai"
+                      title="进入 AI 协同编辑器"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        navigate(`/documents/${d.id}`);
+                      }}
+                    >
+                      <Sparkles size={13.5} />
+                    </button>
+                    <button
+                      type="button"
+                      className="zx-mini-act"
+                      title="发布 / 分享"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        shareDocument(d);
+                      }}
+                    >
+                      <Share2 size={13} />
+                    </button>
+                    <Dropdown
+                      trigger={["click"]}
+                      placement="bottomRight"
+                      open={openDocumentMenuId === d.id}
+                      onOpenChange={(open) => setOpenDocumentMenuId(open ? d.id : null)}
+                      menu={{
+                        items: documentMenuItems(d),
+                        onClick: ({ key, domEvent }) => {
+                          domEvent.stopPropagation();
+                          onDocumentMenuClick(d, key);
+                        },
+                      }}
+                    >
+                      <button
+                        type="button"
+                        className="zx-mini-act"
+                        aria-label="更多操作"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <MoreHorizontal size={14} />
+                      </button>
+                    </Dropdown>
+                  </div>
+                </div>
+
+                <div className="zx-paper-body">
+                  <div className="zx-paper-title">
+                    <span>{d.title}</span>
+                    {isStarred && (
+                      <Star size={13.5} fill="#F59E0B" color="#F59E0B" style={{ flexShrink: 0 }} />
+                    )}
+                  </div>
+                  <p className="zx-paper-desc">
+                    {d.description || "点击进入沉浸式编辑器撰写正文与引用知识库"}
+                  </p>
+                  <div className="zx-paper-foot tabular">
+                    <div style={{ display: "flex", alignItems: "center", gap: 7, minWidth: 0 }}>
+                      <OwnerAvatar name={ownerDisplayName(d, authSession)} />
+                      <span>{displayDate(d.updatedAt)}</span>
+                    </div>
+                    <span className={`zx-pill ${relationPillTone(primaryRel)}`}>{primaryRel}</span>
+                  </div>
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="zx-doc-strip-list">
+          {paged.map((d) => {
+            const vis = visMeta(d);
+            const VisIcon = vis.icon;
+            const Icon = documentIcon(d.title);
+            const badges = demoMode ? (DEMO_RELATIONS[d.id] ?? []) : relationBadges(relMap?.[d.id]);
+            const primaryRel = badges[0] ?? (d.publishedUrl ? "已发布" : "草稿");
+            const folderLabel = folderPathOf(d.path ?? "") || "未归类";
+
+            return (
+              <div
+                key={d.id}
+                className="zx-doc-strip"
+                draggable
+                onDragStart={(event) => {
+                  event.dataTransfer.setData("application/x-shiguang-document", d.id);
+                  event.dataTransfer.effectAllowed = "move";
+                }}
+                onClick={(e) => {
+                  if ((e.target as HTMLElement).closest("button, .ant-dropdown")) return;
+                  navigate(`/documents/${d.id}`);
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: 13, minWidth: 0 }}>
+                  <span
+                    className={`zx-jewel ${documentTone(d.title)}`}
+                    style={{ width: 38, height: 38 }}
+                  >
+                    <Icon size={16} strokeWidth={1.9} />
+                  </span>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      <strong
+                        style={{
+                          fontSize: 14,
+                          fontWeight: 680,
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {d.title}
+                      </strong>
+                      {favoriteIds.includes(d.id) && (
+                        <Star size={13} fill="#F59E0B" color="#F59E0B" style={{ flexShrink: 0 }} />
+                      )}
+                    </div>
+                    {d.description && (
+                      <div
+                        style={{
+                          fontSize: 12,
+                          color: "var(--sg-muted)",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                          marginTop: 2,
+                        }}
+                      >
+                        {d.description}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="hide-md">
+                  <span className="zx-pill neutral">{folderLabel}</span>
+                </div>
+
+                <div className="hide-md">
+                  <span className={`zx-pill ${relationPillTone(primaryRel)}`}>{primaryRel}</span>
+                </div>
+
+                <div>
+                  <span className={`zx-pill ${vis.pillTone}`}>
+                    <VisIcon size={12} /> {vis.label}
+                  </span>
+                </div>
+
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 7,
+                    fontSize: 12,
+                    color: "var(--sg-muted)",
+                  }}
+                  className="tabular"
+                >
+                  <OwnerAvatar name={ownerDisplayName(d, authSession)} />
+                  <span>{displayDate(d.updatedAt)}</span>
+                </div>
+
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "flex-end",
+                    gap: 4,
+                  }}
+                >
+                  <Button
+                    size="small"
+                    type="text"
+                    className="sg-list-action-btn ai"
+                    title="AI 协同编辑"
+                    onClick={() => navigate(`/documents/${d.id}`)}
+                  >
+                    <Sparkles size={15} />
+                  </Button>
+                  <Button
+                    size="small"
+                    type="text"
+                    className="sg-list-action-btn"
+                    title="发布 / 分享"
+                    onClick={() => shareDocument(d)}
+                  >
+                    <Share2 size={14} />
+                  </Button>
+                  <Dropdown
+                    trigger={["click"]}
+                    placement="bottomRight"
+                    open={openDocumentMenuId === d.id}
+                    onOpenChange={(open) => setOpenDocumentMenuId(open ? d.id : null)}
+                    menu={{
+                      items: documentMenuItems(d),
+                      onClick: ({ key }) => onDocumentMenuClick(d, key),
+                    }}
+                  >
+                    <Button
+                      size="small"
+                      type="text"
+                      className="sg-list-action-btn"
+                      aria-label="更多操作"
+                    >
+                      <MoreHorizontal size={15} />
+                    </Button>
+                  </Dropdown>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {!listLoading && paged.length > 0 && (
+        <AppPagination
+          total={items.length}
+          current={page}
+          pageSize={pageSize}
+          onChange={setPage}
+          onPageSizeChange={setPageSize}
+        />
+      )}
 
       <Modal
         open={Boolean(moveDialog)}
@@ -1492,8 +1292,7 @@ export function DocumentsPage() {
               onChange={(event) =>
                 setMoveDialog((current) =>
                   current
-                    ? // 输入新目录时清掉列表选中，避免两处同时看起来生效
-                      { ...current, folderId: "", newFolderPath: event.target.value }
+                    ? { ...current, folderId: "", newFolderPath: event.target.value }
                     : current,
                 )
               }

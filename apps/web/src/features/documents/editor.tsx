@@ -4,6 +4,7 @@ import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import {
   bracketMatching,
   defaultHighlightStyle,
+  HighlightStyle,
   indentOnInput,
   syntaxHighlighting,
 } from "@codemirror/language";
@@ -12,17 +13,22 @@ import { EditorView, highlightActiveLine, keymap, lineNumbers } from "@codemirro
 import { Empty, Scrollbar, useToast } from "@shiguang/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { MenuProps } from "antd";
-import { Button, Card, Dropdown, Input, Modal, Select, Switch, Tabs } from "antd";
+import { Button, Card, Dropdown, Input, Modal, Select } from "antd";
 import { createStyles } from "antd-style";
 import {
+  ArrowLeft,
+  BarChart3,
   Download,
   FileDiff,
+  Globe,
   ImagePlus,
   Link2,
+  Lock,
   MoreHorizontal,
   Paperclip,
   RefreshCcw,
   Share2,
+  Sparkles,
   Trash2,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -188,37 +194,66 @@ const useDocumentEditorStyles = createStyles(({ token }) => ({
   },
 }));
 
-const useOutlineItemStyles = createStyles(({ token }, props: { paddingLeft: number }) => ({
-  item: {
-    paddingLeft: props.paddingLeft,
-    fontSize: 12.5,
-    paddingTop: 3,
-    paddingBottom: 3,
-    color: token.colorTextSecondary,
-  },
-}));
+const AURORA_COLOR_MAP: Record<string, string> = {
+  "#00f": "#C084FC",
+  "#219": "#A78BFA",
+  "#164": "#34D399",
+  "#a11": "#7DD3FC",
+  "#e40": "#FB7185",
+  "#085": "#38BDF8",
+  "#256": "#38BDF8",
+  "#00c": "#818CF8",
+  "#940": "#94A3B8",
+  "#404740": "#94A3B8",
+  "#7a757a": "#94A3B8",
+  "#f00": "#FDA4AF",
+};
 
-function OutlineItem({
-  paddingLeft,
-  children,
-}: {
-  paddingLeft: number;
-  children: React.ReactNode;
-}) {
-  const { styles } = useOutlineItemStyles({ paddingLeft });
-  return <div className={styles.item}>{children}</div>;
-}
+const auroraHighlightStyle = HighlightStyle.define(
+  defaultHighlightStyle.specs.map((spec) => ({
+    ...spec,
+    ...(spec.color ? { color: AURORA_COLOR_MAP[spec.color.toLowerCase()] ?? "#E2E8F0" } : {}),
+  })),
+);
 
-const useSaveBadgeStyles = createStyles(({ token }, props: { state: SaveState }) => ({
-  badge: {
-    color:
-      props.state === "saved"
-        ? token.colorSuccess
-        : props.state === "saving"
-          ? token.colorTextSecondary
-          : token.colorError,
+const auroraEditorTheme = EditorView.theme(
+  {
+    "&": {
+      color: "#CBD5E1",
+      backgroundColor: "transparent",
+    },
+    ".cm-content": {
+      caretColor: "#C084FC",
+      fontFamily: 'var(--sg-mono, "SF Mono", "JetBrains Mono", ui-monospace, monospace)',
+      fontSize: "13px",
+      lineHeight: "1.8",
+      padding: "18px 12px",
+    },
+    "&.cm-focused .cm-cursor, .cm-dropCursor": {
+      borderLeftColor: "#C084FC",
+    },
+    "&.cm-focused .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection": {
+      backgroundColor: "rgba(168, 85, 247, 0.28) !important",
+    },
+    ".cm-activeLine": {
+      backgroundColor: "rgba(168, 85, 247, 0.08)",
+    },
+    ".cm-activeLineGutter": {
+      backgroundColor: "rgba(168, 85, 247, 0.14)",
+      color: "#E9D5FF",
+    },
+    ".cm-gutters": {
+      backgroundColor: "rgba(255, 255, 255, 0.02)",
+      color: "#64748B",
+      borderRight: "1px solid rgba(255, 255, 255, 0.08)",
+    },
+    ".cm-lineNumbers .cm-gutterElement": {
+      padding: "0 12px 0 14px",
+      fontSize: "12px",
+    },
   },
-}));
+  { dark: true },
+);
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -235,7 +270,7 @@ export function DocumentEditorPage() {
   const queryClient = useQueryClient();
   const editorRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
-  const [mode, setMode] = useState<Mode>("edit");
+  const [mode, setMode] = useState<Mode>("split");
   const [tab, setTab] = useState("内容编辑");
   const [title, setTitle] = useState(params.get("title") ?? "");
   const [content, setContent] = useState("");
@@ -431,16 +466,18 @@ export function DocumentEditorPage() {
     setContentReady(false);
     setTitle(asset.title);
     const serverText = asset.content?.text ?? "";
-    void loadDraft("dev-user", id).then((draft) => {
+    setContent(serverText);
+    draftBaseRef.current = asset.currentVersionId ?? "";
+    setDirty(false);
+    void Promise.race([
+      loadDraft("dev-user", id).catch(() => null),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 250)),
+    ]).then((draft) => {
       if (cancelled) return;
       if (draft && draft.baseVersionId === asset.currentVersionId && draft.content !== serverText) {
         toast("info", "已恢复本地未同步的草稿");
         setContent(draft.content);
-      } else {
-        setContent(serverText);
       }
-      draftBaseRef.current = asset.currentVersionId ?? "";
-      setDirty(false);
       setContentReady(true);
       setContentLoadKey((current) => current + 1);
     });
@@ -670,11 +707,13 @@ export function DocumentEditorPage() {
       doc: content,
       extensions: [
         lineNumbers(),
+        EditorView.lineWrapping,
         highlightActiveLine(),
         history(),
         bracketMatching(),
         indentOnInput(),
-        syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
+        auroraEditorTheme,
+        syntaxHighlighting(auroraHighlightStyle, { fallback: true }),
         keymap.of([...defaultKeymap, ...historyKeymap]),
         autocompletion(),
         langConf.of(markdown({ base: markdownLanguage })),
@@ -766,42 +805,89 @@ export function DocumentEditorPage() {
     [content],
   );
 
+  const folderCrumb = folderPathOf(asset?.path ?? "") || "文档";
+
   return (
-    <div className={`sg-document-editor-page ${tab === "内容编辑" ? "is-content-editing" : ""}`}>
-      <div className={`sg-row-between ${styles.header}`}>
-        <div className={`sg-row ${styles.titleRow}`}>
+    <div className="zx-ed-studio">
+      <div className="zx-ed-topbar">
+        <div className="zx-ed-left">
+          <button
+            type="button"
+            className="zx-btn-glass"
+            style={{ height: 32, padding: "0 12px" }}
+            onClick={() => navigate("/documents")}
+          >
+            <ArrowLeft size={14} /> {folderCrumb.split("/").pop() || "文档"}
+          </button>
           <input
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             onBlur={() => void saveTitle()}
-            placeholder="文档标题"
-            className={styles.titleInput}
+            placeholder="输入文档标题…"
+            className="zx-ed-title-input"
           />
-        </div>
-        <div className="sg-row">
           <SaveBadge state={saveState} />
+        </div>
+
+        <div className="zx-ed-sub-pills" role="tablist" aria-label="文档工作区切换">
+          {[
+            { key: "内容编辑", label: "正文创作" },
+            { key: "图表管理", label: `图表 (${charts.length})` },
+            { key: "附件管理", label: `附件 (${attachments.length})` },
+            { key: "版本历史", label: "历史版本" },
+          ].map((item) => (
+            <button
+              key={item.key}
+              type="button"
+              role="tab"
+              aria-selected={tab === item.key}
+              className={`zx-ed-sp ${tab === item.key ? "active" : ""}`}
+              onClick={() => setTab(item.key)}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+
+        <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
           {asset ? (
-            <span className="sg-row" title="独立控制文档本身的公有/私有状态">
-              <Switch
-                size="small"
-                checked={asset.visibility === "public"}
-                checkedChildren="公开"
-                unCheckedChildren="私有"
-                loading={toggleVisibility.isPending}
-                onChange={(checked) => toggleVisibility.mutate(checked ? "public" : "private")}
-              />
-            </span>
+            <button
+              type="button"
+              className={`zx-pill ${asset.visibility === "public" ? "emerald" : "neutral"}`}
+              style={{
+                height: 34,
+                padding: "0 12px",
+                border: "1px solid var(--zx-border)",
+                cursor: "pointer",
+              }}
+              title="点击切换文档公开/私有状态"
+              disabled={toggleVisibility.isPending}
+              onClick={() =>
+                toggleVisibility.mutate(asset.visibility === "public" ? "private" : "public")
+              }
+            >
+              {asset.visibility === "public" ? <Globe size={12.5} /> : <Lock size={12.5} />}
+              {asset.visibility === "public" ? "公开" : "私有"}
+            </button>
           ) : null}
-          <Button size="small" onClick={() => navigate(`/documents/${id}/preview`)}>
-            ◎ 预览
-          </Button>
-          <Button size="small" onClick={() => setPublishOpen(true)}>
-            发布 / 分享
-          </Button>
+          <button
+            type="button"
+            className="zx-btn-glass"
+            style={{ height: 34, padding: "0 13px" }}
+            onClick={() => navigate(`/documents/${id}/preview`)}
+          >
+            预览
+          </button>
+          <button
+            type="button"
+            className="zx-btn-cta"
+            style={{ height: 34, padding: "0 15px" }}
+            onClick={() => setPublishOpen(true)}
+          >
+            <Share2 size={13.5} /> 发布 / 分享
+          </button>
           <Dropdown
-            trigger={["hover"]}
-            mouseEnterDelay={0}
-            mouseLeaveDelay={0.15}
+            trigger={["click"]}
             placement="bottomRight"
             menu={{
               items: [
@@ -841,11 +927,65 @@ export function DocumentEditorPage() {
         </div>
       </div>
 
-      <Tabs
-        items={["内容编辑", "图表管理", "附件管理", "版本历史"].map((t) => ({ key: t, label: t }))}
-        activeKey={tab}
-        onChange={setTab}
-      />
+      {tab === "内容编辑" && (
+        <div className="zx-floating-ai-bar">
+          <button type="button" className="zx-ai-chip" onClick={() => openLinkPicker("link")}>
+            <Link2 size={13.5} /> 引用知识库
+          </button>
+          <button type="button" className="zx-ai-chip" onClick={() => openLinkPicker("image")}>
+            <ImagePlus size={13.5} /> 插入图片
+          </button>
+          <button type="button" className="zx-ai-chip" onClick={() => setChartModal(true)}>
+            <BarChart3 size={13.5} /> 插入图表
+          </button>
+          <span className="zx-ai-sep" />
+          {[
+            { key: "rewrite", label: "AI 改写", primary: true },
+            { key: "summarize", label: "精简", primary: false },
+            { key: "expand", label: "扩写", primary: false },
+            { key: "translate", label: "翻译", primary: false },
+            { key: "explain", label: "解释", primary: false },
+          ].map((item) => (
+            <button
+              key={item.key}
+              type="button"
+              className={`zx-ai-chip ${item.primary ? "primary" : ""}`}
+              disabled={aiAction.isPending}
+              onClick={() => aiAction.mutate(item.key)}
+            >
+              {item.primary && <Sparkles size={13} />}
+              {item.label}
+            </button>
+          ))}
+          <span className="zx-ai-sep" />
+          <div className="zx-ed-sub-pills" style={{ padding: 2 }}>
+            <button
+              type="button"
+              className={`zx-ed-sp ${mode === "edit" ? "active" : ""}`}
+              style={{ height: 26, padding: "0 10px" }}
+              onClick={() => setMode("edit")}
+            >
+              编辑
+            </button>
+            <button
+              type="button"
+              className={`zx-ed-sp ${mode === "split" ? "active" : ""}`}
+              style={{ height: 26, padding: "0 10px" }}
+              onClick={() => setMode("split")}
+            >
+              分屏
+            </button>
+            <button
+              type="button"
+              className={`zx-ed-sp ${mode === "preview" ? "active" : ""}`}
+              style={{ height: 26, padding: "0 10px" }}
+              onClick={() => setMode("preview")}
+            >
+              阅读
+            </button>
+          </div>
+        </div>
+      )}
 
       {tab === "图表管理" && (
         <Card className="sg-mb">
@@ -1051,86 +1191,44 @@ export function DocumentEditorPage() {
       )}
 
       {tab === "内容编辑" && (
-        <div className="sg-document-editor-layout">
-          <Scrollbar className="sg-document-editor-outline sg-editor-right">
-            <h4>文档结构</h4>
-            {headings.map((h, i) => (
-              <OutlineItem key={i} paddingLeft={(h.level - 1) * 10}>
-                {h.text}
-              </OutlineItem>
-            ))}
+        <div className={`zx-ed-workspace mode-${mode}`}>
+          <Scrollbar className="zx-outline-rail">
+            <div className="zx-outline-title">大纲目录</div>
+            {headings.length === 0 ? (
+              <div style={{ padding: "8px 12px", fontSize: 12, color: "var(--sg-muted)" }}>
+                使用 # 标题自动生成目录
+              </div>
+            ) : (
+              headings.map((h, i) => (
+                <div
+                  key={i}
+                  className={`zx-toc-item ${i === 0 ? "first" : ""}`}
+                  style={{ paddingLeft: 12 + (h.level - 1) * 12 }}
+                >
+                  {h.text}
+                </div>
+              ))
+            )}
           </Scrollbar>
 
-          <section className="sg-document-editor-main">
-            <div className="sg-editor-toolbar">
-              <Button size="small" type="text" onClick={() => openLinkPicker("link")}>
-                <Link2 size={14} /> 插入引用
-              </Button>
-              <Button size="small" type="text" onClick={() => openLinkPicker("image")}>
-                <ImagePlus size={14} /> 插入图片
-              </Button>
-              <span className={`sg-subtle ${styles.aiLabel}`}>AI 选区处理：</span>
-              {["rewrite", "summarize", "expand", "translate", "explain"].map((action) => (
-                <Button
-                  key={action}
-                  size="small"
-                  type="text"
-                  onClick={() => aiAction.mutate(action)}
-                >
-                  {action === "rewrite"
-                    ? "改写"
-                    : action === "summarize"
-                      ? "精简"
-                      : action === "expand"
-                        ? "扩写"
-                        : action === "translate"
-                          ? "翻译"
-                          : "解释"}
-                </Button>
-              ))}
-              <div className="mode">
-                <button
-                  type="button"
-                  className={mode === "edit" ? "active" : ""}
-                  onClick={() => setMode("edit")}
-                >
-                  编辑
-                </button>
-                <button
-                  type="button"
-                  className={mode === "split" ? "active" : ""}
-                  onClick={() => setMode("split")}
-                >
-                  分屏
-                </button>
-                <button
-                  type="button"
-                  className={mode === "preview" ? "active" : ""}
-                  onClick={() => setMode("preview")}
-                >
-                  预览
-                </button>
-              </div>
-            </div>
-
-            <div className={`sg-document-editor-workspace mode-${mode}`}>
-              <section className="sg-editor-pane sg-editor-source">
-                <div ref={editorRef} className="sg-code-editor-host" />
-              </section>
-              {mode !== "edit" && (
-                <section className="sg-editor-pane sg-editor-rendered">
-                  <Scrollbar className="sg-preview">
-                    <DocumentMarkdown source={content} />
-                  </Scrollbar>
-                </section>
-              )}
-            </div>
-
-            <div className={`sg-row-between ${styles.editorFooter}`}>
+          <section
+            className="zx-md-pane"
+            style={mode === "preview" ? { display: "none" } : undefined}
+          >
+            <div ref={editorRef} className="sg-code-editor-host" />
+            <div className="zx-md-footer tabular">
+              <span>Markdown 源码</span>
               <span>共 {content.length} 字 · 自动保存已开启</span>
-              <span>Markdown · 行 1 列 1</span>
             </div>
           </section>
+
+          {mode !== "edit" && (
+            <section className="zx-paper-sheet">
+              <Scrollbar className="zx-paper-scroll">
+                <DocumentMarkdown source={content} />
+              </Scrollbar>
+            </section>
+          )}
         </div>
       )}
 
@@ -1251,10 +1349,11 @@ export function DocumentEditorPage() {
 }
 
 function SaveBadge({ state }: { state: SaveState }) {
-  const label = state === "saved" ? "已保存" : state === "saving" ? "保存中…" : "保存失败";
-  const { styles } = useSaveBadgeStyles({ state });
+  const label =
+    state === "saved" ? "● 已自动保存" : state === "saving" ? "● 保存中…" : "● 保存失败";
+  const tone = state === "saved" ? "emerald" : state === "saving" ? "neutral" : "rose";
   return (
-    <span className={`sg-subtle ${styles.badge}`} aria-live="polite">
+    <span className={`zx-pill ${tone}`} aria-live="polite">
       {label}
     </span>
   );
