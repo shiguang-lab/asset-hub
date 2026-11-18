@@ -8,6 +8,7 @@ import {
   parseImportedDocumentFile,
   parseImportPathPrefix,
   resolveImportReference,
+  uniqueImportAssetPath,
   withImportPrefix,
 } from "./assets.js";
 
@@ -188,5 +189,27 @@ describe("withImportPrefix", () => {
 
   it("leaves the path alone at the root", () => {
     expect(withImportPrefix("", "guides/setup.md")).toBe("guides/setup.md");
+  });
+});
+
+describe("uniqueImportAssetPath", () => {
+  it("appends suffix to root paths using the renamed title", () => {
+    expect(uniqueImportAssetPath("USAGE", "USAGE (1)", new Set(["USAGE"]))).toBe("USAGE (1)");
+  });
+
+  it("keeps parent folder prefix when deduplicating nested paths", () => {
+    expect(uniqueImportAssetPath("guides/USAGE", "USAGE (1)", new Set(["guides/USAGE"]))).toBe(
+      "guides/USAGE (1)",
+    );
+  });
+
+  it("skips candidate paths already occupied even if titles differed", () => {
+    expect(
+      uniqueImportAssetPath(
+        "guides/USAGE",
+        "USAGE (1)",
+        new Set(["guides/USAGE", "guides/USAGE (1)"]),
+      ),
+    ).toBe("guides/USAGE (2)");
   });
 });

@@ -798,16 +798,21 @@ export function withImportPrefix(pathPrefix: string, path: string): string {
   return pathPrefix ? `${pathPrefix}/${path}` : path;
 }
 
-async function loadExistingDocumentTitles(
-  ctx: AppContext,
-  workspaceId: string,
-): Promise<Map<string, Asset>> {
+async function loadExistingDocumentAssets(ctx: AppContext, workspaceId: string): Promise<Asset[]> {
   const pages = await Promise.all(
     (["document", "html"] as const).map((type) =>
       ctx.store.listAssets(workspaceId, { type, limit: 2000 }),
     ),
   );
-  return new Map(pages.flatMap((page) => page.items).map((asset) => [asset.title, asset]));
+  return pages.flatMap((page) => page.items);
+}
+
+async function loadExistingDocumentTitles(
+  ctx: AppContext,
+  workspaceId: string,
+): Promise<Map<string, Asset>> {
+  const assets = await loadExistingDocumentAssets(ctx, workspaceId);
+  return new Map(assets.map((asset) => [asset.title, asset]));
 }
 
 function uniqueTitle(base: string, used: Set<string>): string {
@@ -815,6 +820,26 @@ function uniqueTitle(base: string, used: Set<string>): string {
   let n = 1;
   while (used.has(`${base} (${n})`)) n += 1;
   return `${base} (${n})`;
+}
+
+/**
+ * 为「重命名」冲突处理生成不与现有资产路径冲突的 `assets.path`，
+ * 避免 `title` 已追加后缀但 `path` 仍沿用原值而触发 `uq_assets_path` 409 冲突。
+ */
+export function uniqueImportAssetPath(
+  basePath: string,
+  preferredTitle: string,
+  usedPaths: Set<string>,
+): string {
+  if (!basePath) return "";
+  const slash = basePath.lastIndexOf("/");
+  const dirPrefix = slash >= 0 ? basePath.slice(0, slash + 1) : "";
+  const preferred = `${dirPrefix}${preferredTitle.normalize("NFC")}`;
+  if (!usedPaths.has(preferred)) return preferred;
+  const stem = basePath.slice(slash + 1);
+  let n = 1;
+  while (usedPaths.has(`${dirPrefix}${stem} (${n})`)) n += 1;
+  return `${dirPrefix}${stem} (${n})`;
 }
 
 async function importDocumentEntries(
@@ -830,8 +855,10 @@ async function importDocumentEntries(
   if (documents.length === 0)
     throw badRequest("NO_MARKDOWN_IN_FOLDER", "文件夹中未找到 Markdown 或 HTML 文档");
 
-  const existingByTitle = await loadExistingDocumentTitles(ctx, actor.workspaceId);
+  const existingAssets = await loadExistingDocumentAssets(ctx, actor.workspaceId);
+  const existingByTitle = new Map(existingAssets.map((asset) => [asset.title, asset]));
   const usedTitles = new Set(existingByTitle.keys());
+  const usedPaths = new Set(existingAssets.map((asset) => asset.path).filter(Boolean));
 
   const items: ImportedDocumentItem[] = [];
   const pathToAsset = new Map<string, Asset>();
@@ -862,11 +889,16 @@ async function importDocumentEntries(
       }
     } else {
       const title = resolution === "rename" ? uniqueTitle(parsed.title, usedTitles) : parsed.title;
+      const baseAssetPath = importPathToAssetPath(withImportPrefix(pathPrefix, path));
+      const assetPath =
+        resolution === "rename"
+          ? uniqueImportAssetPath(baseAssetPath, title, usedPaths)
+          : baseAssetPath;
       asset = await ctx.store.createAsset(actor, {
         type: isHtml ? "html" : "document",
         title,
         // 导入路径同时写入正式 path 字段，使导入的目录结构对 Web 与插件都可见。
-        path: importPathToAssetPath(withImportPrefix(pathPrefix, path)),
+        path: assetPath,
         sourceType: "upload",
         metadata: { importPath: path },
         content: {
@@ -878,6 +910,7 @@ async function importDocumentEntries(
       });
     }
     usedTitles.add(asset.title);
+    if (asset.path) usedPaths.add(asset.path);
     if (!isHtml) {
       markdownByPath.set(path, parsed.markdown);
     }
