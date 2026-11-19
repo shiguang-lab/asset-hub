@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { API_BASE, type Asset } from "../entities/api.js";
 
 export type StudioBadgeKind = "research" | "write" | "slides" | "kb";
@@ -530,72 +530,322 @@ function AssetLoadingCover({ label }: { label?: string }) {
 }
 
 function AssetEmptyCover({ assetType }: { assetType?: string }) {
-  const subtitle =
-    assetType === "html"
-      ? "暂无 HTML 源码 · 点击编写页面"
-      : assetType === "presentation"
-        ? "暂无演示内容 · 等待或点击编辑"
-        : "暂无正文内容 · 点击进入编写";
-  return (
-    <div
-      style={{
-        width: "100%",
-        height: "100%",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: 12,
-        boxSizing: "border-box",
-        background:
-          "radial-gradient(circle at 20% 15%, rgba(168, 85, 247, 0.08), transparent 55%), rgba(12, 16, 32, 0.92)",
-      }}
-    >
-      <div
-        style={{
-          width: "100%",
-          height: "100%",
-          borderRadius: 10,
-          border: "1px dashed rgba(255, 255, 255, 0.16)",
-          background: "rgba(255, 255, 255, 0.02)",
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          justifyContent: "center",
-          gap: 5,
-          textAlign: "center",
-        }}
+  const uid = useId().replace(/[^a-zA-Z0-9_-]/g, "");
+  const dotId = `zx-ec-dots-${uid}`;
+  const glowId = `zx-ec-glow-${uid}`;
+  const sheetId = `zx-ec-sheet-${uid}`;
+  const accentId = `zx-ec-accent-${uid}`;
+
+  if (assetType === "html") {
+    return (
+      <svg
+        width="100%"
+        height="100%"
+        viewBox="0 0 260 132"
+        fill="none"
+        preserveAspectRatio="xMidYMid slice"
+        aria-hidden="true"
       >
-        <svg width="26" height="26" viewBox="0 0 26 26" fill="none" aria-hidden="true">
-          <rect
-            x="4.25"
-            y="3.25"
-            width="17.5"
-            height="19.5"
-            rx="3.2"
-            stroke="rgba(148, 163, 184, 0.55)"
-            strokeWidth="1.4"
-            strokeDasharray="3 2.2"
-          />
-          <path
-            d="M8.5 10.5H17.5M8.5 14.5H14"
-            stroke="rgba(148, 163, 184, 0.42)"
-            strokeWidth="1.4"
-            strokeLinecap="round"
-          />
-        </svg>
-        <span
-          style={{
-            fontSize: 11.5,
-            fontWeight: 600,
-            color: "rgba(226, 232, 240, 0.72)",
-            letterSpacing: "0.01em",
-          }}
+        <defs>
+          <pattern id={dotId} width="12" height="12" patternUnits="userSpaceOnUse">
+            <circle cx="1.5" cy="1.5" r="0.7" fill="rgba(148, 163, 184, 0.16)" />
+          </pattern>
+          <radialGradient id={glowId} cx="75%" cy="18%" r="65%">
+            <stop offset="0%" stopColor="#38BDF8" stopOpacity="0.22" />
+            <stop offset="55%" stopColor="#6366F1" stopOpacity="0.08" />
+            <stop offset="100%" stopColor="#090D1C" stopOpacity="0" />
+          </radialGradient>
+          <linearGradient
+            id={sheetId}
+            x1="36"
+            y1="22"
+            x2="224"
+            y2="110"
+            gradientUnits="userSpaceOnUse"
+          >
+            <stop offset="0%" stopColor="rgba(22, 29, 52, 0.92)" />
+            <stop offset="100%" stopColor="rgba(12, 16, 32, 0.96)" />
+          </linearGradient>
+          <linearGradient id={accentId} x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0%" stopColor="#38BDF8" />
+            <stop offset="100%" stopColor="#818CF8" />
+          </linearGradient>
+        </defs>
+        <rect width="260" height="132" fill="#0A0E1D" />
+        <rect width="260" height="132" fill={`url(#${dotId})`} />
+        <rect width="260" height="132" fill={`url(#${glowId})`} />
+
+        {/* Empty interactive canvas frame */}
+        <rect
+          x="36"
+          y="22"
+          width="188"
+          height="88"
+          rx="10"
+          fill={`url(#${sheetId})`}
+          stroke="rgba(56, 189, 248, 0.24)"
+          strokeWidth="1"
+        />
+        <path d="M37 38H223" stroke="rgba(255, 255, 255, 0.06)" strokeWidth="1" />
+        <circle cx="48" cy="30" r="2" fill="rgba(251, 113, 133, 0.45)" />
+        <circle cx="56" cy="30" r="2" fill="rgba(251, 191, 36, 0.42)" />
+        <circle cx="64" cy="30" r="2" fill="rgba(52, 211, 153, 0.42)" />
+        <rect x="86" y="27.5" width="76" height="5" rx="2.5" fill="rgba(255, 255, 255, 0.05)" />
+
+        {/* Empty blueprint layout guides inside canvas */}
+        <rect
+          x="48"
+          y="48"
+          width="74"
+          height="50"
+          rx="6"
+          fill="rgba(56, 189, 248, 0.03)"
+          stroke="rgba(56, 189, 248, 0.22)"
+          strokeWidth="1"
+          strokeDasharray="3.5 2.5"
+        />
+        <rect
+          x="130"
+          y="48"
+          width="82"
+          height="22"
+          rx="5.5"
+          fill="rgba(129, 140, 248, 0.03)"
+          stroke="rgba(148, 163, 184, 0.16)"
+          strokeWidth="1"
+          strokeDasharray="3.5 2.5"
+        />
+        <rect
+          x="130"
+          y="76"
+          width="82"
+          height="22"
+          rx="5.5"
+          fill="rgba(255, 255, 255, 0.015)"
+          stroke="rgba(148, 163, 184, 0.13)"
+          strokeWidth="1"
+          strokeDasharray="3.5 2.5"
+        />
+        <rect
+          x="57"
+          y="57"
+          width="16"
+          height="3"
+          rx="1.5"
+          fill={`url(#${accentId})`}
+          opacity="0.7"
+        />
+        <rect x="76" y="57" width="2" height="8" rx="1" fill="#38BDF8" opacity="0.85" />
+      </svg>
+    );
+  }
+
+  if (assetType === "presentation") {
+    return (
+      <svg
+        width="100%"
+        height="100%"
+        viewBox="0 0 260 132"
+        fill="none"
+        preserveAspectRatio="xMidYMid slice"
+        aria-hidden="true"
+      >
+        <defs>
+          <pattern id={dotId} width="12" height="12" patternUnits="userSpaceOnUse">
+            <circle cx="1.5" cy="1.5" r="0.7" fill="rgba(192, 132, 252, 0.16)" />
+          </pattern>
+          <radialGradient id={glowId} cx="50%" cy="22%" r="68%">
+            <stop offset="0%" stopColor="#A855F7" stopOpacity="0.24" />
+            <stop offset="55%" stopColor="#FB7185" stopOpacity="0.09" />
+            <stop offset="100%" stopColor="#090D1C" stopOpacity="0" />
+          </radialGradient>
+          <linearGradient
+            id={sheetId}
+            x1="40"
+            y1="22"
+            x2="220"
+            y2="108"
+            gradientUnits="userSpaceOnUse"
+          >
+            <stop offset="0%" stopColor="rgba(28, 24, 52, 0.94)" />
+            <stop offset="100%" stopColor="rgba(13, 15, 31, 0.96)" />
+          </linearGradient>
+          <linearGradient id={accentId} x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stopColor="#FB7185" />
+            <stop offset="100%" stopColor="#C084FC" />
+          </linearGradient>
+        </defs>
+        <rect width="260" height="132" fill="#0B0D1C" />
+        <rect width="260" height="132" fill={`url(#${dotId})`} />
+        <rect width="260" height="132" fill={`url(#${glowId})`} />
+
+        {/* Back ghost slide */}
+        <rect
+          x="48"
+          y="18"
+          width="164"
+          height="84"
+          rx="9"
+          fill="rgba(168, 85, 247, 0.05)"
+          stroke="rgba(192, 132, 252, 0.14)"
+          strokeWidth="1"
+        />
+        {/* Primary empty 16:9 slide stage */}
+        <rect
+          x="38"
+          y="25"
+          width="184"
+          height="84"
+          rx="10"
+          fill={`url(#${sheetId})`}
+          stroke="rgba(192, 132, 252, 0.28)"
+          strokeWidth="1"
+        />
+        {/* Composition rule guides */}
+        <path
+          d="M130 33V101M48 67H212"
+          stroke="rgba(255, 255, 255, 0.045)"
+          strokeWidth="1"
+          strokeDasharray="3 3"
+        />
+        <rect
+          x="52"
+          y="39"
+          width="58"
+          height="14"
+          rx="4"
+          fill="rgba(192, 132, 252, 0.06)"
+          stroke="rgba(192, 132, 252, 0.24)"
+          strokeWidth="1"
+          strokeDasharray="3.5 2.5"
+        />
+        <rect
+          x="57"
+          y="44.5"
+          width="24"
+          height="3"
+          rx="1.5"
+          fill={`url(#${accentId})`}
+          opacity="0.78"
+        />
+        <rect
+          x="52"
+          y="60"
+          width="58"
+          height="32"
+          rx="6"
+          fill="rgba(255, 255, 255, 0.018)"
+          stroke="rgba(148, 163, 184, 0.14)"
+          strokeWidth="1"
+          strokeDasharray="3.5 2.5"
+        />
+        <rect
+          x="118"
+          y="39"
+          width="90"
+          height="53"
+          rx="7"
+          fill="rgba(168, 85, 247, 0.035)"
+          stroke="rgba(192, 132, 252, 0.18)"
+          strokeWidth="1"
+          strokeDasharray="3.5 2.5"
+        />
+        <circle cx="122" cy="116" r="2" fill="#C084FC" opacity="0.75" />
+        <circle cx="130" cy="116" r="2" fill="rgba(255, 255, 255, 0.16)" />
+        <circle cx="138" cy="116" r="2" fill="rgba(255, 255, 255, 0.16)" />
+      </svg>
+    );
+  }
+
+  // Default: Blank editorial document paper ready to write
+  return (
+    <svg
+      width="100%"
+      height="100%"
+      viewBox="0 0 260 132"
+      fill="none"
+      preserveAspectRatio="xMidYMid slice"
+      aria-hidden="true"
+    >
+      <defs>
+        <pattern id={dotId} width="12" height="12" patternUnits="userSpaceOnUse">
+          <circle cx="1.5" cy="1.5" r="0.7" fill="rgba(148, 163, 184, 0.15)" />
+        </pattern>
+        <radialGradient id={glowId} cx="28%" cy="20%" r="68%">
+          <stop offset="0%" stopColor="#A855F7" stopOpacity="0.2" />
+          <stop offset="55%" stopColor="#38BDF8" stopOpacity="0.08" />
+          <stop offset="100%" stopColor="#090D1C" stopOpacity="0" />
+        </radialGradient>
+        <linearGradient
+          id={sheetId}
+          x1="48"
+          y1="20"
+          x2="212"
+          y2="114"
+          gradientUnits="userSpaceOnUse"
         >
-          暂无内容
-        </span>
-        <span style={{ fontSize: 10, color: "rgba(148, 163, 184, 0.62)" }}>{subtitle}</span>
-      </div>
-    </div>
+          <stop offset="0%" stopColor="rgba(25, 30, 54, 0.94)" />
+          <stop offset="100%" stopColor="rgba(12, 16, 32, 0.97)" />
+        </linearGradient>
+        <linearGradient id={accentId} x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0%" stopColor="#FB7185" />
+          <stop offset="55%" stopColor="#C084FC" />
+          <stop offset="100%" stopColor="#38BDF8" />
+        </linearGradient>
+      </defs>
+      <rect width="260" height="132" fill="#0B0E1D" />
+      <rect width="260" height="132" fill={`url(#${dotId})`} />
+      <rect width="260" height="132" fill={`url(#${glowId})`} />
+
+      {/* Subtle stacked back page */}
+      <rect
+        x="56"
+        y="17"
+        width="160"
+        height="92"
+        rx="10"
+        fill="rgba(255, 255, 255, 0.025)"
+        stroke="rgba(255, 255, 255, 0.07)"
+        strokeWidth="1"
+      />
+      {/* Primary blank manuscript page */}
+      <rect
+        x="44"
+        y="23"
+        width="164"
+        height="92"
+        rx="10"
+        fill={`url(#${sheetId})`}
+        stroke="rgba(192, 132, 252, 0.26)"
+        strokeWidth="1"
+      />
+      <path
+        d="M54 23.5H198"
+        stroke="rgba(255, 255, 255, 0.22)"
+        strokeWidth="1"
+        strokeLinecap="round"
+      />
+
+      {/* Quiet drafting guides + active title cursor line */}
+      <rect
+        x="62"
+        y="40"
+        width="38"
+        height="4.5"
+        rx="2.25"
+        fill={`url(#${accentId})`}
+        opacity="0.82"
+      />
+      <rect x="105" y="37" width="2" height="10.5" rx="1" fill="#C084FC" opacity="0.9" />
+
+      <path
+        d="M62 60H188M62 73H172M62 86H146"
+        stroke="rgba(148, 163, 184, 0.16)"
+        strokeWidth="1.2"
+        strokeLinecap="round"
+        strokeDasharray="4 4"
+      />
+    </svg>
   );
 }
 
