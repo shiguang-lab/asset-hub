@@ -207,10 +207,17 @@ export function HtmlEditorPage() {
       return;
     }
     setTitle(asset.title);
-    setSource(asset.content?.text ?? DEFAULT_HTML);
+    setSource(asset.content?.text ?? "");
     setContentReady(true);
     setSourceLoadKey((current) => current + 1);
   }, [id, asset?.currentVersionId]);
+
+  const applyStarterTemplate = () => {
+    setSource(DEFAULT_HTML);
+    setSourceLoadKey((current) => current + 1);
+    setSaveState("saving");
+    void persistSource(DEFAULT_HTML).then(() => toast("success", "已填充示例模板并保存"));
+  };
 
   useEffect(() => {
     return () => {
@@ -431,17 +438,48 @@ export function HtmlEditorPage() {
 
         {mode !== "edit" && (
           <section className="zx-paper-sheet">
-            <SandboxHtmlPreview
-              source={source}
-              minHeight={0}
-              style={{
-                width: "100%",
-                height: "100%",
-                flex: 1,
-                border: 0,
-                borderRadius: 20,
-              }}
-            />
+            {source.trim().length > 0 ? (
+              <SandboxHtmlPreview
+                source={source}
+                minHeight={0}
+                style={{
+                  width: "100%",
+                  height: "100%",
+                  flex: 1,
+                  border: 0,
+                  borderRadius: 20,
+                }}
+              />
+            ) : (
+              <div
+                style={{
+                  flex: 1,
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: 12,
+                  padding: 32,
+                  textAlign: "center",
+                  color: "var(--sg-muted)",
+                }}
+              >
+                <div style={{ fontSize: 15, fontWeight: 650, color: "var(--sg-fg)" }}>
+                  暂无 HTML 内容
+                </div>
+                <div style={{ fontSize: 12.5, maxWidth: 340, lineHeight: 1.6 }}>
+                  当前文档正文为空。你可以直接在左侧编写 HTML，或一键插入默认模板并保存。
+                </div>
+                <button
+                  type="button"
+                  className="zx-btn-glass"
+                  style={{ height: 34, padding: "0 14px" }}
+                  onClick={applyStarterTemplate}
+                >
+                  填充 Starter 示例模板
+                </button>
+              </div>
+            )}
           </section>
         )}
       </div>

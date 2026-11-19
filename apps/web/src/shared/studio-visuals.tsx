@@ -422,6 +422,7 @@ export function resolvePreviewKind(asset: Pick<Asset, "type" | "title" | "path">
 }
 
 const IMAGE_FILE_RE = /\.(?:png|jpe?g|webp|gif|svg|avif)$/i;
+const COVERABLE_ASSET_TYPES = new Set(["document", "report", "html", "presentation"]);
 
 function resolveThumbnailUrl(
   asset?: Pick<Asset, "type" | "title" | "path"> & {
@@ -446,6 +447,7 @@ export function AssetMiniPreview({
   asset?: Pick<Asset, "type" | "title" | "path"> & {
     id?: string;
     thumbnailRef?: string | null;
+    hasContent?: boolean;
   };
   kind?: MiniPreviewKind;
 }) {
@@ -462,12 +464,18 @@ export function AssetMiniPreview({
   const isLoaded = Boolean(thumbnailUrl && loadedUrl === thumbnailUrl);
 
   if (!showImage) {
+    if (asset?.hasContent === false) {
+      return <AssetEmptyCover assetType={asset.type} />;
+    }
+    if (!thumbnailUrl && asset?.hasContent === true && COVERABLE_ASSET_TYPES.has(asset.type)) {
+      return <AssetLoadingCover label="正在生成封面…" />;
+    }
     return <AssetMiniPlaceholder resolved={resolved} />;
   }
 
   return (
     <div style={{ position: "relative", width: "100%", height: "100%", overflow: "hidden" }}>
-      <AssetMiniPlaceholder resolved={resolved} />
+      {!isLoaded ? <AssetLoadingCover /> : null}
       <img
         src={thumbnailUrl ?? undefined}
         alt={asset?.title ? `${asset.title} 封面预览` : "文档封面预览"}
@@ -483,11 +491,110 @@ export function AssetMiniPreview({
           objectFit: "cover",
           objectPosition: "top center",
           opacity: isLoaded ? 1 : 0,
-          transition: "opacity 220ms ease",
+          transition: "opacity 180ms ease",
           display: "block",
           background: "#0B0E1A",
         }}
       />
+    </div>
+  );
+}
+
+function AssetLoadingCover({ label }: { label?: string }) {
+  return (
+    <div
+      className="zx-cover-skeleton"
+      aria-hidden="true"
+      style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+      }}
+    >
+      {label ? (
+        <span
+          style={{
+            position: "relative",
+            zIndex: 1,
+            fontSize: 11,
+            fontWeight: 550,
+            color: "rgba(226, 232, 240, 0.56)",
+            letterSpacing: "0.02em",
+          }}
+        >
+          {label}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+function AssetEmptyCover({ assetType }: { assetType?: string }) {
+  const subtitle =
+    assetType === "html"
+      ? "暂无 HTML 源码 · 点击编写页面"
+      : assetType === "presentation"
+        ? "暂无演示内容 · 等待或点击编辑"
+        : "暂无正文内容 · 点击进入编写";
+  return (
+    <div
+      style={{
+        width: "100%",
+        height: "100%",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 12,
+        boxSizing: "border-box",
+        background:
+          "radial-gradient(circle at 20% 15%, rgba(168, 85, 247, 0.08), transparent 55%), rgba(12, 16, 32, 0.92)",
+      }}
+    >
+      <div
+        style={{
+          width: "100%",
+          height: "100%",
+          borderRadius: 10,
+          border: "1px dashed rgba(255, 255, 255, 0.16)",
+          background: "rgba(255, 255, 255, 0.02)",
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: 5,
+          textAlign: "center",
+        }}
+      >
+        <svg width="26" height="26" viewBox="0 0 26 26" fill="none" aria-hidden="true">
+          <rect
+            x="4.25"
+            y="3.25"
+            width="17.5"
+            height="19.5"
+            rx="3.2"
+            stroke="rgba(148, 163, 184, 0.55)"
+            strokeWidth="1.4"
+            strokeDasharray="3 2.2"
+          />
+          <path
+            d="M8.5 10.5H17.5M8.5 14.5H14"
+            stroke="rgba(148, 163, 184, 0.42)"
+            strokeWidth="1.4"
+            strokeLinecap="round"
+          />
+        </svg>
+        <span
+          style={{
+            fontSize: 11.5,
+            fontWeight: 600,
+            color: "rgba(226, 232, 240, 0.72)",
+            letterSpacing: "0.01em",
+          }}
+        >
+          暂无内容
+        </span>
+        <span style={{ fontSize: 10, color: "rgba(148, 163, 184, 0.62)" }}>{subtitle}</span>
+      </div>
     </div>
   );
 }

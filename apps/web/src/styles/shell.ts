@@ -1127,6 +1127,35 @@ select {
   padding: 24px;
 }
 
+@keyframes zx-cover-shimmer {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}
+.zx-cover-skeleton {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: linear-gradient(145deg, rgba(20, 25, 44, 0.92), rgba(12, 16, 32, 0.96));
+}
+.zx-cover-skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    105deg,
+    transparent 20%,
+    rgba(255, 255, 255, 0.055) 48%,
+    rgba(192, 132, 252, 0.07) 54%,
+    transparent 80%
+  );
+  animation: zx-cover-shimmer 1.6s ease-in-out infinite;
+}
+
 @media (max-width: 1180px) {
   .zx-ed-workspace {
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);

@@ -14,8 +14,9 @@ const EVENTS: Record<string, Array<string[]>> = {
 function patchAssetThumbnail(item: unknown, assetId: string, thumbnailRef: string): unknown {
   if (!item || typeof item !== "object") return item;
   const candidate = item as Asset;
-  if (candidate.id !== assetId || candidate.thumbnailRef === thumbnailRef) return item;
-  return { ...candidate, thumbnailRef };
+  if (candidate.id !== assetId) return item;
+  if (candidate.thumbnailRef === thumbnailRef && candidate.hasContent === true) return item;
+  return { ...candidate, thumbnailRef, hasContent: true };
 }
 
 function patchAssetList(list: unknown, assetId: string, thumbnailRef: string): unknown {

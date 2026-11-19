@@ -114,11 +114,17 @@ const ASSET_THUMBNAIL_SELECT = `(
   WHERE av.asset_id = a.id AND ab.role = 'thumbnail'
   ORDER BY av.sequence DESC
   LIMIT 1
-) AS thumbnail_ref`;
+) AS thumbnail_ref,
+EXISTS (
+  SELECT 1
+  FROM asset_blobs ab_c
+  WHERE ab_c.version_id = a.current_version_id AND ab_c.role = 'content' AND ab_c.size > 0
+) AS has_content`;
 
 function mapAsset(r: Row): Asset {
   const ownerDisplayName = str(r.owner_display_name).trim();
   const thumbnailRef = str(r.thumbnail_ref).trim();
+  const hasContent = r.has_content === undefined ? undefined : bool(r.has_content);
   return {
     id: str(r.id),
     workspaceId: str(r.workspace_id),
@@ -136,6 +142,7 @@ function mapAsset(r: Row): Asset {
     deletedAt: r.deleted_at === null ? null : str(r.deleted_at),
     publishedUrl: r.published_url === null ? null : str(r.published_url),
     thumbnailRef: thumbnailRef || null,
+    ...(hasContent !== undefined ? { hasContent } : {}),
     createdAt: str(r.created_at),
     updatedAt: str(r.updated_at),
   };
@@ -791,6 +798,10 @@ export class Store {
          WHERE a.deleted_at IS NULL
            AND a.current_version_id IS NOT NULL
            AND a.type IN ('document', 'report', 'html', 'presentation')
+           AND EXISTS (
+             SELECT 1 FROM asset_blobs ab_c
+             WHERE ab_c.version_id = a.current_version_id AND ab_c.role = 'content' AND ab_c.size > 0
+           )
            AND NOT EXISTS (
              SELECT 1 FROM asset_blobs ab
              WHERE ab.version_id = a.current_version_id AND ab.role = 'thumbnail'

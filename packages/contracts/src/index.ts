@@ -142,6 +142,7 @@ export const assetSchema = z.object({
   deletedAt: z.string().nullable().default(null),
   publishedUrl: z.string().nullable().default(null),
   thumbnailRef: z.string().nullable().optional(),
+  hasContent: z.boolean().optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
 });

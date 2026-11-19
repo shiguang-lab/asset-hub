@@ -152,6 +152,7 @@ export interface Asset {
   deletedAt: string | null;
   publishedUrl: string | null;
   thumbnailRef?: string | null;
+  hasContent?: boolean;
   createdAt: string;
   updatedAt: string;
   content?: {
