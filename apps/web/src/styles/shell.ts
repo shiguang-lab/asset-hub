@@ -635,13 +635,21 @@ select {
   max-width: none;
   width: 100%;
   margin: 0;
-  min-height: 0;
+  min-height: 100%;
   height: auto;
+  display: flex;
+  flex-direction: column;
   box-sizing: border-box;
   padding: var(--sg-page-gutter);
 }
 .sg-content.zx-studio-route {
   padding: 0;
+}
+.sg-page-fill {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .sg-h1 {

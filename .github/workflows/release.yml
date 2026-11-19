@@ -46,7 +46,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [web, api, worker, compute-worker, public-gateway, ssr]
+        target: [web, api, worker, render-worker, compute-worker, public-gateway, ssr]
     uses: ./.github/workflows/docker-publish.yml
     with:
       target: ${{ matrix.target }}

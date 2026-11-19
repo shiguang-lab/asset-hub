@@ -1,4 +1,4 @@
-import { Empty, Scrollbar, StatusBadge, useToast } from "@shiguang/ui";
+import { Empty, Loading, Scrollbar, StatusBadge, useToast } from "@shiguang/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button, Card, Input, Select, Tabs } from "antd";
 import { createStyles } from "antd-style";
@@ -49,7 +49,10 @@ export function DatasetsPage() {
   const navigate = useNavigate();
   const toast = useToast();
   const queryClient = useQueryClient();
-  const { data } = useQuery<Dataset[]>({ queryKey: ["datasets"], queryFn: () => api("/datasets") });
+  const { data, isLoading } = useQuery<Dataset[]>({
+    queryKey: ["datasets"],
+    queryFn: () => api("/datasets"),
+  });
   const importMutation = useMutation({
     mutationFn: (file: File) =>
       uploadFile<{ dataset: Dataset; task: unknown }>("/datasets/import", file),
@@ -61,7 +64,7 @@ export function DatasetsPage() {
     onError: (e: Error) => toast("error", e.message),
   });
   return (
-    <div>
+    <div className="sg-page-fill">
       <div className="sg-row-between sg-mb">
         <h1 className="sg-h1">数据集</h1>
         <label className={`sg-btn sg-btn-primary ${styles.uploadLabel}`}>
@@ -74,7 +77,9 @@ export function DatasetsPage() {
           />
         </label>
       </div>
-      {(data?.length ?? 0) === 0 ? (
+      {isLoading ? (
+        <Loading loading />
+      ) : (data?.length ?? 0) === 0 ? (
         <Empty title="还没有数据集" hint="上传 CSV/JSON 后，可筛选、统计并生成 AI 洞察。" />
       ) : (
         <div className={`sg-grid ${styles.datasetGrid}`}>
@@ -223,7 +228,7 @@ export function DatasetDetailPage() {
     };
   }, [tab, dataset?.charts, queryResult.data]);
 
-  if (!dataset) return <Empty title="加载中…" />;
+  if (!dataset) return <Loading loading />;
   if (!version) {
     return (
       <div>

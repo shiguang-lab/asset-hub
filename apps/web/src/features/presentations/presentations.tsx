@@ -2622,7 +2622,7 @@ export function PresentationEditorPage() {
     toast("success", "AI 修改已应用");
   };
 
-  if (!data) return <Empty title="加载中…" />;
+  if (!data) return <Loading loading />;
 
   return (
     <div className={"sg-page"}>
@@ -3062,7 +3062,7 @@ export function PresentationPlayback({
 
   useEffect(() => setFrameReady(false), [playbackSource]);
 
-  if (!html) return <Empty title="加载中…" />;
+  if (!html) return <Loading loading label="正在加载演示内容" />;
 
   const progress = totalPages > 0 ? ((pageNo.index + 1) / totalPages) * 100 : 0;
 
@@ -3070,7 +3070,11 @@ export function PresentationPlayback({
   return (
     <div className={styles.root}>
       <main className={styles.frameArea}>
-        {!frameReady && <div className={styles.frameLoading}>正在准备演示画面…</div>}
+        {!frameReady && (
+          <div className={styles.frameLoading}>
+            <Loading loading size="sm" minHeight="100%" label="正在准备演示画面" />
+          </div>
+        )}
         <iframe
           ref={frameRef}
           className={`sg-player-frame ${styles.frame}`}

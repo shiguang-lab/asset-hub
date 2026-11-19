@@ -1,4 +1,4 @@
-import { Empty, Scrollbar, StatusBadge } from "@shiguang/ui";
+import { Empty, Loading, Scrollbar, StatusBadge } from "@shiguang/ui";
 import { useQuery } from "@tanstack/react-query";
 import { Button, Tag } from "antd";
 import { createStyles } from "antd-style";
@@ -35,7 +35,7 @@ export function DocumentPreviewPage() {
 
   useShellBreadcrumb("文档", asset?.title ?? "文档预览");
 
-  if (isLoading || !asset) return <Empty title="加载中…" />;
+  if (isLoading || !asset) return <Loading loading />;
 
   const source = asset.content?.text ?? "";
 

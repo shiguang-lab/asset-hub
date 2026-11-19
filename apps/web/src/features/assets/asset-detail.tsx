@@ -1,4 +1,4 @@
-import { Empty, Field, formatDate, Scrollbar, StatusBadge, useToast } from "@shiguang/ui";
+import { Empty, Field, formatDate, Loading, Scrollbar, StatusBadge, useToast } from "@shiguang/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button, Card, Input, Modal, Select, Switch, Tabs, Tag } from "antd";
 import { createStyles } from "antd-style";
@@ -162,7 +162,7 @@ export function AssetDetailPage() {
     },
   });
 
-  if (!asset) return <Empty title="加载中…" />;
+  if (!asset) return <Loading loading />;
   const canManageAsset = workspaceAdmin || asset.ownerSubject === session?.id;
   const published = publishes?.find((p) => p.assetId === asset.id && p.status === "active");
   const content = asset.content;

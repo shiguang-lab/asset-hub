@@ -167,6 +167,8 @@ importers:
 
   apps/public-gateway: {}
 
+  apps/render-worker: {}
+
   apps/ssr:
     dependencies:
       '@ant-design/nextjs-registry':
@@ -375,9 +377,6 @@ importers:
       '@shiguang/observability':
         specifier: workspace:*
         version: link:../../packages/observability
-      playwright-core:
-        specifier: 1.51.1
-        version: 1.51.1
       zod:
         specifier: 'catalog:'
         version: 4.4.3
@@ -3919,11 +3918,6 @@ packages:
   pkce-challenge@5.0.1:
     resolution: {integrity: sha512-wQ0b/W4Fr01qtpHlqSqspcj3EhBvimsdh0KlHhH8HRZnMsEa0ea2fTULOXOS9ccQr3om+GcGRk4e+isrZWV8qQ==}
     engines: {node: '>=16.20.0'}
-
-  playwright-core@1.51.1:
-    resolution: {integrity: sha512-/crRMj8+j/Nq5s8QcvegseuyeZPxpQCZb6HNk3Sos3BlZyAknRjoyJPFWkpNn8v0+P3WiwqFF8P+zQo4eqiNuw==}
-    engines: {node: '>=18'}
-    hasBin: true
 
   pngjs@5.0.0:
     resolution: {integrity: sha512-40QW5YalBNfQo5yRYmiw7Yz6TKKVr3h6970B2YE+3fQpsWcrbj1PzJgxeJ19DRQjhMbKPIuMY8rFaXc8moolVw==}
@@ -8603,8 +8597,6 @@ snapshots:
       thread-stream: 4.2.0
 
   pkce-challenge@5.0.1: {}
-
-  playwright-core@1.51.1: {}
 
   pngjs@5.0.0: {}
 

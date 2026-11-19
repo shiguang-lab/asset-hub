@@ -82,22 +82,40 @@ export function Scrollbar({
 
 const BRAND_LOADING_STYLES = `
 .sg-brand-loading {
-  --sg-loader-size: 52px;
+  --sg-loader-size: 54px;
+  --sg-loader-gap: 12px;
+  --sg-loader-font: 13px;
   display: flex;
-  min-height: 160px;
+  flex: 1 1 auto;
+  min-height: 220px;
   width: 100%;
   box-sizing: border-box;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 9px;
-  color: #4e6df5;
+  gap: var(--sg-loader-gap);
+  padding: 24px 16px;
+  color: var(--sg-fg-2, #b5bed2);
   opacity: 0;
-  animation: sg-loader-appear .18s ease-out .18s forwards;
+  animation: sg-loader-appear .16s ease-out forwards;
+}
+.sg-brand-loading--sm {
+  --sg-loader-size: 38px;
+  --sg-loader-gap: 8px;
+  --sg-loader-font: 12px;
+}
+.sg-brand-loading--lg {
+  --sg-loader-size: 68px;
+  --sg-loader-gap: 14px;
+  --sg-loader-font: 14px;
 }
 .sg-brand-loading__stage {
+  position: relative;
   width: var(--sg-loader-size);
-  height: calc(var(--sg-loader-size) * 1431 / 1600);
+  height: var(--sg-loader-size);
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 .sg-brand-loading__svg {
   display: block;
@@ -105,142 +123,265 @@ const BRAND_LOADING_STYLES = `
   height: 100%;
   overflow: visible;
 }
-.sg-brand-loading__reveal {
-  fill: none;
-  stroke: #fff;
+.sg-brand-loading__halo {
+  transform-origin: 32px 32px;
+  animation: sg-loader-halo 2.2s ease-in-out infinite;
+}
+.sg-brand-loading__gem {
+  transform-origin: 32px 32px;
+  animation: sg-loader-float 2.2s ease-in-out infinite;
+  filter: drop-shadow(0 8px 18px rgba(168, 85, 247, 0.34));
+}
+.sg-brand-loading__tile {
+  fill: #ffffff;
+  fill-opacity: 0;
+  stroke: #ffffff;
+  stroke-width: 2.2;
   stroke-linecap: round;
   stroke-linejoin: round;
-  stroke-dasharray: 1;
-  stroke-dashoffset: 1;
+  transform-origin: 0 0;
+  animation: sg-loader-tile 2.0s cubic-bezier(.45, 0, .25, 1) infinite;
 }
-.sg-brand-loading__reveal--ring {
-  stroke-width: 132;
-  animation: sg-loader-draw-ring 2.6s cubic-bezier(.65, 0, .35, 1) infinite;
+.sg-brand-loading__tile--1 { animation-delay: 0s; }
+.sg-brand-loading__tile--2 { animation-delay: .18s; }
+.sg-brand-loading__tile--3 { animation-delay: .36s; }
+.sg-brand-loading__spark {
+  fill: none;
+  stroke: #ffffff;
+  stroke-width: 2.25;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transform-origin: 0 0;
+  animation: sg-loader-spark 2.0s cubic-bezier(.55, 0, .2, 1) infinite;
 }
-.sg-brand-loading__reveal--mark {
-  stroke-width: 144;
-  animation: sg-loader-draw-mark 2.6s cubic-bezier(.65, 0, .35, 1) infinite;
-}
-.sg-brand-loading__detail {
-  fill: #fff;
-  opacity: 0;
-  animation: sg-loader-reveal-details 2.6s ease-in-out infinite;
-}
-.sg-brand-loading__art { filter: drop-shadow(0 5px 9px rgba(63, 97, 238, .2)); }
-.sg-brand-loading__art--base { opacity: .14; filter: none; }
 .sg-brand-loading__label {
   display: inline-flex;
-  min-height: 22px;
+  min-height: 20px;
   align-items: center;
-  gap: 4px;
-  font-size: 13px;
-  font-weight: 600;
-  line-height: 1.5;
+  gap: 5px;
+  font-size: var(--sg-loader-font);
+  font-weight: 560;
+  letter-spacing: 0.02em;
+  line-height: 1.4;
   white-space: nowrap;
-  text-shadow: 0 0 14px rgba(78, 109, 245, .15);
+  color: var(--sg-fg-2, #b5bed2);
 }
-.sg-brand-loading__dots { display: inline-flex; gap: 3px; transform: translateY(3px); }
+.sg-brand-loading__dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 3.5px;
+  transform: translateY(1px);
+}
 .sg-brand-loading__dots span {
   width: 4px;
   height: 4px;
   border-radius: 999px;
-  background: currentColor;
-  animation: sg-loader-dot 1.1s ease-in-out infinite;
+  animation: sg-loader-dot 1.2s ease-in-out infinite;
 }
-.sg-brand-loading__dots span:nth-child(2) { animation-delay: .16s; }
-.sg-brand-loading__dots span:nth-child(3) { animation-delay: .32s; }
-@keyframes sg-loader-appear { to { opacity: 1; } }
-@keyframes sg-loader-draw-ring {
-  0%, 5% { stroke-dashoffset: 1; }
-  48%, 78% { stroke-dashoffset: 0; }
-  100% { stroke-dashoffset: -1; }
+.sg-brand-loading__dots span:nth-child(1) {
+  background: #fb7185;
+  animation-delay: 0s;
 }
-@keyframes sg-loader-draw-mark {
-  0%, 10% { stroke-dashoffset: 1; }
-  54%, 78% { stroke-dashoffset: 0; }
-  100% { stroke-dashoffset: -1; }
+.sg-brand-loading__dots span:nth-child(2) {
+  background: #c084fc;
+  animation-delay: .16s;
 }
-@keyframes sg-loader-reveal-details {
-  0%, 46% { opacity: 0; }
-  58%, 78% { opacity: 1; }
-  100% { opacity: 0; }
+.sg-brand-loading__dots span:nth-child(3) {
+  background: #38bdf8;
+  animation-delay: .32s;
+}
+@keyframes sg-loader-appear {
+  to { opacity: 1; }
+}
+@keyframes sg-loader-halo {
+  0%, 100% {
+    opacity: .55;
+    transform: scale(.92);
+  }
+  50% {
+    opacity: .95;
+    transform: scale(1.08);
+  }
+}
+@keyframes sg-loader-float {
+  0%, 100% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-2px);
+  }
+}
+@keyframes sg-loader-tile {
+  0%, 100% {
+    opacity: .72;
+    fill-opacity: 0;
+    transform: scale(.96);
+  }
+  30% {
+    opacity: 1;
+    fill-opacity: .3;
+    transform: scale(1.06);
+  }
+  62% {
+    opacity: .92;
+    fill-opacity: .06;
+    transform: scale(1);
+  }
+}
+@keyframes sg-loader-spark {
+  0%, 24% {
+    opacity: .86;
+    transform: rotate(0deg) scale(1);
+  }
+  54% {
+    opacity: 1;
+    transform: rotate(90deg) scale(1.14);
+  }
+  74%, 100% {
+    opacity: .9;
+    transform: rotate(90deg) scale(1);
+  }
 }
 @keyframes sg-loader-dot {
-  0%, 100% { opacity: .35; transform: translateY(0); }
-  50% { opacity: 1; transform: translateY(-4px); }
+  0%, 100% {
+    opacity: .35;
+    transform: translateY(0) scale(.9);
+  }
+  50% {
+    opacity: 1;
+    transform: translateY(-2.5px) scale(1.1);
+  }
 }
 @media (prefers-reduced-motion: reduce) {
-  .sg-brand-loading__reveal, .sg-brand-loading__detail, .sg-brand-loading__dots span {
-    animation-duration: .01ms;
-    animation-iteration-count: 1;
+  .sg-brand-loading__halo,
+  .sg-brand-loading__gem,
+  .sg-brand-loading__tile,
+  .sg-brand-loading__spark,
+  .sg-brand-loading__dots span {
+    animation: none;
   }
-  .sg-brand-loading__reveal { stroke-dashoffset: 0; }
-  .sg-brand-loading__detail { opacity: 1; }
+  .sg-brand-loading__tile {
+    opacity: 1;
+    fill-opacity: .12;
+  }
 }
 `;
 
 function BrandLoading({
   minHeight,
+  size = "md",
+  label = "加载中",
   className,
 }: {
   minHeight: CSSProperties["minHeight"];
+  size?: "sm" | "md" | "lg";
+  label?: string;
   className?: string;
 }) {
   const instanceId = useId().replace(/[^a-zA-Z0-9_-]/g, "");
   const { styles } = useBrandLoadingStyles({ minHeight });
-  const maskId = `sg-loading-mask-${instanceId}`;
+  const gemGradId = `sg-loading-gem-${instanceId}`;
+  const haloGradId = `sg-loading-halo-${instanceId}`;
   return (
     <output
-      className={cx("sg-brand-loading", styles.root, className)}
+      className={cx(
+        "sg-brand-loading",
+        size !== "md" && `sg-brand-loading--${size}`,
+        styles.root,
+        className,
+      )}
       aria-live="polite"
-      aria-label="加载中"
+      aria-label={label}
     >
       <style data-sg-brand-loading="true">{BRAND_LOADING_STYLES}</style>
       <div className="sg-brand-loading__stage" aria-hidden="true">
-        <svg
-          className="sg-brand-loading__svg"
-          viewBox="0 0 1600 1431"
-          fill="none"
-          aria-hidden="true"
-        >
-          <mask id={maskId} x="0" y="0" width="1600" height="1431" maskUnits="userSpaceOnUse">
-            <path
-              className="sg-brand-loading__reveal sg-brand-loading__reveal--ring"
-              d="M728 176C416 192 170 438 166 744C162 1050 350 1265 674 1350"
-              pathLength="1"
-            />
-            <path
-              className="sg-brand-loading__reveal sg-brand-loading__reveal--mark"
-              d="M670 432V540C670 650 580 723 320 765H1064C1172 765 1248 842 1248 949C1248 1054 1174 1111 1065 1111H833V1350"
-              pathLength="1"
-            />
-            <rect className="sg-brand-loading__detail" width="1600" height="1431" />
-          </mask>
-          <image
-            className="sg-brand-loading__art sg-brand-loading__art--base"
-            href="/brand-mark.svg"
-            width="1600"
-            height="1431"
-            preserveAspectRatio="xMidYMid meet"
+        <svg className="sg-brand-loading__svg" viewBox="0 0 64 64" fill="none" aria-hidden="true">
+          <defs>
+            <radialGradient id={haloGradId} cx="50%" cy="50%" r="50%">
+              <stop offset="0%" stopColor="#A855F7" stopOpacity="0.46" />
+              <stop offset="58%" stopColor="#38BDF8" stopOpacity="0.14" />
+              <stop offset="100%" stopColor="#060811" stopOpacity="0" />
+            </radialGradient>
+            <linearGradient
+              id={gemGradId}
+              x1="10"
+              y1="10"
+              x2="54"
+              y2="54"
+              gradientUnits="userSpaceOnUse"
+            >
+              <stop offset="0" stopColor="#FB7185" />
+              <stop offset="0.52" stopColor="#A855F7" />
+              <stop offset="1" stopColor="#6366F1" />
+            </linearGradient>
+          </defs>
+          <circle
+            className="sg-brand-loading__halo"
+            cx="32"
+            cy="32"
+            r="28"
+            fill={`url(#${haloGradId})`}
           />
-          <image
-            className="sg-brand-loading__art"
-            href="/brand-mark.svg"
-            width="1600"
-            height="1431"
-            preserveAspectRatio="xMidYMid meet"
-            mask={`url(#${maskId})`}
-          />
+          <g className="sg-brand-loading__gem">
+            <rect x="10" y="10" width="44" height="44" rx="13.5" fill={`url(#${gemGradId})`} />
+            <rect
+              x="10.75"
+              y="10.75"
+              width="42.5"
+              height="42.5"
+              rx="12.75"
+              stroke="#ffffff"
+              strokeOpacity="0.32"
+              strokeWidth="1.2"
+            />
+            <g transform="translate(18.5 18.5) scale(1.125)">
+              <g transform="translate(6.75 6.75)">
+                <rect
+                  className="sg-brand-loading__tile sg-brand-loading__tile--1"
+                  x="-3.75"
+                  y="-3.75"
+                  width="7.5"
+                  height="7.5"
+                  rx="2.2"
+                />
+              </g>
+              <g transform="translate(17.25 6.75)">
+                <rect
+                  className="sg-brand-loading__tile sg-brand-loading__tile--2"
+                  x="-3.75"
+                  y="-3.75"
+                  width="7.5"
+                  height="7.5"
+                  rx="2.2"
+                />
+              </g>
+              <g transform="translate(6.75 17.25)">
+                <rect
+                  className="sg-brand-loading__tile sg-brand-loading__tile--3"
+                  x="-3.75"
+                  y="-3.75"
+                  width="7.5"
+                  height="7.5"
+                  rx="2.2"
+                />
+              </g>
+              <g transform="translate(17.25 17.25)">
+                <path className="sg-brand-loading__spark" d="M-3.25 0h6.5M0 -3.25v6.5" />
+              </g>
+            </g>
+          </g>
         </svg>
       </div>
-      <span className="sg-brand-loading__label">
-        <span>加载中</span>
-        <span className="sg-brand-loading__dots" aria-hidden="true">
-          <span />
-          <span />
-          <span />
+      {label ? (
+        <span className="sg-brand-loading__label">
+          <span>{label}</span>
+          <span className="sg-brand-loading__dots" aria-hidden="true">
+            <span />
+            <span />
+            <span />
+          </span>
         </span>
-      </span>
+      ) : null}
     </output>
   );
 }
@@ -249,15 +390,19 @@ export function Loading({
   loading = false,
   children,
   className,
-  minHeight = 160,
+  minHeight = 220,
+  size = "md",
+  label = "加载中",
 }: {
   loading?: boolean;
   children?: ReactNode;
   className?: string;
   minHeight?: CSSProperties["minHeight"];
+  size?: "sm" | "md" | "lg";
+  label?: string;
 }) {
   if (!loading) return <>{children ?? null}</>;
-  return <BrandLoading minHeight={minHeight} className={className} />;
+  return <BrandLoading minHeight={minHeight} size={size} label={label} className={className} />;
 }
 
 /* ---------------- toast ---------------- */

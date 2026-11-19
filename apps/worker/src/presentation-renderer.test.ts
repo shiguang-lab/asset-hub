@@ -1,4 +1,3 @@
-import { existsSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   fitAndAuditPresentationHtml,
@@ -176,10 +175,7 @@ describe("formatFontTooSmallIssue", () => {
   });
 });
 
-const CHROMIUM =
-  process.env.PRESENTATION_CHROMIUM_PATH ??
-  "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
-const describeWithChromium = existsSync(CHROMIUM) ? describe : describe.skip;
+const describeWithRenderWorker = process.env.RENDER_URL ? describe : describe.skip;
 
 function slide(body: string, pageStyle = ""): string {
   return `<html><head><meta charset="utf-8"><style>
@@ -188,7 +184,7 @@ function slide(body: string, pageStyle = ""): string {
   </style></head><body><section data-sg-page data-sg-id="page-ai-1" id="page-ai-1" aria-label="p1">${body}</section></body></html>`;
 }
 
-describeWithChromium("fit and audit in one Chromium session", () => {
+describeWithRenderWorker("fit and audit in one Chromium session", () => {
   it("does not let a full-height transparent grid hide half-page content", async () => {
     const run = await fitAndAuditPresentationHtml(
       `<html><head><style>
@@ -225,7 +221,7 @@ describeWithChromium("fit and audit in one Chromium session", () => {
   it("still blocks a genuinely out-of-stage element", async () => {
     const run = await fitAndAuditPresentationHtml(
       slide(
-        `<div data-sg-id="card" data-sg-kind="text" style="position:absolute;right:0;bottom:-40px;width:400px;height:200px;font-size:28px">卡片</div>`,
+        `<div data-sg-id="card" data-sg-kind="text" style="position:absolute;right:0;bottom:-180px;width:400px;height:300px;font-size:28px">卡片</div>`,
       ),
       { screenshots: false },
     );
@@ -242,14 +238,16 @@ describeWithChromium("fit and audit in one Chromium session", () => {
       ),
       { screenshots: false },
     );
-    expect(run.audit.issues.map((issue) => issue.code)).not.toContain("RENDER_ELEMENT_OUTSIDE_STAGE");
+    expect(run.audit.issues.map((issue) => issue.code)).not.toContain(
+      "RENDER_ELEMENT_OUTSIDE_STAGE",
+    );
   });
 
   it("detects visible id-less source nodes instead of treating them as invisible", async () => {
     const run = await fitAndAuditPresentationHtml(
       slide(
         `<div data-sg-id="body" data-sg-kind="text" style="position:absolute;left:96px;top:96px;width:1500px;height:700px;font-size:28px">正文</div>
-         <div class="data-source" style="position:absolute;left:96px;top:1092px;font-size:20px">来源：样本清单</div>`,
+         <div class="data-source" style="position:absolute;left:96px;top:1240px;font-size:20px">来源：样本清单</div>`,
       ),
       { screenshots: false },
     );

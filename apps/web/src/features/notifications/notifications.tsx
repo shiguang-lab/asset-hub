@@ -1,4 +1,4 @@
-import { Empty, formatRelative, useToast } from "@shiguang/ui";
+import { Empty, formatRelative, Loading, useToast } from "@shiguang/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button, Card } from "antd";
 import { createStyles } from "antd-style";
@@ -22,7 +22,7 @@ export function NotificationsPage() {
   const { styles } = useNotificationStyles();
   const toast = useToast();
   const queryClient = useQueryClient();
-  const { data } = useQuery<Notification[]>({
+  const { data, isLoading } = useQuery<Notification[]>({
     queryKey: ["notifications"],
     queryFn: () => api("/notifications", { params: { limit: 100 } }),
   });
@@ -39,14 +39,16 @@ export function NotificationsPage() {
     },
   });
   return (
-    <div>
+    <div className="sg-page-fill">
       <div className="sg-row-between sg-mb">
         <h1 className="sg-h1">通知中心</h1>
         <Button size="small" onClick={() => markAll.mutate()}>
           全部已读
         </Button>
       </div>
-      {(data?.length ?? 0) === 0 ? (
+      {isLoading ? (
+        <Loading loading />
+      ) : (data?.length ?? 0) === 0 ? (
         <Empty title="没有通知" hint="任务完成、知识库索引、分享等事件会通知你。" />
       ) : (
         <div className="sg-col">

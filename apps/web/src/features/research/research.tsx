@@ -1,4 +1,4 @@
-import { Empty, Field, useToast } from "@shiguang/ui";
+import { Empty, Field, Loading, useToast } from "@shiguang/ui";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Button, Card, Checkbox, Input, Select, Spin } from "antd";
 import { createStyles } from "antd-style";
@@ -19,13 +19,13 @@ const useResearchStyles = createStyles(() => ({
 export function ResearchPage() {
   const { styles } = useResearchStyles();
   const navigate = useNavigate();
-  const { data } = useQuery<{ items: Task[]; total: number }>({
+  const { data, isLoading } = useQuery<{ items: Task[]; total: number }>({
     queryKey: ["tasks", "research"],
     queryFn: () => api("/tasks", { params: { status: "all", limit: 50 } }),
   });
   const research = (data?.items ?? []).filter((t) => t.type === "research");
   return (
-    <div>
+    <div className="sg-page-fill">
       <div className="sg-row-between sg-mb">
         <div>
           <h1 className="sg-h1">深度调研</h1>
@@ -35,7 +35,9 @@ export function ResearchPage() {
           + 新建调研
         </Button>
       </div>
-      {research.length === 0 ? (
+      {isLoading ? (
+        <Loading loading />
+      ) : research.length === 0 ? (
         <Empty
           title="还没有调研任务"
           hint="发起一次行业研究、竞品分析或主题调研。"

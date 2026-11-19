@@ -4,6 +4,9 @@ export const usePresentationsStyles = createStyles(({ css }) => ({
   root: css`
 /* Online presentations workspace: reference layout 2026-08-13. */
 .sg-presentation-page {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
   min-width: 0;
   color: var(--sg-fg);
 }
@@ -55,13 +58,19 @@ export const usePresentationsStyles = createStyles(({ css }) => ({
   gap: 8px;
 }
 .sg-presentation-layout {
+  flex: 1 1 auto;
   display: grid;
   grid-template-columns: minmax(0, 1fr) 260px;
   gap: 12px;
-  align-items: start;
+  align-items: stretch;
 }
 .sg-presentation-layout > main {
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.sg-presentation-layout > aside {
+  align-self: start;
 }
 .sg-presentation-stats {
   display: grid;

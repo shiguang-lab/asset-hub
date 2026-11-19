@@ -1,4 +1,4 @@
-import { Empty, Field, formatRelative, StatusBadge, useToast } from "@shiguang/ui";
+import { Empty, Field, formatRelative, Loading, StatusBadge, useToast } from "@shiguang/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { MenuProps } from "antd";
 import { Button, Card, Dropdown, Input, Select, Tabs } from "antd";
@@ -310,7 +310,7 @@ export function KnowledgePage() {
   const [quickQuestion, setQuickQuestion] = useState("");
   const [quickAnswer, setQuickAnswer] = useState("");
 
-  const { data } = useQuery<KnowledgeBase[]>({
+  const { data, isLoading } = useQuery<KnowledgeBase[]>({
     queryKey: ["knowledge"],
     queryFn: () => api<KnowledgeBase[]>("/knowledge-bases"),
   });
@@ -469,359 +469,406 @@ export function KnowledgePage() {
         </div>
       </div>
 
-      <div className="zx-kb-split">
-        <div className="zx-kb-shelf-col">
-          <div className="zx-kb-filter-row">
-            <div className="zx-seg-tabs" role="tablist" aria-label="知识库范围">
-              {(
-                [
-                  ["mine", "我的知识库"],
-                  ["team", "团队共享"],
-                  ["public", "公开空间"],
-                ] as const
-              ).map(([id, label]) => (
-                <button
-                  key={id}
-                  type="button"
-                  role="tab"
-                  aria-selected={scope === id}
-                  className={`zx-seg-tab ${scope === id ? "active" : ""}`}
-                  onClick={() => setScope(id)}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-
-            <div className="zx-doc-search-pill" style={{ width: 232 }}>
-              <Search size={14} />
-              <input
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder="搜索知识库名称…"
-                aria-label="搜索知识库"
-              />
-              {query && (
-                <button
-                  type="button"
-                  style={{
-                    border: 0,
-                    background: "transparent",
-                    color: "var(--sg-muted)",
-                    cursor: "pointer",
-                    padding: 0,
-                    display: "flex",
-                  }}
-                  onClick={() => setQuery("")}
-                  aria-label="清空搜索"
-                >
-                  <X size={13} />
-                </button>
-              )}
-            </div>
-          </div>
-
-          {paged.length === 0 ? (
-            <Empty
-              title="没有匹配的知识库"
-              hint="调整筛选条件，或右上角新建一座知识空间。"
-              action={
-                <button
-                  type="button"
-                  className="zx-btn-cta"
-                  onClick={() => navigate("/knowledge/new")}
-                >
-                  <Plus size={15} /> 新建知识库
-                </button>
-              }
-            />
-          ) : (
-            <div className="zx-notebook-grid">
-              {paged.map((item) => {
-                const Icon = CATEGORY_ICON[item.category];
-                const isSelected = selectedId === item.id;
-                return (
-                  <article
-                    key={item.id}
-                    className={`zx-nb-card ${isSelected ? "selected" : ""}`}
-                    onClick={() => {
-                      setSelectedId(item.id);
-                      setQuickAnswer("");
-                    }}
-                    onDoubleClick={() => {
-                      if (!item.demo) navigate(`/knowledge/${item.id}`);
-                    }}
+      {isLoading && !demoMode ? (
+        <Loading loading minHeight={320} />
+      ) : (
+        <div className="zx-kb-split">
+          <div className="zx-kb-shelf-col">
+            <div className="zx-kb-filter-row">
+              <div className="zx-seg-tabs" role="tablist" aria-label="知识库范围">
+                {(
+                  [
+                    ["mine", "我的知识库"],
+                    ["team", "团队共享"],
+                    ["public", "公开空间"],
+                  ] as const
+                ).map(([id, label]) => (
+                  <button
+                    key={id}
+                    type="button"
+                    role="tab"
+                    aria-selected={scope === id}
+                    className={`zx-seg-tab ${scope === id ? "active" : ""}`}
+                    onClick={() => setScope(id)}
                   >
-                    <div>
-                      <div className="zx-nb-head">
-                        <span
-                          className={`zx-jewel ${item.accent}`}
-                          style={{ width: 42, height: 42, borderRadius: 13 }}
-                        >
-                          <Icon size={18} strokeWidth={1.9} />
-                        </span>
-                        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                          <span
-                            className={`zx-pill ${item.visibility === "available" ? "emerald" : "amber"}`}
-                          >
-                            ● {item.visibility === "available" ? "可用" : "仅团队可见"}
-                          </span>
-                          <KnowledgeMoreMenu item={item} onAction={handleKnowledgeMenuAction} />
-                        </div>
-                      </div>
+                    {label}
+                  </button>
+                ))}
+              </div>
 
-                      <div className="zx-nb-title">
-                        <span>{item.name}</span>
-                        {item.name.includes("越南") && (
-                          <Star
-                            size={13.5}
-                            fill="#F59E0B"
-                            color="#F59E0B"
-                            style={{ flexShrink: 0 }}
-                          />
-                        )}
-                      </div>
-                      <p className="zx-nb-desc">{item.description || "暂无描述"}</p>
-                    </div>
-
-                    <div className="zx-nb-foot tabular">
-                      <div className="zx-av-group">
-                        {item.ownerNames.map((owner, idx) => (
-                          <span
-                            key={owner}
-                            className="zx-avatar-xs"
-                            style={{
-                              background: owner.startsWith("+")
-                                ? "#475569"
-                                : AVATAR_BG[idx % AVATAR_BG.length],
-                              border: "2px solid var(--zx-canvas-solid)",
-                            }}
-                          >
-                            {owner.startsWith("+") ? owner : owner.slice(0, 1)}
-                          </span>
-                        ))}
-                      </div>
-                      <span>
-                        {item.sourceCount} 篇文档 · {item.citations.toLocaleString("zh-CN")} 次引用
-                      </span>
-                    </div>
-                  </article>
-                );
-              })}
-            </div>
-          )}
-
-          {filtered.length > pageSize && (
-            <AppPagination
-              total={filtered.length}
-              current={page}
-              pageSize={pageSize}
-              onChange={setPage}
-            />
-          )}
-        </div>
-
-        <aside className="zx-kb-inspector" aria-label="知识库详情">
-          {selected ? (
-            <>
-              <div>
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    gap: 8,
-                  }}
-                >
-                  <div
-                    style={{
-                      fontSize: 17,
-                      fontWeight: 760,
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 6,
-                      minWidth: 0,
-                    }}
-                  >
-                    <span
-                      style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
-                    >
-                      {selected.name}
-                    </span>
-                    {selected.name.includes("越南") && (
-                      <Star size={14} fill="#F59E0B" color="#F59E0B" style={{ flexShrink: 0 }} />
-                    )}
-                  </div>
+              <div className="zx-doc-search-pill" style={{ width: 232 }}>
+                <Search size={14} />
+                <input
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  placeholder="搜索知识库名称…"
+                  aria-label="搜索知识库"
+                />
+                {query && (
                   <button
                     type="button"
-                    className="sg-list-action-btn"
                     style={{
                       border: 0,
                       background: "transparent",
                       color: "var(--sg-muted)",
                       cursor: "pointer",
+                      padding: 0,
+                      display: "flex",
                     }}
-                    onClick={openSelected}
-                    title="进入知识库管理"
+                    onClick={() => setQuery("")}
+                    aria-label="清空搜索"
                   >
-                    <MoreHorizontal size={16} />
+                    <X size={13} />
                   </button>
-                </div>
+                )}
+              </div>
+            </div>
 
-                <div className="zx-kb-subtabs">
-                  {(
-                    [
-                      ["overview", "概览"],
-                      ["documents", `文档 (${selected.sourceCount})`],
-                      ["permissions", "权限"],
-                      ["settings", "设置"],
-                      ["activity", "日志"],
-                    ] as const
-                  ).map(([id, label]) => (
-                    <button
-                      key={id}
-                      type="button"
-                      className={`zx-kb-subtab ${detailTab === id ? "active" : ""}`}
-                      onClick={() => setDetailTab(id)}
+            {paged.length === 0 ? (
+              <Empty
+                title="没有匹配的知识库"
+                hint="调整筛选条件，或右上角新建一座知识空间。"
+                action={
+                  <button
+                    type="button"
+                    className="zx-btn-cta"
+                    onClick={() => navigate("/knowledge/new")}
+                  >
+                    <Plus size={15} /> 新建知识库
+                  </button>
+                }
+              />
+            ) : (
+              <div className="zx-notebook-grid">
+                {paged.map((item) => {
+                  const Icon = CATEGORY_ICON[item.category];
+                  const isSelected = selectedId === item.id;
+                  return (
+                    <article
+                      key={item.id}
+                      className={`zx-nb-card ${isSelected ? "selected" : ""}`}
+                      onClick={() => {
+                        setSelectedId(item.id);
+                        setQuickAnswer("");
+                      }}
+                      onDoubleClick={() => {
+                        if (!item.demo) navigate(`/knowledge/${item.id}`);
+                      }}
                     >
-                      {label}
-                    </button>
-                  ))}
-                </div>
+                      <div>
+                        <div className="zx-nb-head">
+                          <span
+                            className={`zx-jewel ${item.accent}`}
+                            style={{ width: 42, height: 42, borderRadius: 13 }}
+                          >
+                            <Icon size={18} strokeWidth={1.9} />
+                          </span>
+                          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                            <span
+                              className={`zx-pill ${item.visibility === "available" ? "emerald" : "amber"}`}
+                            >
+                              ● {item.visibility === "available" ? "可用" : "仅团队可见"}
+                            </span>
+                            <KnowledgeMoreMenu item={item} onAction={handleKnowledgeMenuAction} />
+                          </div>
+                        </div>
 
-                {detailTab === "overview" && (
-                  <>
-                    <div className="zx-ask-box">
-                      <div
-                        style={{
-                          fontSize: 12.5,
-                          fontWeight: 700,
-                          color: "var(--sg-fg)",
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 6,
-                        }}
-                      >
-                        <Sparkles size={14} color="#C084FC" />
-                        基于 {selected.chunkCount.toLocaleString("zh-CN")} 个索引分块溯源问答
+                        <div className="zx-nb-title">
+                          <span>{item.name}</span>
+                          {item.name.includes("越南") && (
+                            <Star
+                              size={13.5}
+                              fill="#F59E0B"
+                              color="#F59E0B"
+                              style={{ flexShrink: 0 }}
+                            />
+                          )}
+                        </div>
+                        <p className="zx-nb-desc">{item.description || "暂无描述"}</p>
                       </div>
-                      <form
-                        className="zx-ask-form"
-                        onSubmit={(e) => {
-                          e.preventDefault();
-                          const text = quickQuestion.trim() || "核心竞争格局与市场份额";
-                          quickAskMutation.mutate(text);
-                        }}
-                      >
-                        <input
-                          value={quickQuestion}
-                          onChange={(e) => setQuickQuestion(e.target.value)}
-                          placeholder="向该知识库提问，支持精确引用标注…"
-                          aria-label="向知识库提问"
-                        />
-                        <button
-                          type="submit"
-                          className="zx-ask-submit"
-                          disabled={quickAskMutation.isPending}
-                        >
-                          {quickAskMutation.isPending ? "…" : "Ask"}
-                        </button>
-                      </form>
-                      {quickAnswer && <div className="zx-ask-answer">{quickAnswer}</div>}
-                    </div>
 
-                    <div className="zx-chip-4 tabular">
-                      <div className="zx-stat-chip">
-                        <small>文档数量 / 大小</small>
-                        <strong>
-                          {selected.sourceCount} 篇 · {selected.storageLabel}
-                        </strong>
-                      </div>
-                      <div className="zx-stat-chip">
-                        <small>被引用 / 分块</small>
-                        <strong>
-                          {selected.citations.toLocaleString("zh-CN")} 次 ·{" "}
-                          {selected.chunkCount.toLocaleString("zh-CN")}
-                        </strong>
-                      </div>
-                      <div className="zx-stat-chip">
-                        <small>负责人</small>
-                        <strong>
-                          {selected.ownerNames[0]} · {selected.teamName}
-                        </strong>
-                      </div>
-                      <div className="zx-stat-chip">
-                        <small>最近同步</small>
-                        <strong>{knowledgeDate(selected.updatedAt)}</strong>
-                      </div>
-                    </div>
-
-                    <div style={{ marginTop: 16 }}>
-                      <div
-                        style={{
-                          display: "flex",
-                          justifyContent: "space-between",
-                          fontSize: 12.5,
-                          fontWeight: 700,
-                        }}
-                      >
-                        <span>源文档构成</span>
-                        <span
-                          style={{ fontWeight: 500, color: "var(--sg-muted)" }}
-                          className="tabular"
-                        >
-                          PDF 35% · Word 25% · 表格/PPT 28%
+                      <div className="zx-nb-foot tabular">
+                        <div className="zx-av-group">
+                          {item.ownerNames.map((owner, idx) => (
+                            <span
+                              key={owner}
+                              className="zx-avatar-xs"
+                              style={{
+                                background: owner.startsWith("+")
+                                  ? "#475569"
+                                  : AVATAR_BG[idx % AVATAR_BG.length],
+                                border: "2px solid var(--zx-canvas-solid)",
+                              }}
+                            >
+                              {owner.startsWith("+") ? owner : owner.slice(0, 1)}
+                            </span>
+                          ))}
+                        </div>
+                        <span>
+                          {item.sourceCount} 篇文档 · {item.citations.toLocaleString("zh-CN")}{" "}
+                          次引用
                         </span>
                       </div>
-                      <div className="zx-dist-bar">
-                        <i style={{ width: "35%", background: "#6366F1" }} />
-                        <i style={{ width: "25%", background: "#0EA5E9" }} />
-                        <i style={{ width: "16%", background: "#10B981" }} />
-                        <i style={{ width: "12%", background: "#A855F7" }} />
-                        <i style={{ width: "12%", background: "#F59E0B" }} />
-                      </div>
-                    </div>
+                    </article>
+                  );
+                })}
+              </div>
+            )}
 
-                    <div style={{ marginTop: 14 }}>
-                      <div
+            {filtered.length > pageSize && (
+              <AppPagination
+                total={filtered.length}
+                current={page}
+                pageSize={pageSize}
+                onChange={setPage}
+              />
+            )}
+          </div>
+
+          <aside className="zx-kb-inspector" aria-label="知识库详情">
+            {selected ? (
+              <>
+                <div>
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: 8,
+                    }}
+                  >
+                    <div
+                      style={{
+                        fontSize: 17,
+                        fontWeight: 760,
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 6,
+                        minWidth: 0,
+                      }}
+                    >
+                      <span
                         style={{
-                          display: "flex",
-                          justifyContent: "space-between",
-                          fontSize: 12.5,
-                          fontWeight: 700,
-                          marginBottom: 4,
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
                         }}
                       >
-                        <span>最近收录文档</span>
-                        <button
-                          type="button"
+                        {selected.name}
+                      </span>
+                      {selected.name.includes("越南") && (
+                        <Star size={14} fill="#F59E0B" color="#F59E0B" style={{ flexShrink: 0 }} />
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      className="sg-list-action-btn"
+                      style={{
+                        border: 0,
+                        background: "transparent",
+                        color: "var(--sg-muted)",
+                        cursor: "pointer",
+                      }}
+                      onClick={openSelected}
+                      title="进入知识库管理"
+                    >
+                      <MoreHorizontal size={16} />
+                    </button>
+                  </div>
+
+                  <div className="zx-kb-subtabs">
+                    {(
+                      [
+                        ["overview", "概览"],
+                        ["documents", `文档 (${selected.sourceCount})`],
+                        ["permissions", "权限"],
+                        ["settings", "设置"],
+                        ["activity", "日志"],
+                      ] as const
+                    ).map(([id, label]) => (
+                      <button
+                        key={id}
+                        type="button"
+                        className={`zx-kb-subtab ${detailTab === id ? "active" : ""}`}
+                        onClick={() => setDetailTab(id)}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+
+                  {detailTab === "overview" && (
+                    <>
+                      <div className="zx-ask-box">
+                        <div
                           style={{
-                            border: 0,
-                            background: "transparent",
-                            color: "var(--zx-brand)",
-                            fontSize: 12,
-                            cursor: "pointer",
-                            padding: 0,
+                            fontSize: 12.5,
+                            fontWeight: 700,
+                            color: "var(--sg-fg)",
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 6,
                           }}
-                          onClick={() => setDetailTab("documents")}
                         >
-                          全部 →
-                        </button>
-                      </div>
-                      {selectedSources.slice(0, 3).map((source, index) => {
-                        const tones = ["rose", "emerald", "sky"] as const;
-                        return (
+                          <Sparkles size={14} color="#C084FC" />
+                          基于 {selected.chunkCount.toLocaleString("zh-CN")} 个索引分块溯源问答
+                        </div>
+                        <form
+                          className="zx-ask-form"
+                          onSubmit={(e) => {
+                            e.preventDefault();
+                            const text = quickQuestion.trim() || "核心竞争格局与市场份额";
+                            quickAskMutation.mutate(text);
+                          }}
+                        >
+                          <input
+                            value={quickQuestion}
+                            onChange={(e) => setQuickQuestion(e.target.value)}
+                            placeholder="向该知识库提问，支持精确引用标注…"
+                            aria-label="向知识库提问"
+                          />
                           <button
-                            key={source.id}
+                            type="submit"
+                            className="zx-ask-submit"
+                            disabled={quickAskMutation.isPending}
+                          >
+                            {quickAskMutation.isPending ? "…" : "Ask"}
+                          </button>
+                        </form>
+                        {quickAnswer && <div className="zx-ask-answer">{quickAnswer}</div>}
+                      </div>
+
+                      <div className="zx-chip-4 tabular">
+                        <div className="zx-stat-chip">
+                          <small>文档数量 / 大小</small>
+                          <strong>
+                            {selected.sourceCount} 篇 · {selected.storageLabel}
+                          </strong>
+                        </div>
+                        <div className="zx-stat-chip">
+                          <small>被引用 / 分块</small>
+                          <strong>
+                            {selected.citations.toLocaleString("zh-CN")} 次 ·{" "}
+                            {selected.chunkCount.toLocaleString("zh-CN")}
+                          </strong>
+                        </div>
+                        <div className="zx-stat-chip">
+                          <small>负责人</small>
+                          <strong>
+                            {selected.ownerNames[0]} · {selected.teamName}
+                          </strong>
+                        </div>
+                        <div className="zx-stat-chip">
+                          <small>最近同步</small>
+                          <strong>{knowledgeDate(selected.updatedAt)}</strong>
+                        </div>
+                      </div>
+
+                      <div style={{ marginTop: 16 }}>
+                        <div
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            fontSize: 12.5,
+                            fontWeight: 700,
+                          }}
+                        >
+                          <span>源文档构成</span>
+                          <span
+                            style={{ fontWeight: 500, color: "var(--sg-muted)" }}
+                            className="tabular"
+                          >
+                            PDF 35% · Word 25% · 表格/PPT 28%
+                          </span>
+                        </div>
+                        <div className="zx-dist-bar">
+                          <i style={{ width: "35%", background: "#6366F1" }} />
+                          <i style={{ width: "25%", background: "#0EA5E9" }} />
+                          <i style={{ width: "16%", background: "#10B981" }} />
+                          <i style={{ width: "12%", background: "#A855F7" }} />
+                          <i style={{ width: "12%", background: "#F59E0B" }} />
+                        </div>
+                      </div>
+
+                      <div style={{ marginTop: 14 }}>
+                        <div
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            fontSize: 12.5,
+                            fontWeight: 700,
+                            marginBottom: 4,
+                          }}
+                        >
+                          <span>最近收录文档</span>
+                          <button
                             type="button"
+                            style={{
+                              border: 0,
+                              background: "transparent",
+                              color: "var(--zx-brand)",
+                              fontSize: 12,
+                              cursor: "pointer",
+                              padding: 0,
+                            }}
+                            onClick={() => setDetailTab("documents")}
+                          >
+                            全部 →
+                          </button>
+                        </div>
+                        {selectedSources.slice(0, 3).map((source, index) => {
+                          const tones = ["rose", "emerald", "sky"] as const;
+                          return (
+                            <button
+                              key={source.id}
+                              type="button"
+                              className="zx-src-item"
+                              onClick={openSelected}
+                            >
+                              <span
+                                className={`zx-jewel ${tones[index % 3]}`}
+                                style={{ width: 26, height: 26, borderRadius: 7 }}
+                              >
+                                {index === 1 ? <Database size={13} /> : <FileText size={13} />}
+                              </span>
+                              <span
+                                style={{
+                                  flex: 1,
+                                  overflow: "hidden",
+                                  textOverflow: "ellipsis",
+                                  whiteSpace: "nowrap",
+                                }}
+                              >
+                                {source.title}
+                              </span>
+                              <span
+                                style={{ color: "var(--sg-muted)", fontSize: 11.5 }}
+                                className="tabular"
+                              >
+                                {index === 0 ? "14:30" : index === 1 ? "昨天" : "05-16"}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </>
+                  )}
+
+                  {detailTab === "documents" && (
+                    <div style={{ paddingTop: 10 }}>
+                      {selectedSources.length ? (
+                        selectedSources.map((source) => (
+                          <button
+                            type="button"
+                            key={source.id}
                             className="zx-src-item"
                             onClick={openSelected}
                           >
                             <span
-                              className={`zx-jewel ${tones[index % 3]}`}
-                              style={{ width: 26, height: 26, borderRadius: 7 }}
+                              className="zx-jewel indigo"
+                              style={{ width: 28, height: 28, borderRadius: 8 }}
                             >
-                              {index === 1 ? <Database size={13} /> : <FileText size={13} />}
+                              <FileText size={14} />
                             </span>
                             <span
                               style={{
@@ -833,143 +880,113 @@ export function KnowledgePage() {
                             >
                               {source.title}
                             </span>
-                            <span
-                              style={{ color: "var(--sg-muted)", fontSize: 11.5 }}
-                              className="tabular"
-                            >
-                              {index === 0 ? "14:30" : index === 1 ? "昨天" : "05-16"}
-                            </span>
+                            <ChevronRight size={14} color="var(--sg-muted)" />
                           </button>
-                        );
-                      })}
-                    </div>
-                  </>
-                )}
-
-                {detailTab === "documents" && (
-                  <div style={{ paddingTop: 10 }}>
-                    {selectedSources.length ? (
-                      selectedSources.map((source) => (
-                        <button
-                          type="button"
-                          key={source.id}
-                          className="zx-src-item"
-                          onClick={openSelected}
+                        ))
+                      ) : (
+                        <p
+                          style={{
+                            color: "var(--sg-muted)",
+                            fontSize: 12.5,
+                            padding: "24px 0",
+                            textAlign: "center",
+                          }}
                         >
-                          <span
-                            className="zx-jewel indigo"
-                            style={{ width: 28, height: 28, borderRadius: 8 }}
-                          >
-                            <FileText size={14} />
-                          </span>
-                          <span
-                            style={{
-                              flex: 1,
-                              overflow: "hidden",
-                              textOverflow: "ellipsis",
-                              whiteSpace: "nowrap",
-                            }}
-                          >
-                            {source.title}
-                          </span>
-                          <ChevronRight size={14} color="var(--sg-muted)" />
-                        </button>
-                      ))
-                    ) : (
-                      <p
-                        style={{
-                          color: "var(--sg-muted)",
-                          fontSize: 12.5,
-                          padding: "24px 0",
-                          textAlign: "center",
-                        }}
-                      >
-                        还没有导入源文档
-                      </p>
-                    )}
-                  </div>
-                )}
-
-                {detailTab === "permissions" && (
-                  <div
-                    style={{ padding: "36px 12px", textAlign: "center", color: "var(--sg-muted)" }}
-                  >
-                    <ShieldCheck size={28} color="#C084FC" style={{ marginBottom: 8 }} />
-                    <strong style={{ display: "block", color: "var(--sg-fg)", fontSize: 13.5 }}>
-                      权限管理
-                    </strong>
-                    <p style={{ fontSize: 12.5, margin: "6px 0 14px" }}>
-                      {selected.visibility === "available"
-                        ? "当前工作区成员均可检索与引用此知识库。"
-                        : "仅指定团队成员可以访问。"}
-                    </p>
-                    <button type="button" className="zx-btn-glass" onClick={openSelected}>
-                      管理权限
-                    </button>
-                  </div>
-                )}
-
-                {detailTab === "settings" && (
-                  <div
-                    style={{ padding: "36px 12px", textAlign: "center", color: "var(--sg-muted)" }}
-                  >
-                    <SlidersHorizontal size={28} color="#C084FC" style={{ marginBottom: 8 }} />
-                    <strong style={{ display: "block", color: "var(--sg-fg)", fontSize: 13.5 }}>
-                      知识库设置
-                    </strong>
-                    <p style={{ fontSize: 12.5, margin: "6px 0 14px" }}>
-                      管理名称、描述、分块索引策略与同步状态。
-                    </p>
-                    <button type="button" className="zx-btn-glass" onClick={openSelected}>
-                      进入设置
-                    </button>
-                  </div>
-                )}
-
-                {detailTab === "activity" && (
-                  <div
-                    style={{
-                      paddingTop: 12,
-                      display: "flex",
-                      flexDirection: "column",
-                      gap: 10,
-                      fontSize: 12.5,
-                    }}
-                  >
-                    <div className="zx-stat-chip">
-                      <strong style={{ fontSize: 13 }}>更新了向量与分块索引</strong>
-                      <small style={{ marginTop: 3 }}>{formatRelative(selected.updatedAt)}</small>
+                          还没有导入源文档
+                        </p>
+                      )}
                     </div>
-                    <div className="zx-stat-chip">
-                      <strong style={{ fontSize: 13 }}>
-                        导入了 {selected.sourceCount} 篇源文档
+                  )}
+
+                  {detailTab === "permissions" && (
+                    <div
+                      style={{
+                        padding: "36px 12px",
+                        textAlign: "center",
+                        color: "var(--sg-muted)",
+                      }}
+                    >
+                      <ShieldCheck size={28} color="#C084FC" style={{ marginBottom: 8 }} />
+                      <strong style={{ display: "block", color: "var(--sg-fg)", fontSize: 13.5 }}>
+                        权限管理
                       </strong>
-                      <small style={{ marginTop: 3 }}>{knowledgeDate(selected.createdAt)}</small>
+                      <p style={{ fontSize: 12.5, margin: "6px 0 14px" }}>
+                        {selected.visibility === "available"
+                          ? "当前工作区成员均可检索与引用此知识库。"
+                          : "仅指定团队成员可以访问。"}
+                      </p>
+                      <button type="button" className="zx-btn-glass" onClick={openSelected}>
+                        管理权限
+                      </button>
                     </div>
-                  </div>
-                )}
-              </div>
+                  )}
 
-              <div
-                style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 8 }}
-              >
-                <button type="button" className="zx-btn-glass" onClick={openSelected}>
-                  <Upload size={14} /> 导入文档
-                </button>
-                <button type="button" className="zx-btn-cta" onClick={openSelected}>
-                  <Sparkles size={14} /> 进入问答台
-                </button>
+                  {detailTab === "settings" && (
+                    <div
+                      style={{
+                        padding: "36px 12px",
+                        textAlign: "center",
+                        color: "var(--sg-muted)",
+                      }}
+                    >
+                      <SlidersHorizontal size={28} color="#C084FC" style={{ marginBottom: 8 }} />
+                      <strong style={{ display: "block", color: "var(--sg-fg)", fontSize: 13.5 }}>
+                        知识库设置
+                      </strong>
+                      <p style={{ fontSize: 12.5, margin: "6px 0 14px" }}>
+                        管理名称、描述、分块索引策略与同步状态。
+                      </p>
+                      <button type="button" className="zx-btn-glass" onClick={openSelected}>
+                        进入设置
+                      </button>
+                    </div>
+                  )}
+
+                  {detailTab === "activity" && (
+                    <div
+                      style={{
+                        paddingTop: 12,
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: 10,
+                        fontSize: 12.5,
+                      }}
+                    >
+                      <div className="zx-stat-chip">
+                        <strong style={{ fontSize: 13 }}>更新了向量与分块索引</strong>
+                        <small style={{ marginTop: 3 }}>{formatRelative(selected.updatedAt)}</small>
+                      </div>
+                      <div className="zx-stat-chip">
+                        <strong style={{ fontSize: 13 }}>
+                          导入了 {selected.sourceCount} 篇源文档
+                        </strong>
+                        <small style={{ marginTop: 3 }}>{knowledgeDate(selected.createdAt)}</small>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div
+                  style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 8 }}
+                >
+                  <button type="button" className="zx-btn-glass" onClick={openSelected}>
+                    <Upload size={14} /> 导入文档
+                  </button>
+                  <button type="button" className="zx-btn-cta" onClick={openSelected}>
+                    <Sparkles size={14} /> 进入问答台
+                  </button>
+                </div>
+              </>
+            ) : (
+              <div style={{ padding: "80px 16px", textAlign: "center", color: "var(--sg-muted)" }}>
+                <BookOpen size={40} style={{ marginBottom: 10, opacity: 0.6 }} />
+                <strong style={{ display: "block", color: "var(--sg-fg)" }}>选择一个知识库</strong>
+                <span style={{ fontSize: 12.5 }}>查看索引概览并发起溯源问答</span>
               </div>
-            </>
-          ) : (
-            <div style={{ padding: "80px 16px", textAlign: "center", color: "var(--sg-muted)" }}>
-              <BookOpen size={40} style={{ marginBottom: 10, opacity: 0.6 }} />
-              <strong style={{ display: "block", color: "var(--sg-fg)" }}>选择一个知识库</strong>
-              <span style={{ fontSize: 12.5 }}>查看索引概览并发起溯源问答</span>
-            </div>
-          )}
-        </aside>
-      </div>
+            )}
+          </aside>
+        </div>
+      )}
     </div>
   );
 }
@@ -1100,7 +1117,7 @@ export function KnowledgeDetailPage() {
     },
   });
 
-  if (!kb) return <Empty title="加载中…" />;
+  if (!kb) return <Loading loading />;
 
   return (
     <div>

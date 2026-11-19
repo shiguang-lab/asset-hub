@@ -22,9 +22,7 @@ import type { Logger } from "@shiguang/observability";
 import { z } from "zod";
 import {
   fitAndAuditPresentationHtml,
-  fitPresentationHtmlToStage,
   type PresentationRenderAudit,
-  renderPresentationAudit,
 } from "../presentation-renderer.js";
 import { loadPresentationPrompt } from "../prompts.js";
 import { type StepContext, step } from "./helpers.js";
@@ -37,7 +35,7 @@ const GENERATED_SLIDES_MARKER = "<!-- SG_GENERATED_SLIDES -->";
 const PAGE_BATCH_SIZE = 1;
 const REVIEW_BATCH_SIZE = 3;
 const MAX_REPAIR_CALLS = 12;
-const MAX_REPAIR_PASSES = 5;
+const MAX_REPAIR_PASSES = 2;
 const MAX_TASK_UNIT_RETRIES = 5;
 // Keep page-local repair traffic below the account-level gateway burst limit.
 // A repair that does not change any measured error twice needs a different
@@ -1017,8 +1015,7 @@ function headingMatchesPlannedTitle(heading: string, plannedTitle: string): bool
   const coreTitleValue = titleCore(plannedTitle);
   if (!normalizedHeading || !coreTitleValue) return false;
   const compactHeading = normalizedHeading.replace(/\s+/g, "");
-  const stripRange = (value: string) =>
-    value.replace(/\s*[\(\uff08][^\)\uff09]*[\)\uff09]\s*$/, "");
+  const stripRange = (value: string) => value.replace(/\s*[(\uff08][^)\uff09]*[)\uff09]\s*$/, "");
   return [fullTitle, coreTitleValue, stripRange(fullTitle), stripRange(coreTitleValue)].some(
     (candidate) => {
       const compactCandidate = candidate.replace(/\s+/g, "");
@@ -1070,7 +1067,9 @@ export function repairGeneratedPresentationPageTitle(input: {
   const headings = [...section.matchAll(/<h[12]\b[^>]*>([\s\S]*?)<\/h[12]>/gi)].map((match) =>
     visibleText(match[1] ?? ""),
   );
-  const styles = extracted.styles.map((css) => `<style data-sg-page-style>${css}</style>`).join("\n");
+  const styles = extracted.styles
+    .map((css) => `<style data-sg-page-style>${css}</style>`)
+    .join("\n");
   const baseRepaired = styles ? `${section}\n${styles}` : section;
   if (headings.some((heading) => headingMatchesPlannedTitle(heading, input.expectedTitle))) {
     return baseRepaired === html ? null : baseRepaired;
@@ -1115,7 +1114,8 @@ export function repairGeneratedPresentationPageContract(
     }
   }
   const sectionStart = html.indexOf(sections[0] ?? "");
-  const outside = html.slice(0, sectionStart) + html.slice(sectionStart + (sections[0] ?? "").length);
+  const outside =
+    html.slice(0, sectionStart) + html.slice(sectionStart + (sections[0] ?? "").length);
   const salvagedStyles = [...outside.matchAll(/<style\b[^>]*>([\s\S]*?)<\/style\s*>/gi)]
     .map((match) => (match[1] ?? "").trim())
     .filter(Boolean);
@@ -1488,9 +1488,7 @@ export function repairEscalationInstruction(
   return `【最终修复策略】此前布局方案已被复检证明不可行。${geometryHint} 放弃原有构图并重新设计内容区域；优先保证固定画布内完整、可读、无裁切，不得再次沿用失败结构。`;
 }
 
-export function shouldParkNoEffectRepair(input: {
-  noEffectAttempts: number;
-}): boolean {
+export function shouldParkNoEffectRepair(input: { noEffectAttempts: number }): boolean {
   return input.noEffectAttempts >= MAX_NO_EFFECT_REPAIR_ATTEMPTS;
 }
 
@@ -1789,7 +1787,9 @@ async function annotateGeneratedPresentation(
               onUpdate,
             );
             const returnedIds = new Set(response.data.elements.map((element) => element.id));
-            const validElements = response.data.elements.filter((element) => expectedIds.has(element.id));
+            const validElements = response.data.elements.filter((element) =>
+              expectedIds.has(element.id),
+            );
             const missingElements = pageElements
               .filter((element) => !returnedIds.has(element.id))
               .map((element) => {
@@ -1799,7 +1799,8 @@ async function annotateGeneratedPresentation(
                 else if (element.kind === "chart") role = "chart";
                 else if (element.kind === "metric") role = "metric";
                 else if (element.kind === "image" || /^img$/i.test(element.tagName)) role = "image";
-                else if (element.kind === "table" || /^table$/i.test(element.tagName)) role = "table";
+                else if (element.kind === "table" || /^table$/i.test(element.tagName))
+                  role = "table";
                 else if (/(?:source|footer)/i.test(element.id)) role = "source";
                 return { id: element.id, role, editable: true };
               });
@@ -2914,7 +2915,10 @@ export async function runPresentationWorkflow(
             expectedTitle,
           });
           if (!validated.page) {
-            const contractRepaired = repairGeneratedPresentationPageContract(result.text, expectedPage);
+            const contractRepaired = repairGeneratedPresentationPageContract(
+              result.text,
+              expectedPage,
+            );
             const contractWithTitle = contractRepaired
               ? (repairGeneratedPresentationPageTitle({
                   output: contractRepaired,
@@ -3036,15 +3040,6 @@ export async function runPresentationWorkflow(
     const plannedTitles = plan.slides.map((slide) => slide.title);
     const plannedPageNumbers = plan.slides.map((_slide, index) => index + 1);
     let html = prepareGeneratedHtml(rawGeneratedHtml, parsed.title, plannedTitles);
-    html = (
-      await retryTaskUnit({
-        taskId: ctx.taskId,
-        logger: ctx.logger,
-        stage: "rendering.fit",
-        signal: cancellationController.signal,
-        run: () => fitPresentationHtmlToStage(html),
-      })
-    ).html;
     if (
       (retryingRepair || retryingCompiling) &&
       repairResume &&
@@ -3163,7 +3158,7 @@ export async function runPresentationWorkflow(
         pageTitles: generatedTitles,
       });
 
-      await report(76, "Chromium 正在逐页渲染与测量", {
+      await report(76, "Render Worker 正在逐页自适应拟合与渲染检查", {
         phase: "visualizing",
         phaseLabel: "真实渲染检查",
         activity: "processing",
@@ -3173,13 +3168,13 @@ export async function runPresentationWorkflow(
             : [],
         renderedPages: [],
       });
-      renderAudit = await retryTaskUnit({
+      const initialStageRun = await retryTaskUnit({
         taskId: ctx.taskId,
         logger: ctx.logger,
-        stage: "visualizing.chromium",
+        stage: "visualizing.render",
         signal: cancellationController.signal,
         run: () =>
-          renderPresentationAudit(html, {
+          fitAndAuditPresentationHtml(html, {
             screenshots: true,
             screenshotPages: plannedPageNumbers,
             onPage: async ({ page, pageCount }) => {
@@ -3199,6 +3194,8 @@ export async function runPresentationWorkflow(
             },
           }),
       });
+      html = initialStageRun.html;
+      renderAudit = initialStageRun.audit;
       await persistReviewResume({ html, plan, deterministicIssues: issues, renderAudit });
     }
     if (!retryingCompiling) {
@@ -3906,7 +3903,9 @@ export async function runPresentationWorkflow(
               repairedPages: verifiedRepairPages,
               repairPass,
             });
-          } else if (shouldParkNoEffectRepair({ noEffectAttempts: noEffectAttempts.get(pageNumber) ?? 0 })) {
+          } else if (
+            shouldParkNoEffectRepair({ noEffectAttempts: noEffectAttempts.get(pageNumber) ?? 0 })
+          ) {
             repairQueue.shift();
             exhaustedRepairPages.push(pageNumber);
             await persistRepairResume({

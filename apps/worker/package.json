@@ -20,7 +20,6 @@
     "@shiguang/database": "workspace:*",
     "@shiguang/event-channel": "workspace:*",
     "@shiguang/observability": "workspace:*",
-    "playwright-core": "1.51.1",
     "zod": "catalog:"
   },
   "devDependencies": {

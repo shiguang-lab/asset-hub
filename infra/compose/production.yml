@@ -77,11 +77,43 @@ services:
       NODE_ENV: production
       API_INTERNAL_BASE: http://api:3001
       WEB_INTERNAL_BASE: http://web:8080
+      RENDER_URL: http://render-worker:3006
       WORKER_STATE_PATH: /var/lib/shiguang/worker/worker-state.db
     volumes:
       - worker-state:/var/lib/shiguang/worker
     depends_on:
       api:
+        condition: service_healthy
+      render-worker:
+        condition: service_healthy
+    networks:
+      - app
+      - egress
+
+  render-worker:
+    <<: *security
+    image: ghcr.io/shiguang-lab/asset-hub-render-worker:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    shm_size: 256mb
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+    env_file: *app-env
+    environment:
+      NODE_ENV: production
+      RENDER_PORT: "3006"
+      API_INTERNAL_BASE: http://api:3001
+      WEB_INTERNAL_BASE: http://web:8080
+    expose:
+      - "3006"
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/render-worker", "-healthcheck"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+    depends_on:
+      api:
+        condition: service_healthy
+      web:
         condition: service_healthy
     networks:
       - app

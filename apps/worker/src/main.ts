@@ -96,6 +96,7 @@ async function start(): Promise<void> {
       profiles: config.profiles,
       api: config.apiBase,
       web: config.webBase,
+      render: config.renderUrl,
       pollMs: config.pollIntervalMs,
     },
     "worker ready",

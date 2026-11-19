@@ -5,9 +5,8 @@ import "./globals.css";
 import { ThemeProvider } from "./components/theme-provider";
 
 export const metadata: Metadata = {
-  title: "Shiguang Lab 文档",
+  title: "知序 · AI 知识与创作",
   robots: { index: false, follow: false },
-  icons: { icon: "/favicon.svg?v=20260818" },
 };
 
 export default function RootLayout({ children }: PropsWithChildren) {

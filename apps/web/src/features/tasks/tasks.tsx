@@ -1262,7 +1262,7 @@ export function TaskDetailPage() {
       toast("error", error instanceof Error ? error.message : "复制失败");
     }
   };
-  if (!task) return <Empty title="加载中…" />;
+  if (!task) return <Loading loading />;
   const meta = taskMeta(task.type);
   const TaskIcon = meta.icon;
   const stages = detailStages(task);

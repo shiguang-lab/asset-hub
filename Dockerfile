@@ -12,6 +12,7 @@ COPY apps/api/package.json apps/api/package.json
 COPY apps/web/package.json apps/web/package.json
 COPY apps/worker/package.json apps/worker/package.json
 COPY apps/compute-worker/package.json apps/compute-worker/package.json
+COPY apps/render-worker/package.json apps/render-worker/package.json
 COPY apps/public-gateway/package.json apps/public-gateway/package.json
 COPY apps/ssr/package.json apps/ssr/package.json
 COPY apps/obsidian-plugin/package.json apps/obsidian-plugin/package.json
@@ -53,8 +54,7 @@ RUN pnpm --filter @shiguang/worker deploy --prod --legacy /out/worker
 RUN test -f /out/worker/dist/main.js
 
 FROM node:${NODE_VERSION}-alpine AS worker
-RUN apk add --no-cache ca-certificates chromium dumb-init font-noto-cjk font-noto-emoji freetype git harfbuzz nss openssh-client ttf-freefont tzdata
-ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium-browser
+RUN apk add --no-cache ca-certificates dumb-init git openssh-client tzdata
 WORKDIR /app
 COPY --from=worker-build --chown=node:node /out/worker ./
 # Prompt templates are runtime assets kept outside the TypeScript bundle.
@@ -118,3 +118,25 @@ COPY --from=public-gateway-build /out/public-gateway /usr/local/bin/public-gatew
 USER app
 EXPOSE 3004
 ENTRYPOINT ["/usr/local/bin/public-gateway"]
+
+FROM golang:${GO_VERSION}-alpine AS render-build
+WORKDIR /src/apps/render-worker
+COPY apps/render-worker/go.mod apps/render-worker/go.sum ./
+RUN go mod download
+COPY apps/render-worker/cmd ./cmd
+COPY apps/render-worker/internal ./internal
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/render-worker ./cmd/render-worker
+
+FROM chromedp/headless-shell:latest AS render-worker
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends ca-certificates dumb-init fonts-noto-cjk fonts-noto-color-emoji tzdata && \
+    rm -rf /var/lib/apt/lists/* && \
+    groupadd --system --gid 10001 render && \
+    useradd --system --uid 10001 --gid render --home-dir /tmp --no-create-home render
+ENV HOME=/tmp \
+    CHROME_HEADLESS_SHELL_PATH=/headless-shell/headless-shell
+COPY --from=render-build /out/render-worker /usr/local/bin/render-worker
+USER render
+EXPOSE 3006
+ENTRYPOINT ["/usr/bin/dumb-init", "--", "/usr/local/bin/render-worker"]
+CMD []

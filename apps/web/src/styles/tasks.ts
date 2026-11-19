@@ -9,6 +9,11 @@ export const useTasksStyles = createStyles(({ css }) => ({
   min-width: 0;
   color: var(--sg-fg);
 }
+.sg-task-center {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+}
 .sg-task-page-head {
   margin-bottom: 12px;
 }
@@ -26,15 +31,23 @@ export const useTasksStyles = createStyles(({ css }) => ({
   font-size: 12px;
 }
 .sg-task-center-layout {
+  flex: 1 1 auto;
   display: grid;
   grid-template-columns: minmax(0, 1fr) 300px;
   gap: 14px;
-  align-items: start;
+  align-items: stretch;
+}
+.sg-task-center-side {
+  align-self: start;
 }
 .sg-task-center-main,
 .sg-task-detail-main,
 .sg-task-new-main {
   min-width: 0;
+}
+.sg-task-center-main {
+  display: flex;
+  flex-direction: column;
 }
 .sg-task-toolbar {
   display: flex;
@@ -83,6 +96,7 @@ export const useTasksStyles = createStyles(({ css }) => ({
   }
 }
 .sg-task-list {
+  flex: 1 1 auto;
   display: flex;
   flex-direction: column;
   gap: 9px;

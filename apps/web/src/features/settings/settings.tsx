@@ -1,4 +1,4 @@
-import { Field, formatDate, Scrollbar, useToast } from "@shiguang/ui";
+import { Field, formatDate, Loading, Scrollbar, useToast } from "@shiguang/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button, Card, Input, Select, Switch, Tabs } from "antd";
 import { createStyles } from "antd-style";
@@ -452,66 +452,69 @@ function TeamSettings() {
         </div>
       )}
       {error && <p className="sg-hint">{error.message}</p>}
-      {isLoading && <p className="sg-hint">正在加载成员…</p>}
-      <AppTable<OrganizationMember>
-        rowKey="userId"
-        dataSource={data ?? []}
-        pagination={false}
-        size="middle"
-        columns={[
-          {
-            title: "成员",
-            key: "member",
-            render: (_v, member) => {
-              const _memberRole = organizationRole(member.roles);
-              return (
-                <>
-                  <strong>{member.displayName || member.loginName}</strong>
-                  <div className="sg-hint">{member.loginName}</div>
-                </>
-              );
+      {isLoading ? (
+        <Loading loading size="sm" minHeight={180} label="正在加载成员" />
+      ) : (
+        <AppTable<OrganizationMember>
+          rowKey="userId"
+          dataSource={data ?? []}
+          pagination={false}
+          size="middle"
+          columns={[
+            {
+              title: "成员",
+              key: "member",
+              render: (_v, member) => {
+                const _memberRole = organizationRole(member.roles);
+                return (
+                  <>
+                    <strong>{member.displayName || member.loginName}</strong>
+                    <div className="sg-hint">{member.loginName}</div>
+                  </>
+                );
+              },
             },
-          },
-          {
-            title: "角色",
-            key: "role",
-            render: (_v, member) => {
-              const memberRole = organizationRole(member.roles);
-              return canManage ? (
-                <Select
-                  value={memberRole}
-                  onChange={(nextRole) =>
-                    updateRole.mutate({
-                      userId: member.userId,
-                      nextRole: nextRole as OrganizationRole,
-                    })
-                  }
-                  options={ORGANIZATION_ROLE_OPTIONS}
-                  className={styles.roleSelect}
-                />
-              ) : (
-                ORGANIZATION_ROLE_OPTIONS.find((option) => option.value === memberRole)?.label
-              );
+            {
+              title: "角色",
+              key: "role",
+              render: (_v, member) => {
+                const memberRole = organizationRole(member.roles);
+                return canManage ? (
+                  <Select
+                    value={memberRole}
+                    onChange={(nextRole) =>
+                      updateRole.mutate({
+                        userId: member.userId,
+                        nextRole: nextRole as OrganizationRole,
+                      })
+                    }
+                    options={ORGANIZATION_ROLE_OPTIONS}
+                    className={styles.roleSelect}
+                  />
+                ) : (
+                  ORGANIZATION_ROLE_OPTIONS.find((option) => option.value === memberRole)?.label
+                );
+              },
             },
-          },
-          {
-            title: "操作",
-            key: "actions",
-            render: (_v, member) =>
-              canManage || member.userId === session.id ? (
-                <Button
-                  size="small"
-                  type="primary"
-                  danger
-                  disabled={remove.isPending}
-                  onClick={() => remove.mutate(member.userId)}
-                >
-                  {member.userId === session.id ? "退出" : "移除"}
-                </Button>
-              ) : null,
-          },
-        ]}
-      />
+            {
+              title: "操作",
+              key: "actions",
+              render: (_v, member) =>
+                canManage || member.userId === session.id ? (
+                  <Button
+                    size="small"
+                    type="primary"
+                    danger
+                    disabled={remove.isPending}
+                    onClick={() => remove.mutate(member.userId)}
+                  >
+                    {member.userId === session.id ? "退出" : "移除"}
+                  </Button>
+                ) : null,
+            },
+          ]}
+        />
+      )}
       <p className="sg-hint">成员身份由统一账号服务管理；资产分享权限仍可在资产详情中单独收敛。</p>
     </Card>
   );

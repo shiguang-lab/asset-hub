@@ -1,4 +1,4 @@
-import { Empty, formatDate, Scrollbar, StatusBadge, useToast } from "@shiguang/ui";
+import { Empty, formatDate, Loading, Scrollbar, StatusBadge, useToast } from "@shiguang/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button, Card, Modal } from "antd";
 import { createStyles } from "antd-style";
@@ -20,7 +20,7 @@ export function PublishesPage() {
   const { styles } = usePublishesStyles();
   const toast = useToast();
   const queryClient = useQueryClient();
-  const { data: publishes } = useQuery<Publish[]>({
+  const { data: publishes, isLoading } = useQuery<Publish[]>({
     queryKey: ["publishes"],
     queryFn: () => api("/publishes"),
   });
@@ -70,9 +70,11 @@ export function PublishesPage() {
     assets?.items.find((a) => a.id === assetId)?.title ?? assetId;
 
   return (
-    <div>
+    <div className="sg-page-fill">
       <h1 className="sg-h1 sg-mb">发布管理</h1>
-      {(publishes?.length ?? 0) === 0 ? (
+      {isLoading ? (
+        <Loading loading />
+      ) : (publishes?.length ?? 0) === 0 ? (
         <Empty title="还没有发布内容" hint="在文档 / 演示详情页点击「发布」生成稳定 URL。" />
       ) : (
         <Card>

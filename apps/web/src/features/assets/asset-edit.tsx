@@ -1,4 +1,4 @@
-import { Empty, useToast } from "@shiguang/ui";
+import { Empty, Loading, useToast } from "@shiguang/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button, Input, Segmented, Tag } from "antd";
 import { createStyles } from "antd-style";
@@ -82,7 +82,7 @@ export function AssetEditPage() {
     onError: (error: Error) => toast("error", error.message),
   });
 
-  if (isLoading || !asset) return <Empty title="加载中…" />;
+  if (isLoading || !asset) return <Loading loading />;
   if (!canWriteWorkspace(getAuthSession())) {
     return (
       <Empty

@@ -1310,6 +1310,7 @@ export function DocumentsPage() {
           total={items.length}
           current={page}
           pageSize={pageSize}
+          pageSizeOptions={[18, 36, 54, 72]}
           onChange={setPage}
           onPageSizeChange={setPageSize}
         />
