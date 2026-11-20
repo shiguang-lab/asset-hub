@@ -82,9 +82,7 @@ export function Scrollbar({
 
 const BRAND_LOADING_STYLES = `
 .sg-brand-loading {
-  --sg-loader-size: 72px;
-  --sg-loader-gap: 12px;
-  --sg-loader-font: 13px;
+  --sg-loader-size: 64px;
   display: flex;
   flex: 1 1 auto;
   min-height: 220px;
@@ -93,21 +91,15 @@ const BRAND_LOADING_STYLES = `
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: var(--sg-loader-gap);
   padding: 24px 16px;
-  color: var(--sg-fg-2, #b5bed2);
   opacity: 0;
-  animation: sg-loader-appear .16s ease-out forwards;
+  animation: sg-loader-appear .14s ease-out forwards;
 }
 .sg-brand-loading--sm {
-  --sg-loader-size: 46px;
-  --sg-loader-gap: 8px;
-  --sg-loader-font: 12px;
+  --sg-loader-size: 42px;
 }
 .sg-brand-loading--lg {
-  --sg-loader-size: 88px;
-  --sg-loader-gap: 14px;
-  --sg-loader-font: 14px;
+  --sg-loader-size: 82px;
 }
 .sg-brand-loading__stage {
   position: relative;
@@ -125,276 +117,101 @@ const BRAND_LOADING_STYLES = `
 }
 .sg-brand-loading__aura {
   transform-origin: 12px 12px;
-  animation: sg-loader-aura 2.4s ease-in-out infinite;
+  animation: sg-loader-aura 1.5s ease-in-out infinite;
 }
-.sg-brand-loading__ghost {
-  fill: rgba(168, 85, 247, 0.05);
-  stroke: rgba(192, 132, 252, 0.22);
-  stroke-width: 1.35;
-  stroke-linecap: round;
-  stroke-linejoin: round;
+.sg-brand-loading__slot-shadow {
+  transform-origin: 17.25px 11.2px;
+  animation: sg-loader-slot-shadow 1.5s cubic-bezier(.35, 0, .25, 1) infinite;
 }
-.sg-brand-loading__ghost-plus {
-  fill: none;
-  stroke: rgba(56, 189, 248, 0.26);
-  stroke-width: 1.45;
-  stroke-linecap: round;
-}
-.sg-brand-loading__tile-motion {
-  transform-origin: 0 0;
-}
-.sg-brand-loading__tile-motion--tl {
-  animation: sg-loader-assemble-tl 2.4s cubic-bezier(.42, 0, .2, 1) infinite;
-}
-.sg-brand-loading__tile-motion--tr {
-  animation: sg-loader-assemble-tr 2.4s cubic-bezier(.42, 0, .2, 1) .14s infinite;
-}
-.sg-brand-loading__tile-motion--bl {
-  animation: sg-loader-assemble-bl 2.4s cubic-bezier(.42, 0, .2, 1) .28s infinite;
-}
-.sg-brand-loading__tile-fill {
-  stroke: none;
-  opacity: 0;
-  animation: sg-loader-tile-fill 2.4s ease-in-out infinite;
-}
-.sg-brand-loading__tile-fill--tr { animation-delay: .14s; }
-.sg-brand-loading__tile-fill--bl { animation-delay: .28s; }
-.sg-brand-loading__tile-stroke {
-  fill: none;
-  stroke-width: 2.05;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  stroke-dasharray: 1;
-  stroke-dashoffset: 1;
-  animation: sg-loader-tile-draw 2.4s cubic-bezier(.62, .05, .28, .98) infinite;
-}
-.sg-brand-loading__tile-stroke--tr { animation-delay: .14s; }
-.sg-brand-loading__tile-stroke--bl { animation-delay: .28s; }
-.sg-brand-loading__spark-ripple {
-  fill: none;
-  stroke-width: 1.1;
-  transform-origin: 0 0;
-  opacity: 0;
-  animation: sg-loader-ripple 2.4s cubic-bezier(.16, 1, .3, 1) infinite;
-}
-.sg-brand-loading__spark-group {
-  transform-origin: 0 0;
-  animation: sg-loader-spark-spin 2.4s cubic-bezier(.5, 0, .18, 1) infinite;
-}
-.sg-brand-loading__spark-arm {
-  fill: none;
+.sg-brand-loading__tile-base {
   stroke-width: 2.15;
   stroke-linecap: round;
-  stroke-dasharray: 1;
-  stroke-dashoffset: 1;
-  animation: sg-loader-spark-draw 2.4s cubic-bezier(.5, 0, .2, 1) infinite;
+  stroke-linejoin: round;
 }
-.sg-brand-loading__spark-arm--v {
-  animation-delay: .08s;
+.sg-brand-loading__plus-base {
+  fill: none;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transform-origin: 17.25px 17.25px;
+  animation: sg-loader-plus-nudge 1.5s ease-in-out infinite;
 }
-.sg-brand-loading__spark-core {
-  transform-origin: 0 0;
-  opacity: 0;
-  animation: sg-loader-spark-core 2.4s ease-in-out infinite;
-}
-.sg-brand-loading__label {
-  display: inline-flex;
-  min-height: 20px;
-  align-items: center;
-  gap: 5px;
-  font-size: var(--sg-loader-font);
-  font-weight: 560;
-  letter-spacing: 0.02em;
-  line-height: 1.4;
-  white-space: nowrap;
-  color: var(--sg-fg-2, #b5bed2);
-}
-.sg-brand-loading__dots {
-  display: inline-flex;
-  align-items: center;
-  gap: 3.5px;
-  transform: translateY(1px);
-}
-.sg-brand-loading__dots span {
-  width: 4px;
-  height: 4px;
-  border-radius: 999px;
-  animation: sg-loader-dot 1.2s ease-in-out infinite;
-}
-.sg-brand-loading__dots span:nth-child(1) {
-  background: #fb7185;
-  animation-delay: 0s;
-}
-.sg-brand-loading__dots span:nth-child(2) {
-  background: #c084fc;
-  animation-delay: .16s;
-}
-.sg-brand-loading__dots span:nth-child(3) {
-  background: #38bdf8;
-  animation-delay: .32s;
+.sg-brand-loading__hopper {
+  transform-origin: 0 3.75px;
+  animation: sg-loader-cheeky-hop 1.5s cubic-bezier(.34, .06, .22, 1) infinite;
 }
 @keyframes sg-loader-appear {
   to { opacity: 1; }
 }
 @keyframes sg-loader-aura {
   0%, 100% {
-    opacity: .42;
-    transform: scale(.88);
+    opacity: .55;
+    transform: scale(.94);
   }
-  50% {
-    opacity: .95;
-    transform: scale(1.12);
-  }
-}
-@keyframes sg-loader-assemble-tl {
-  0%, 5% {
-    transform: translate(-1.8px, -1.8px) scale(.76);
-  }
-  34% {
-    transform: translate(0, 0) scale(1.06);
-  }
-  44%, 66% {
-    transform: translate(0, 0) scale(1);
-  }
-  92%, 100% {
-    transform: translate(-1.6px, -1.6px) scale(.8);
+  35% {
+    opacity: .9;
+    transform: scale(1.06);
   }
 }
-@keyframes sg-loader-assemble-tr {
-  0%, 5% {
-    transform: translate(1.8px, -1.8px) scale(.76);
+@keyframes sg-loader-slot-shadow {
+  0%, 10% {
+    opacity: .55;
+    transform: scaleX(1.12);
   }
-  34% {
-    transform: translate(0, 0) scale(1.06);
+  36% {
+    opacity: .14;
+    transform: scaleX(.55);
   }
-  44%, 66% {
-    transform: translate(0, 0) scale(1);
+  58% {
+    opacity: .62;
+    transform: scaleX(1.18);
   }
-  92%, 100% {
-    transform: translate(1.6px, -1.6px) scale(.8);
-  }
-}
-@keyframes sg-loader-assemble-bl {
-  0%, 5% {
-    transform: translate(-1.8px, 1.8px) scale(.76);
-  }
-  34% {
-    transform: translate(0, 0) scale(1.06);
-  }
-  44%, 66% {
-    transform: translate(0, 0) scale(1);
-  }
-  92%, 100% {
-    transform: translate(-1.6px, 1.6px) scale(.8);
-  }
-}
-@keyframes sg-loader-tile-draw {
-  0% {
-    stroke-dashoffset: 1;
-    opacity: .42;
-  }
-  28%, 64% {
-    stroke-dashoffset: 0;
-    opacity: 1;
-  }
-  92%, 100% {
-    stroke-dashoffset: -1;
-    opacity: .35;
-  }
-}
-@keyframes sg-loader-tile-fill {
-  0%, 20% {
-    opacity: 0;
-  }
-  42%, 62% {
-    opacity: .34;
+  70% {
+    opacity: .3;
+    transform: scaleX(.82);
   }
   82%, 100% {
-    opacity: 0;
+    opacity: .42;
+    transform: scaleX(1);
   }
 }
-@keyframes sg-loader-spark-draw {
-  0%, 16% {
-    stroke-dashoffset: 1;
-    opacity: 0;
+@keyframes sg-loader-cheeky-hop {
+  0% {
+    transform: translate(0px, 0px) rotate(0deg) scale(1, 1);
   }
-  36%, 68% {
-    stroke-dashoffset: 0;
-    opacity: 1;
+  10% {
+    transform: translate(0px, 0.85px) rotate(-3deg) scale(1.12, 0.84);
   }
-  90%, 100% {
-    stroke-dashoffset: -1;
-    opacity: 0;
+  32% {
+    transform: translate(0.9px, -5.2px) rotate(14deg) scale(0.94, 1.08);
   }
-}
-@keyframes sg-loader-spark-spin {
-  0%, 34% {
-    transform: rotate(0deg) scale(.86);
+  44% {
+    transform: translate(0.5px, -5.6px) rotate(-11deg) scale(1.03, 1.02);
   }
-  54% {
-    transform: rotate(90deg) scale(1.16);
+  58% {
+    transform: translate(0px, 0.75px) rotate(2deg) scale(1.14, 0.84);
   }
-  68%, 100% {
-    transform: rotate(90deg) scale(1);
+  70% {
+    transform: translate(-0.2px, -1.9px) rotate(-5deg) scale(0.97, 1.04);
+  }
+  82%, 100% {
+    transform: translate(0px, 0px) rotate(0deg) scale(1, 1);
   }
 }
-@keyframes sg-loader-spark-core {
-  0%, 34% {
-    opacity: 0;
-    transform: scale(.35);
+@keyframes sg-loader-plus-nudge {
+  0%, 52%, 100% {
+    transform: translateY(0px) scale(1);
   }
-  50% {
-    opacity: .95;
-    transform: scale(1.2);
-  }
-  70%, 100% {
-    opacity: 0;
-    transform: scale(.35);
-  }
-}
-@keyframes sg-loader-ripple {
-  0%, 36% {
-    opacity: 0;
-    transform: scale(.35);
-  }
-  48% {
-    opacity: .76;
-    transform: scale(.7);
-  }
-  76%, 100% {
-    opacity: 0;
-    transform: scale(1.6);
-  }
-}
-@keyframes sg-loader-dot {
-  0%, 100% {
-    opacity: .35;
-    transform: translateY(0) scale(.9);
-  }
-  50% {
-    opacity: 1;
-    transform: translateY(-2.5px) scale(1.1);
+  60% {
+    transform: translateY(0.5px) scale(0.96, 1.03);
   }
 }
 @media (prefers-reduced-motion: reduce) {
   .sg-brand-loading__aura,
-  .sg-brand-loading__tile-motion,
-  .sg-brand-loading__tile-fill,
-  .sg-brand-loading__tile-stroke,
-  .sg-brand-loading__spark-ripple,
-  .sg-brand-loading__spark-group,
-  .sg-brand-loading__spark-arm,
-  .sg-brand-loading__spark-core,
-  .sg-brand-loading__dots span {
+  .sg-brand-loading__slot-shadow,
+  .sg-brand-loading__plus-base,
+  .sg-brand-loading__hopper {
     animation: none;
-  }
-  .sg-brand-loading__tile-stroke,
-  .sg-brand-loading__spark-arm {
-    stroke-dashoffset: 0;
-    opacity: 1;
-  }
-  .sg-brand-loading__tile-fill {
-    opacity: .24;
   }
 }
 `;
@@ -416,7 +233,7 @@ function BrandLoading({
   const tlGradId = `sg-loading-tl-${instanceId}`;
   const trGradId = `sg-loading-tr-${instanceId}`;
   const blGradId = `sg-loading-bl-${instanceId}`;
-  const sparkGradId = `sg-loading-spark-${instanceId}`;
+  const plusGradId = `sg-loading-plus-${instanceId}`;
   const glowFilterId = `sg-loading-glow-${instanceId}`;
   return (
     <output
@@ -431,7 +248,7 @@ function BrandLoading({
     >
       <style data-sg-brand-loading="true">{BRAND_LOADING_STYLES}</style>
       <div className="sg-brand-loading__stage" aria-hidden="true">
-        <svg className="sg-brand-loading__svg" viewBox="-4 -4 32 32" fill="none" aria-hidden="true">
+        <svg className="sg-brand-loading__svg" viewBox="-4 -8 32 34" fill="none" aria-hidden="true">
           <defs>
             <radialGradient id={auraId} cx="50%" cy="50%" r="50%">
               <stop offset="0%" stopColor="#A855F7" stopOpacity="0.34" />
@@ -439,27 +256,27 @@ function BrandLoading({
               <stop offset="100%" stopColor="#060811" stopOpacity="0" />
             </radialGradient>
             <linearGradient id={tlGradId} x1="0" y1="0" x2="1" y2="1">
-              <stop offset="0%" stopColor="#FB7185" />
-              <stop offset="100%" stopColor="#C084FC" />
-            </linearGradient>
-            <linearGradient id={trGradId} x1="0" y1="0" x2="1" y2="1">
               <stop offset="0%" stopColor="#C084FC" />
               <stop offset="100%" stopColor="#818CF8" />
             </linearGradient>
+            <linearGradient id={trGradId} x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0%" stopColor="#FB7185" />
+              <stop offset="55%" stopColor="#E879F9" />
+              <stop offset="100%" stopColor="#C084FC" />
+            </linearGradient>
             <linearGradient id={blGradId} x1="0" y1="0" x2="1" y2="1">
-              <stop offset="0%" stopColor="#A855F7" />
+              <stop offset="0%" stopColor="#818CF8" />
               <stop offset="100%" stopColor="#38BDF8" />
             </linearGradient>
             <linearGradient
-              id={sparkGradId}
-              x1="-4"
-              y1="-4"
-              x2="4"
-              y2="4"
+              id={plusGradId}
+              x1="14"
+              y1="14"
+              x2="20.5"
+              y2="20.5"
               gradientUnits="userSpaceOnUse"
             >
-              <stop offset="0%" stopColor="#FDE68A" />
-              <stop offset="50%" stopColor="#FFFFFF" />
+              <stop offset="0%" stopColor="#E2E8F0" />
               <stop offset="100%" stopColor="#38BDF8" />
             </linearGradient>
             <filter id={glowFilterId} x="-35%" y="-35%" width="170%" height="170%">
@@ -475,159 +292,73 @@ function BrandLoading({
             className="sg-brand-loading__aura"
             cx="12"
             cy="12"
-            r="15"
+            r="14.5"
             fill={`url(#${auraId})`}
           />
 
-          {/* Ghost Logo Blueprint keeping 2x2 structure anchored between assembly cycles */}
-          <g>
+          <g filter={`url(#${glowFilterId})`}>
+            {/* Top-left grounded module */}
             <rect
-              className="sg-brand-loading__ghost"
+              className="sg-brand-loading__tile-base"
               x="3"
               y="3"
               width="7.5"
               height="7.5"
               rx="2.2"
+              fill={`url(#${tlGradId})`}
+              fillOpacity="0.16"
+              stroke={`url(#${tlGradId})`}
             />
+
+            {/* Bottom-left grounded module */}
             <rect
-              className="sg-brand-loading__ghost"
-              x="13.5"
-              y="3"
-              width="7.5"
-              height="7.5"
-              rx="2.2"
-            />
-            <rect
-              className="sg-brand-loading__ghost"
+              className="sg-brand-loading__tile-base"
               x="3"
               y="13.5"
               width="7.5"
               height="7.5"
               rx="2.2"
+              fill={`url(#${blGradId})`}
+              fillOpacity="0.16"
+              stroke={`url(#${blGradId})`}
             />
-            <path className="sg-brand-loading__ghost-plus" d="M14 17.25h6.5M17.25 14v6.5" />
-          </g>
 
-          <g filter={`url(#${glowFilterId})`}>
-            {/* Top-left modular tile */}
-            <g transform="translate(6.75 6.75)">
-              <g className="sg-brand-loading__tile-motion sg-brand-loading__tile-motion--tl">
-                <rect
-                  className="sg-brand-loading__tile-fill"
-                  x="-3.75"
-                  y="-3.75"
-                  width="7.5"
-                  height="7.5"
-                  rx="2.2"
-                  fill={`url(#${tlGradId})`}
-                />
-                <rect
-                  className="sg-brand-loading__tile-stroke"
-                  x="-3.75"
-                  y="-3.75"
-                  width="7.5"
-                  height="7.5"
-                  rx="2.2"
-                  pathLength="1"
-                  stroke={`url(#${tlGradId})`}
-                />
-              </g>
-            </g>
+            {/* Bottom-right '+' mark */}
+            <path
+              className="sg-brand-loading__plus-base"
+              d="M14 17.25h6.5M17.25 14v6.5"
+              stroke={`url(#${plusGradId})`}
+            />
 
-            {/* Top-right modular tile */}
+            {/* Soft landing shadow beneath the hopping top-right block */}
+            <ellipse
+              className="sg-brand-loading__slot-shadow"
+              cx="17.25"
+              cy="11.2"
+              rx="3.3"
+              ry="0.7"
+              fill="#C084FC"
+            />
+
+            {/* Top-right playful hopping block */}
             <g transform="translate(17.25 6.75)">
-              <g className="sg-brand-loading__tile-motion sg-brand-loading__tile-motion--tr">
+              <g className="sg-brand-loading__hopper">
                 <rect
-                  className="sg-brand-loading__tile-fill sg-brand-loading__tile-fill--tr"
+                  className="sg-brand-loading__tile-base"
                   x="-3.75"
                   y="-3.75"
                   width="7.5"
                   height="7.5"
                   rx="2.2"
                   fill={`url(#${trGradId})`}
-                />
-                <rect
-                  className="sg-brand-loading__tile-stroke sg-brand-loading__tile-stroke--tr"
-                  x="-3.75"
-                  y="-3.75"
-                  width="7.5"
-                  height="7.5"
-                  rx="2.2"
-                  pathLength="1"
+                  fillOpacity="0.34"
                   stroke={`url(#${trGradId})`}
-                />
-              </g>
-            </g>
-
-            {/* Bottom-left modular tile */}
-            <g transform="translate(6.75 17.25)">
-              <g className="sg-brand-loading__tile-motion sg-brand-loading__tile-motion--bl">
-                <rect
-                  className="sg-brand-loading__tile-fill sg-brand-loading__tile-fill--bl"
-                  x="-3.75"
-                  y="-3.75"
-                  width="7.5"
-                  height="7.5"
-                  rx="2.2"
-                  fill={`url(#${blGradId})`}
-                />
-                <rect
-                  className="sg-brand-loading__tile-stroke sg-brand-loading__tile-stroke--bl"
-                  x="-3.75"
-                  y="-3.75"
-                  width="7.5"
-                  height="7.5"
-                  rx="2.2"
-                  pathLength="1"
-                  stroke={`url(#${blGradId})`}
-                />
-              </g>
-            </g>
-
-            {/* Bottom-right '+' creation spark */}
-            <g transform="translate(17.25 17.25)">
-              <circle
-                className="sg-brand-loading__spark-ripple"
-                cx="0"
-                cy="0"
-                r="4.2"
-                stroke="#38BDF8"
-              />
-              <circle
-                className="sg-brand-loading__spark-core"
-                cx="0"
-                cy="0"
-                r="1.35"
-                fill="#FFFFFF"
-              />
-              <g className="sg-brand-loading__spark-group">
-                <path
-                  className="sg-brand-loading__spark-arm"
-                  d="M-3.35 0h6.7"
-                  pathLength="1"
-                  stroke={`url(#${sparkGradId})`}
-                />
-                <path
-                  className="sg-brand-loading__spark-arm sg-brand-loading__spark-arm--v"
-                  d="M0 -3.35v6.7"
-                  pathLength="1"
-                  stroke={`url(#${sparkGradId})`}
                 />
               </g>
             </g>
           </g>
         </svg>
       </div>
-      {label ? (
-        <span className="sg-brand-loading__label">
-          <span>{label}</span>
-          <span className="sg-brand-loading__dots" aria-hidden="true">
-            <span />
-            <span />
-            <span />
-          </span>
-        </span>
-      ) : null}
     </output>
   );
 }
