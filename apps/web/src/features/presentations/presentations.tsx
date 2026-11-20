@@ -47,6 +47,7 @@ import {
   Maximize2,
   Play,
   Plus,
+  RotateCcw,
   Search,
   Share2,
   Sparkles,
@@ -65,6 +66,7 @@ import { AppTable } from "../../shared/AppTable.js";
 import { AppTabs } from "../../shared/AppTabs.js";
 import { OwnerAvatar } from "../../shared/OwnerAvatar.js";
 import { isOwnedBySession, ownerDisplayName } from "../../shared/owner.js";
+import { useDeleteConfirm } from "../../shared/useDeleteConfirm";
 import { useShellBreadcrumb } from "../../shell/layout.js";
 import { PublishDialog } from "../publishing/publish-dialog.js";
 
@@ -1630,6 +1632,9 @@ async function loadPresentations(): Promise<Asset[]> {
 
 export function PresentationsPage() {
   const navigate = useNavigate();
+  const toast = useToast();
+  const queryClient = useQueryClient();
+  const { confirmDelete } = useDeleteConfirm();
   const authSession = getAuthSession();
   const [tab, setTab] = useState<"all" | "mine" | "shared" | "favorites" | "trash">("all");
   const [query, setQuery] = useState("");
@@ -1743,6 +1748,43 @@ export function PresentationsPage() {
     { id: "favorites", label: "收藏" },
     { id: "trash", label: "回收站" },
   ] as const;
+  const batchMutation = useMutation({
+    mutationFn: (input: { action: "delete" | "restore" | "permanent"; ids: string[] }) =>
+      api("/assets:batch", { method: "POST", body: input }),
+    onSuccess: (_data, variables) => {
+      const count = variables.ids.length;
+      if (variables.action === "restore") {
+        toast("success", count > 1 ? `已恢复 ${count} 个演示` : "演示已恢复");
+      } else if (variables.action === "permanent") {
+        toast("success", count > 1 ? `已彻底删除 ${count} 个演示` : "演示已彻底删除");
+      } else {
+        toast("success", "已移入回收站");
+      }
+      void queryClient.invalidateQueries({ queryKey: ["assets", "presentation"] });
+      void queryClient.invalidateQueries({ queryKey: ["assets"] });
+      void queryClient.invalidateQueries({ queryKey: ["assets", "storage"] });
+      void queryClient.invalidateQueries({ queryKey: ["home"] });
+    },
+    onError: (error) => {
+      toast("error", error instanceof Error ? error.message : "操作失败");
+    },
+  });
+  const confirmPermanentDeletePresentations = (targets: Asset[]) => {
+    if (targets.length === 0) return;
+    const single = targets.length === 1 ? targets[0] : null;
+    confirmDelete({
+      title: single
+        ? `彻底删除演示「${single.title}」？`
+        : `清空回收站中的 ${targets.length} 个演示？`,
+      content: single
+        ? "彻底删除后不可恢复，将永久移除该演示及历史版本。"
+        : "彻底删除后不可恢复，将永久移除回收站中的全部演示及历史版本。",
+      okText: "彻底删除",
+      onConfirm: () =>
+        batchMutation.mutate({ action: "permanent", ids: targets.map((item) => item.id) }),
+    });
+  };
+  const isTrash = tab === "trash";
   const sharePresentation = (asset: Asset) => {
     setPublishTarget(asset);
   };
@@ -1928,19 +1970,27 @@ export function PresentationsPage() {
                         <div>
                           <button
                             type="button"
-                            onClick={() => navigate(`/presentations/${item.id}`)}
+                            onClick={() => {
+                              if (isTrash) {
+                                toast("info", "该演示在回收站中，请先点击「恢复」后再编辑");
+                                return;
+                              }
+                              navigate(`/presentations/${item.id}`);
+                            }}
                           >
                             {item.title}
                           </button>
                         </div>
-                        <button
-                          type="button"
-                          className={`sg-presentation-favorite${favoriteIds.includes(item.id) ? " active" : ""}`}
-                          aria-label={favoriteIds.includes(item.id) ? "取消收藏" : "收藏"}
-                          onClick={() => toggleFavorite(item.id)}
-                        >
-                          <Star size={13} />
-                        </button>
+                        {!isTrash && (
+                          <button
+                            type="button"
+                            className={`sg-presentation-favorite${favoriteIds.includes(item.id) ? " active" : ""}`}
+                            aria-label={favoriteIds.includes(item.id) ? "取消收藏" : "收藏"}
+                            onClick={() => toggleFavorite(item.id)}
+                          >
+                            <Star size={13} />
+                          </button>
+                        )}
                       </div>
                     ),
                   },
@@ -1981,24 +2031,51 @@ export function PresentationsPage() {
                     width: 120,
                     render: (_v, item) => (
                       <div className="sg-presentation-row-actions">
-                        <Button
-                          size="small"
-                          type="text"
-                          className="sg-list-action-btn"
-                          icon={<Play size={13} />}
-                          aria-label={`播放 ${item.title}`}
-                          title="播放"
-                          onClick={() => navigate(`/presentations/${item.id}/play`)}
-                        />
-                        <Button
-                          size="small"
-                          type="text"
-                          className="sg-list-action-btn"
-                          icon={<Share2 size={13} />}
-                          aria-label={`分享 ${item.title}`}
-                          title="分享"
-                          onClick={() => void sharePresentation(item)}
-                        />
+                        {isTrash ? (
+                          <>
+                            <Button
+                              size="small"
+                              type="text"
+                              className="sg-list-action-btn restore"
+                              icon={<RotateCcw size={13.5} />}
+                              aria-label={`恢复 ${item.title}`}
+                              title="恢复"
+                              onClick={() =>
+                                batchMutation.mutate({ action: "restore", ids: [item.id] })
+                              }
+                            />
+                            <Button
+                              size="small"
+                              type="text"
+                              className="sg-list-action-btn danger"
+                              icon={<Trash2 size={13.5} />}
+                              aria-label={`彻底删除 ${item.title}`}
+                              title="彻底删除"
+                              onClick={() => confirmPermanentDeletePresentations([item])}
+                            />
+                          </>
+                        ) : (
+                          <>
+                            <Button
+                              size="small"
+                              type="text"
+                              className="sg-list-action-btn"
+                              icon={<Play size={13} />}
+                              aria-label={`播放 ${item.title}`}
+                              title="播放"
+                              onClick={() => navigate(`/presentations/${item.id}/play`)}
+                            />
+                            <Button
+                              size="small"
+                              type="text"
+                              className="sg-list-action-btn"
+                              icon={<Share2 size={13} />}
+                              aria-label={`分享 ${item.title}`}
+                              title="分享"
+                              onClick={() => void sharePresentation(item)}
+                            />
+                          </>
+                        )}
                       </div>
                     ),
                   },
@@ -2011,13 +2088,55 @@ export function PresentationsPage() {
                 <article key={item.id}>
                   <PresentationThumbnail title={item.title} tone={index} />
                   <div>
-                    <button type="button" onClick={() => navigate(`/presentations/${item.id}`)}>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (isTrash) {
+                          toast("info", "该演示在回收站中，请先点击「恢复」后再编辑");
+                          return;
+                        }
+                        navigate(`/presentations/${item.id}`);
+                      }}
+                    >
                       {item.title}
                     </button>
                     <p>{item.description || "在线演示内容"}</p>
-                    <span>
-                      <Eye size={12} /> {viewCount(item).toLocaleString("zh-CN")}
-                    </span>
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        gap: 8,
+                      }}
+                    >
+                      <span>
+                        <Eye size={12} /> {viewCount(item).toLocaleString("zh-CN")}
+                      </span>
+                      {isTrash && (
+                        <div className="sg-presentation-row-actions">
+                          <Button
+                            size="small"
+                            type="text"
+                            className="sg-list-action-btn restore"
+                            icon={<RotateCcw size={13.5} />}
+                            aria-label={`恢复 ${item.title}`}
+                            title="恢复"
+                            onClick={() =>
+                              batchMutation.mutate({ action: "restore", ids: [item.id] })
+                            }
+                          />
+                          <Button
+                            size="small"
+                            type="text"
+                            className="sg-list-action-btn danger"
+                            icon={<Trash2 size={13.5} />}
+                            aria-label={`彻底删除 ${item.title}`}
+                            title="彻底删除"
+                            onClick={() => confirmPermanentDeletePresentations([item])}
+                          />
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </article>
               ))}

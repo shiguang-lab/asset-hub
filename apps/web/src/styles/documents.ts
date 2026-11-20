@@ -238,6 +238,35 @@ export const useDocumentsStyles = createStyles(({ css }) => ({
   border-color: var(--zx-brand-border);
   transform: translateX(2px);
 }
+.zx-doc-strip.is-trashed {
+  cursor: default;
+}
+.zx-doc-strip.is-trashed:hover {
+  border-color: var(--zx-border-strong);
+  transform: none;
+}
+
+.zx-trash-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  min-height: 36px;
+}
+.zx-trash-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--sg-muted);
+}
+.zx-trash-acts {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
 
 /* Move Dialog Styles */
 .sg-docs-move-hint {

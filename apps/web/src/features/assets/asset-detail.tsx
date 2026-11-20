@@ -2,7 +2,7 @@ import { Empty, Field, formatDate, Loading, Scrollbar, StatusBadge, useToast } f
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button, Card, Input, Modal, Select, Switch, Tabs, Tag } from "antd";
 import { createStyles } from "antd-style";
-import { Download, FilePenLine, Pencil } from "lucide-react";
+import { Download, FilePenLine, Pencil, RotateCcw, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { canWriteWorkspace, getAuthSession, isWorkspaceAdmin } from "../../auth/session.js";
@@ -158,11 +158,34 @@ export function AssetDetailPage() {
     onSuccess: () => {
       toast("success", "已移入回收站");
       void queryClient.invalidateQueries({ queryKey: ["assets"] });
+      void queryClient.invalidateQueries({ queryKey: ["assets", "storage"] });
+      navigate("/assets");
+    },
+  });
+
+  const restoreAsset = useMutation({
+    mutationFn: () => api(`/assets/${id}/restore`, { method: "POST" }),
+    onSuccess: () => {
+      toast("success", "资产已恢复");
+      void queryClient.invalidateQueries({ queryKey: ["asset", id] });
+      void queryClient.invalidateQueries({ queryKey: ["assets"] });
+      void queryClient.invalidateQueries({ queryKey: ["home"] });
+    },
+  });
+
+  const permanentDeleteAsset = useMutation({
+    mutationFn: () => api(`/assets/${id}/permanent`, { method: "POST" }),
+    onSuccess: () => {
+      toast("success", "资产已彻底删除");
+      void queryClient.invalidateQueries({ queryKey: ["assets"] });
+      void queryClient.invalidateQueries({ queryKey: ["assets", "storage"] });
+      void queryClient.invalidateQueries({ queryKey: ["home"] });
       navigate("/assets");
     },
   });
 
   if (!asset) return <Loading loading />;
+  const isDeleted = Boolean(asset.deletedAt);
   const canManageAsset = workspaceAdmin || asset.ownerSubject === session?.id;
   const published = publishes?.find((p) => p.assetId === asset.id && p.status === "active");
   const content = asset.content;
@@ -177,88 +200,127 @@ export function AssetDetailPage() {
           <div className="sg-row sg-mt-sm">
             <StatusBadge status={asset.status} />
             <Tag>{asset.type}</Tag>
+            {isDeleted && <Tag color="red">回收站</Tag>}
           </div>
         </div>
         <div className="sg-row">
-          {canManageAsset ? (
-            <span className="sg-row" title="独立控制资产本身的公有/私有状态">
-              <span className="sg-subtle">{asset.visibility === "public" ? "公开" : "私有"}</span>
-              <Switch
-                checked={asset.visibility === "public"}
-                checkedChildren="公开"
-                unCheckedChildren="私有"
-                loading={toggleVisibility.isPending}
-                onChange={(checked) => toggleVisibility.mutate(checked ? "public" : "private")}
-              />
-            </span>
-          ) : null}
-          {workspaceWritable ? (
-            <Button
-              icon={<Pencil size={15} />}
-              onClick={() => navigate(`/assets/${asset.id}/edit`)}
-            >
-              编辑资产
-            </Button>
-          ) : null}
-          {workspaceWritable && contentEditorHref ? (
-            <Button icon={<FilePenLine size={15} />} onClick={() => navigate(contentEditorHref)}>
-              编辑内容
-            </Button>
-          ) : null}
-          {asset.type === "file" ? (
-            <Button
-              type="primary"
-              onClick={() =>
-                void downloadFile(`/assets/${asset.id}/download`, asset.title).catch((error) =>
-                  toast("error", error instanceof Error ? error.message : "下载失败"),
-                )
-              }
-            >
-              <Download size={15} /> 下载文件
-            </Button>
-          ) : null}
-          {["document", "report", "html", "presentation", "dataset"].includes(asset.type) ? (
-            <Button
-              onClick={() =>
-                void downloadFile(`/assets/${asset.id}/download`, asset.title).catch((error) =>
-                  toast("error", error instanceof Error ? error.message : "下载失败"),
-                )
-              }
-            >
-              <Download size={15} /> 下载
-            </Button>
-          ) : null}
-          {workspaceWritable && <Button onClick={() => setKbModal(true)}>加入知识库</Button>}
-          {canManageAsset && <Button onClick={() => setShareModal(true)}>分享</Button>}
-          {workspaceWritable && (
-            <Button onClick={() => navigate(`/presentations/new?asset=${asset.id}`)}>
-              生成演示
-            </Button>
-          )}
-          {canManageAsset &&
-            (published ? (
-              <Button type="primary" onClick={() => setPublishOpen(true)}>
-                发布设置
-              </Button>
-            ) : (
-              <Button type="primary" onClick={() => setPublishOpen(true)}>
-                发布
-              </Button>
-            ))}
-          {canManageAsset && (
-            <Button
-              type="primary"
-              danger
-              onClick={() =>
-                confirmDelete({
-                  title: `删除资产「${asset.title}」？`,
-                  content: "删除后可在回收站恢复。",
-                  onConfirm: () => deleteAsset.mutate(),
-                })
-              }
-            >
-              删除
-            </Button>
+          {isDeleted ? (
+            canManageAsset ? (
+              <>
+                <Button
+                  type="primary"
+                  icon={<RotateCcw size={15} />}
+                  loading={restoreAsset.isPending}
+                  onClick={() => restoreAsset.mutate()}
+                >
+                  恢复资产
+                </Button>
+                <Button
+                  type="primary"
+                  danger
+                  icon={<Trash2 size={15} />}
+                  loading={permanentDeleteAsset.isPending}
+                  onClick={() =>
+                    confirmDelete({
+                      title: `彻底删除资产「${asset.title}」？`,
+                      content: "彻底删除后不可恢复，将永久移除该资产及历史版本。",
+                      okText: "彻底删除",
+                      onConfirm: () => permanentDeleteAsset.mutate(),
+                    })
+                  }
+                >
+                  彻底删除
+                </Button>
+              </>
+            ) : null
+          ) : (
+            <>
+              {canManageAsset ? (
+                <span className="sg-row" title="独立控制资产本身的公有/私有状态">
+                  <span className="sg-subtle">
+                    {asset.visibility === "public" ? "公开" : "私有"}
+                  </span>
+                  <Switch
+                    checked={asset.visibility === "public"}
+                    checkedChildren="公开"
+                    unCheckedChildren="私有"
+                    loading={toggleVisibility.isPending}
+                    onChange={(checked) => toggleVisibility.mutate(checked ? "public" : "private")}
+                  />
+                </span>
+              ) : null}
+              {workspaceWritable ? (
+                <Button
+                  icon={<Pencil size={15} />}
+                  onClick={() => navigate(`/assets/${asset.id}/edit`)}
+                >
+                  编辑资产
+                </Button>
+              ) : null}
+              {workspaceWritable && contentEditorHref ? (
+                <Button
+                  icon={<FilePenLine size={15} />}
+                  onClick={() => navigate(contentEditorHref)}
+                >
+                  编辑内容
+                </Button>
+              ) : null}
+              {asset.type === "file" ? (
+                <Button
+                  type="primary"
+                  onClick={() =>
+                    void downloadFile(`/assets/${asset.id}/download`, asset.title).catch((error) =>
+                      toast("error", error instanceof Error ? error.message : "下载失败"),
+                    )
+                  }
+                >
+                  <Download size={15} /> 下载文件
+                </Button>
+              ) : null}
+              {["document", "report", "html", "presentation", "dataset"].includes(asset.type) ? (
+                <Button
+                  onClick={() =>
+                    void downloadFile(`/assets/${asset.id}/download`, asset.title).catch((error) =>
+                      toast("error", error instanceof Error ? error.message : "下载失败"),
+                    )
+                  }
+                >
+                  <Download size={15} /> 下载
+                </Button>
+              ) : null}
+              {workspaceWritable && <Button onClick={() => setKbModal(true)}>加入知识库</Button>}
+              {canManageAsset && <Button onClick={() => setShareModal(true)}>分享</Button>}
+              {workspaceWritable && (
+                <Button onClick={() => navigate(`/presentations/new?asset=${asset.id}`)}>
+                  生成演示
+                </Button>
+              )}
+              {canManageAsset &&
+                (published ? (
+                  <Button type="primary" onClick={() => setPublishOpen(true)}>
+                    发布设置
+                  </Button>
+                ) : (
+                  <Button type="primary" onClick={() => setPublishOpen(true)}>
+                    发布
+                  </Button>
+                ))}
+              {canManageAsset && (
+                <Button
+                  type="primary"
+                  danger
+                  onClick={() =>
+                    confirmDelete({
+                      title: `删除资产「${asset.title}」？`,
+                      content: "删除后可在回收站恢复。",
+                      onConfirm: () => deleteAsset.mutate(),
+                    })
+                  }
+                >
+                  删除
+                </Button>
+              )}
+            </>
           )}
         </div>
       </div>

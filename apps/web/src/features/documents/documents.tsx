@@ -20,10 +20,12 @@ import {
   MonitorPlay,
   MoreHorizontal,
   Plus,
+  RotateCcw,
   Search,
   Share2,
   Sparkles,
   Star,
+  Trash2,
   X,
 } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -381,12 +383,24 @@ export function DocumentsPage() {
   });
 
   const batchMutation = useMutation({
-    mutationFn: (input: { action: "delete" | "restore"; ids: string[] }) =>
+    mutationFn: (input: { action: "delete" | "restore" | "permanent"; ids: string[] }) =>
       api("/assets:batch", { method: "POST", body: input }),
-    onSuccess: () => {
-      toast("success", "操作成功");
+    onSuccess: (_data, variables) => {
+      const count = variables.ids.length;
+      if (variables.action === "restore") {
+        toast("success", count > 1 ? `已恢复 ${count} 篇文档` : "文档已恢复");
+      } else if (variables.action === "permanent") {
+        toast("success", count > 1 ? `已彻底删除 ${count} 篇文档` : "文档已彻底删除");
+      } else {
+        toast("success", "已移入回收站");
+      }
       void queryClient.invalidateQueries({ queryKey: ["assets", "document"] });
+      void queryClient.invalidateQueries({ queryKey: ["assets"] });
+      void queryClient.invalidateQueries({ queryKey: ["assets", "storage"] });
       void queryClient.invalidateQueries({ queryKey: ["home"] });
+    },
+    onError: (error) => {
+      toast("error", error instanceof Error ? error.message : "操作失败");
     },
   });
 
@@ -398,10 +412,39 @@ export function DocumentsPage() {
     });
   };
 
+  const confirmPermanentDeleteDocuments = (targets: Asset[]) => {
+    if (targets.length === 0) return;
+    const single = targets.length === 1 ? targets[0] : null;
+    confirmDelete({
+      title: single
+        ? `彻底删除文档「${single.title}」？`
+        : `清空回收站中的 ${targets.length} 篇文档？`,
+      content: single
+        ? "彻底删除后不可恢复，将永久移除文档及其历史版本。"
+        : "彻底删除后不可恢复，将永久移除回收站中的全部文档及历史版本。",
+      okText: "彻底删除",
+      onConfirm: () =>
+        batchMutation.mutate({ action: "permanent", ids: targets.map((item) => item.id) }),
+    });
+  };
+
+  const confirmRestoreAllDocuments = (targets: Asset[]) => {
+    if (targets.length === 0) return;
+    modal.confirm({
+      title: `恢复全部 ${targets.length} 篇文档？`,
+      content: "这些文档将恢复到删除前的状态与目录。",
+      okText: "全部恢复",
+      cancelText: "取消",
+      onOk: () => batchMutation.mutate({ action: "restore", ids: targets.map((item) => item.id) }),
+    });
+  };
+
   const demoMode = import.meta.env.DEV && (docs?.items?.length ?? 0) === 0;
   const all = useMemo(() => (demoMode ? DEMO_DOCUMENTS : (docs?.items ?? [])), [demoMode, docs]);
   const deleted = useMemo(() => trashed?.items ?? [], [trashed]);
-  const listLoading = filter === "trash" ? trashedLoading : documentsLoading;
+  const trashedDocs = useMemo(() => deleted.filter((a) => Boolean(a.deletedAt)), [deleted]);
+  const isTrash = filter === "trash";
+  const listLoading = isTrash ? trashedLoading : documentsLoading;
   const folders = useMemo(
     () =>
       mergeFolderTree(
@@ -441,13 +484,13 @@ export function DocumentsPage() {
       shared: liveDocs.filter((a) => !isOwnedBySession(a, authSession)).length,
       favorites: liveDocs.filter((a) => favoriteIds.includes(a.id)).length,
       published: liveDocs.filter((a) => Boolean(a.publishedUrl)).length,
-      trash: deleted.filter((a) => Boolean(a.deletedAt)).length,
+      trash: trashedDocs.length,
     }),
-    [authSession, deleted, favoriteIds, liveDocs],
+    [authSession, favoriteIds, liveDocs, trashedDocs.length],
   );
 
   const items = useMemo(() => {
-    const base = filter === "trash" ? deleted.filter((a) => Boolean(a.deletedAt)) : liveDocs;
+    const base = isTrash ? trashedDocs : liveDocs;
     return base
       .filter((a) =>
         filter === "mine"
@@ -473,7 +516,7 @@ export function DocumentsPage() {
             ? new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
             : new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
       );
-  }, [authSession, deleted, favoriteIds, filter, folderScope, liveDocs, q, sort]);
+  }, [authSession, favoriteIds, filter, folderScope, isTrash, liveDocs, q, sort, trashedDocs]);
 
   useEffect(() => {
     setPage(1);
@@ -626,9 +669,7 @@ export function DocumentsPage() {
     { key: "copy", label: "复制链接" },
     { key: "favorite", label: favoriteIds.includes(document.id) ? "取消收藏" : "收藏" },
     { key: "move", label: "移动到目录" },
-    filter !== "trash"
-      ? { key: "delete", label: "删除", danger: true }
-      : { key: "restore", label: "恢复" },
+    { key: "delete", label: "删除", danger: true },
   ];
 
   const onDocumentMenuClick = (document: Asset, key: string) => {
@@ -639,7 +680,6 @@ export function DocumentsPage() {
     if (key === "favorite") toggleFavorite(document.id);
     if (key === "move") openMoveDialog(document);
     if (key === "delete") confirmDeleteDocument(document);
-    if (key === "restore") batchMutation.mutate({ action: "restore", ids: [document.id] });
   };
 
   const confirmMoveToFolder = async () => {
@@ -921,106 +961,149 @@ export function DocumentsPage() {
           </div>
         </div>
 
-        <div className="zx-folder-strip">
-          <div className="zx-folder-chips tabular">
-            <div
-              className={`zx-f-chip-wrap ${activeFolderId === ROOT_FOLDER_ID ? "active" : ""}`}
-              onDragOver={(event) => event.preventDefault()}
-              onDrop={(event) => {
-                event.preventDefault();
-                const documentId = event.dataTransfer.getData("application/x-shiguang-document");
-                if (documentId) void moveToFolder(documentId, "");
-              }}
-            >
-              <button
-                type="button"
-                className="zx-f-chip"
-                style={{ paddingRight: 13 }}
-                onClick={() => setActiveFolderId(ROOT_FOLDER_ID)}
-              >
-                全部目录
-              </button>
-            </div>
+        {isTrash ? (
+          <div className="zx-trash-strip">
+            <span className="zx-trash-hint">
+              <Trash2 size={14} />
+              <span>回收站中的文档不会出现在目录与搜索结果中，可恢复或彻底删除</span>
+            </span>
 
-            {visibleFolders.map((folder, index) => {
-              const isActive = activeFolderId === folder.id;
-              const color = FOLDER_COLORS[index % FOLDER_COLORS.length];
-              const label = folder.parentId ? folderDisplayPath(folders, folder.id) : folder.name;
-              return (
-                <div
-                  key={folder.id}
-                  className={`zx-f-chip-wrap ${isActive ? "active" : ""}`}
-                  onDragOver={(event) => event.preventDefault()}
-                  onDrop={(event) => {
-                    event.preventDefault();
-                    const documentId = event.dataTransfer.getData(
-                      "application/x-shiguang-document",
-                    );
-                    if (documentId) void moveToFolder(documentId, folder.id);
-                  }}
-                >
+            <div className="zx-trash-acts">
+              {trashedDocs.length > 0 && (
+                <>
                   <button
                     type="button"
-                    className="zx-f-chip"
-                    onClick={() => selectFolder(folder.id)}
+                    className="zx-trash-btn"
+                    disabled={batchMutation.isPending}
+                    onClick={() => confirmRestoreAllDocuments(trashedDocs)}
                   >
-                    <Folder size={13.5} fill={color} color={color} />
-                    <span>{label}</span>
-                    <span style={{ opacity: 0.72 }}>· {folderDocCount(folder.id)}</span>
+                    <RotateCcw size={13.5} /> 全部恢复
                   </button>
-                  <Dropdown
-                    trigger={["click"]}
-                    placement="bottomRight"
-                    open={openFolderMenuId === folder.id}
-                    onOpenChange={(open) => setOpenFolderMenuId(open ? folder.id : null)}
-                    menu={{
-                      items: [
-                        { key: "create-child", label: "新建子目录" },
-                        { key: "rename", label: "重命名" },
-                        { key: "delete", label: "删除目录", danger: true },
-                      ],
-                      onClick: ({ key }) => {
-                        setOpenFolderMenuId(null);
-                        if (key === "create-child") openCreateFolder(folder.id);
-                        if (key === "rename") openRenameFolder(folder);
-                        if (key === "delete") deleteFolder(folder);
-                      },
+                  <button
+                    type="button"
+                    className="zx-trash-btn danger"
+                    disabled={batchMutation.isPending}
+                    onClick={() => confirmPermanentDeleteDocuments(trashedDocs)}
+                  >
+                    <Trash2 size={13.5} /> 清空回收站
+                  </button>
+                </>
+              )}
+              <Select
+                value={sort}
+                onChange={setSort}
+                variant="borderless"
+                style={{ minWidth: 136 }}
+                options={[
+                  { value: "updated", label: "按最近更新排序" },
+                  { value: "created", label: "按最近创建排序" },
+                  { value: "title", label: "按标题字母排序" },
+                ]}
+              />
+            </div>
+          </div>
+        ) : (
+          <div className="zx-folder-strip">
+            <div className="zx-folder-chips tabular">
+              <div
+                className={`zx-f-chip-wrap ${activeFolderId === ROOT_FOLDER_ID ? "active" : ""}`}
+                onDragOver={(event) => event.preventDefault()}
+                onDrop={(event) => {
+                  event.preventDefault();
+                  const documentId = event.dataTransfer.getData("application/x-shiguang-document");
+                  if (documentId) void moveToFolder(documentId, "");
+                }}
+              >
+                <button
+                  type="button"
+                  className="zx-f-chip"
+                  style={{ paddingRight: 13 }}
+                  onClick={() => setActiveFolderId(ROOT_FOLDER_ID)}
+                >
+                  全部目录
+                </button>
+              </div>
+
+              {visibleFolders.map((folder, index) => {
+                const isActive = activeFolderId === folder.id;
+                const color = FOLDER_COLORS[index % FOLDER_COLORS.length];
+                const label = folder.parentId ? folderDisplayPath(folders, folder.id) : folder.name;
+                return (
+                  <div
+                    key={folder.id}
+                    className={`zx-f-chip-wrap ${isActive ? "active" : ""}`}
+                    onDragOver={(event) => event.preventDefault()}
+                    onDrop={(event) => {
+                      event.preventDefault();
+                      const documentId = event.dataTransfer.getData(
+                        "application/x-shiguang-document",
+                      );
+                      if (documentId) void moveToFolder(documentId, folder.id);
                     }}
                   >
                     <button
                       type="button"
-                      className="zx-f-chip-more"
-                      onClick={(e) => e.stopPropagation()}
-                      aria-label={`${folder.name}目录操作`}
+                      className="zx-f-chip"
+                      onClick={() => selectFolder(folder.id)}
                     >
-                      <MoreHorizontal size={13} />
+                      <Folder size={13.5} fill={color} color={color} />
+                      <span>{label}</span>
+                      <span style={{ opacity: 0.72 }}>· {folderDocCount(folder.id)}</span>
                     </button>
-                  </Dropdown>
-                </div>
-              );
-            })}
+                    <Dropdown
+                      trigger={["click"]}
+                      placement="bottomRight"
+                      open={openFolderMenuId === folder.id}
+                      onOpenChange={(open) => setOpenFolderMenuId(open ? folder.id : null)}
+                      menu={{
+                        items: [
+                          { key: "create-child", label: "新建子目录" },
+                          { key: "rename", label: "重命名" },
+                          { key: "delete", label: "删除目录", danger: true },
+                        ],
+                        onClick: ({ key }) => {
+                          setOpenFolderMenuId(null);
+                          if (key === "create-child") openCreateFolder(folder.id);
+                          if (key === "rename") openRenameFolder(folder);
+                          if (key === "delete") deleteFolder(folder);
+                        },
+                      }}
+                    >
+                      <button
+                        type="button"
+                        className="zx-f-chip-more"
+                        onClick={(e) => e.stopPropagation()}
+                        aria-label={`${folder.name}目录操作`}
+                      >
+                        <MoreHorizontal size={13} />
+                      </button>
+                    </Dropdown>
+                  </div>
+                );
+              })}
 
-            <button
-              type="button"
-              className="zx-f-chip-create"
-              onClick={() => openCreateFolder(folderScope)}
-            >
-              + 新建目录
-            </button>
+              <button
+                type="button"
+                className="zx-f-chip-create"
+                onClick={() => openCreateFolder(folderScope)}
+              >
+                + 新建目录
+              </button>
+            </div>
+
+            <Select
+              value={sort}
+              onChange={setSort}
+              variant="borderless"
+              style={{ minWidth: 136 }}
+              options={[
+                { value: "updated", label: "按最近更新排序" },
+                { value: "created", label: "按最近创建排序" },
+                { value: "title", label: "按标题字母排序" },
+              ]}
+            />
           </div>
-
-          <Select
-            value={sort}
-            onChange={setSort}
-            variant="borderless"
-            style={{ minWidth: 136 }}
-            options={[
-              { value: "updated", label: "按最近更新排序" },
-              { value: "created", label: "按最近创建排序" },
-              { value: "title", label: "按标题字母排序" },
-            ]}
-          />
-        </div>
+        )}
       </div>
 
       {listLoading ? (
@@ -1028,15 +1111,15 @@ export function DocumentsPage() {
       ) : paged.length === 0 ? (
         <Empty
           title={
-            filter === "trash"
-              ? "回收站为空"
-              : filter === "favorites"
-                ? "暂无收藏文档"
-                : "没有匹配的文档"
+            isTrash ? "回收站为空" : filter === "favorites" ? "暂无收藏文档" : "没有匹配的文档"
           }
-          hint="创建文档、上传文件或发起调研后，文档会展示在这里。"
+          hint={
+            isTrash
+              ? "删除的文档会先移入回收站，可在此恢复或彻底删除。"
+              : "创建文档、上传文件或发起调研后，文档会展示在这里。"
+          }
           action={
-            filter !== "trash" ? (
+            !isTrash ? (
               <Dropdown
                 trigger={["click"]}
                 placement="bottom"
@@ -1062,13 +1145,20 @@ export function DocumentsPage() {
             return (
               <article
                 key={d.id}
-                className="zx-paper-card"
-                draggable
+                className={`zx-paper-card${isTrash ? " is-trashed" : ""}`}
+                draggable={!isTrash}
                 onDragStart={(event) => {
+                  if (isTrash) return;
                   event.dataTransfer.setData("application/x-shiguang-document", d.id);
                   event.dataTransfer.effectAllowed = "move";
                 }}
-                onClick={() => navigate(documentHref(d))}
+                onClick={() => {
+                  if (isTrash) {
+                    toast("info", "该文档在回收站中，请先点击右上角「恢复」后再编辑");
+                    return;
+                  }
+                  navigate(documentHref(d));
+                }}
               >
                 <div className="zx-paper-preview">
                   <AssetMiniPreview asset={d} />
@@ -1076,52 +1166,83 @@ export function DocumentsPage() {
                     <VisIcon size={12} /> {vis.label}
                   </span>
                   <div className="zx-float-acts">
-                    <button
-                      type="button"
-                      className="zx-mini-act ai"
-                      title={
-                        d.type === "html" ? "进入 HTML 代码与预览工作台" : "进入 AI 协同编辑器"
-                      }
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        navigate(documentHref(d));
-                      }}
-                    >
-                      {d.type === "html" ? <Code2 size={13.5} /> : <Sparkles size={13.5} />}
-                    </button>
-                    <button
-                      type="button"
-                      className="zx-mini-act"
-                      title="发布 / 分享"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        shareDocument(d);
-                      }}
-                    >
-                      <Share2 size={13} />
-                    </button>
-                    <Dropdown
-                      trigger={["click"]}
-                      placement="bottomRight"
-                      open={openDocumentMenuId === d.id}
-                      onOpenChange={(open) => setOpenDocumentMenuId(open ? d.id : null)}
-                      menu={{
-                        items: documentMenuItems(d),
-                        onClick: ({ key, domEvent }) => {
-                          domEvent.stopPropagation();
-                          onDocumentMenuClick(d, key);
-                        },
-                      }}
-                    >
-                      <button
-                        type="button"
-                        className="zx-mini-act"
-                        aria-label="更多操作"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        <MoreHorizontal size={14} />
-                      </button>
-                    </Dropdown>
+                    {isTrash ? (
+                      <>
+                        <button
+                          type="button"
+                          className="zx-mini-act restore"
+                          title="恢复文档"
+                          aria-label="恢复文档"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            batchMutation.mutate({ action: "restore", ids: [d.id] });
+                          }}
+                        >
+                          <RotateCcw size={13.5} />
+                        </button>
+                        <button
+                          type="button"
+                          className="zx-mini-act danger"
+                          title="彻底删除"
+                          aria-label="彻底删除"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            confirmPermanentDeleteDocuments([d]);
+                          }}
+                        >
+                          <Trash2 size={13.5} />
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <button
+                          type="button"
+                          className="zx-mini-act ai"
+                          title={
+                            d.type === "html" ? "进入 HTML 代码与预览工作台" : "进入 AI 协同编辑器"
+                          }
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            navigate(documentHref(d));
+                          }}
+                        >
+                          {d.type === "html" ? <Code2 size={13.5} /> : <Sparkles size={13.5} />}
+                        </button>
+                        <button
+                          type="button"
+                          className="zx-mini-act"
+                          title="发布 / 分享"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            shareDocument(d);
+                          }}
+                        >
+                          <Share2 size={13} />
+                        </button>
+                        <Dropdown
+                          trigger={["click"]}
+                          placement="bottomRight"
+                          open={openDocumentMenuId === d.id}
+                          onOpenChange={(open) => setOpenDocumentMenuId(open ? d.id : null)}
+                          menu={{
+                            items: documentMenuItems(d),
+                            onClick: ({ key, domEvent }) => {
+                              domEvent.stopPropagation();
+                              onDocumentMenuClick(d, key);
+                            },
+                          }}
+                        >
+                          <button
+                            type="button"
+                            className="zx-mini-act"
+                            aria-label="更多操作"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <MoreHorizontal size={14} />
+                          </button>
+                        </Dropdown>
+                      </>
+                    )}
                   </div>
                 </div>
 
@@ -1168,14 +1289,19 @@ export function DocumentsPage() {
             return (
               <div
                 key={d.id}
-                className="zx-doc-strip"
-                draggable
+                className={`zx-doc-strip${isTrash ? " is-trashed" : ""}`}
+                draggable={!isTrash}
                 onDragStart={(event) => {
+                  if (isTrash) return;
                   event.dataTransfer.setData("application/x-shiguang-document", d.id);
                   event.dataTransfer.effectAllowed = "move";
                 }}
                 onClick={(e) => {
                   if ((e.target as HTMLElement).closest("button, .ant-dropdown")) return;
+                  if (isTrash) {
+                    toast("info", "该文档在回收站中，请先点击「恢复」后再编辑");
+                    return;
+                  }
                   navigate(documentHref(d));
                 }}
               >
@@ -1261,43 +1387,70 @@ export function DocumentsPage() {
                     gap: 4,
                   }}
                 >
-                  <Button
-                    size="small"
-                    type="text"
-                    className="sg-list-action-btn ai"
-                    title={d.type === "html" ? "HTML 代码与预览" : "AI 协同编辑"}
-                    onClick={() => navigate(documentHref(d))}
-                  >
-                    {d.type === "html" ? <Code2 size={15} /> : <Sparkles size={15} />}
-                  </Button>
-                  <Button
-                    size="small"
-                    type="text"
-                    className="sg-list-action-btn"
-                    title="发布 / 分享"
-                    onClick={() => shareDocument(d)}
-                  >
-                    <Share2 size={14} />
-                  </Button>
-                  <Dropdown
-                    trigger={["click"]}
-                    placement="bottomRight"
-                    open={openDocumentMenuId === d.id}
-                    onOpenChange={(open) => setOpenDocumentMenuId(open ? d.id : null)}
-                    menu={{
-                      items: documentMenuItems(d),
-                      onClick: ({ key }) => onDocumentMenuClick(d, key),
-                    }}
-                  >
-                    <Button
-                      size="small"
-                      type="text"
-                      className="sg-list-action-btn"
-                      aria-label="更多操作"
-                    >
-                      <MoreHorizontal size={15} />
-                    </Button>
-                  </Dropdown>
+                  {isTrash ? (
+                    <>
+                      <Button
+                        size="small"
+                        type="text"
+                        className="sg-list-action-btn restore"
+                        title="恢复文档"
+                        aria-label="恢复文档"
+                        onClick={() => batchMutation.mutate({ action: "restore", ids: [d.id] })}
+                      >
+                        <RotateCcw size={14.5} />
+                      </Button>
+                      <Button
+                        size="small"
+                        type="text"
+                        className="sg-list-action-btn danger"
+                        title="彻底删除"
+                        aria-label="彻底删除"
+                        onClick={() => confirmPermanentDeleteDocuments([d])}
+                      >
+                        <Trash2 size={14.5} />
+                      </Button>
+                    </>
+                  ) : (
+                    <>
+                      <Button
+                        size="small"
+                        type="text"
+                        className="sg-list-action-btn ai"
+                        title={d.type === "html" ? "HTML 代码与预览" : "AI 协同编辑"}
+                        onClick={() => navigate(documentHref(d))}
+                      >
+                        {d.type === "html" ? <Code2 size={15} /> : <Sparkles size={15} />}
+                      </Button>
+                      <Button
+                        size="small"
+                        type="text"
+                        className="sg-list-action-btn"
+                        title="发布 / 分享"
+                        onClick={() => shareDocument(d)}
+                      >
+                        <Share2 size={14} />
+                      </Button>
+                      <Dropdown
+                        trigger={["click"]}
+                        placement="bottomRight"
+                        open={openDocumentMenuId === d.id}
+                        onOpenChange={(open) => setOpenDocumentMenuId(open ? d.id : null)}
+                        menu={{
+                          items: documentMenuItems(d),
+                          onClick: ({ key }) => onDocumentMenuClick(d, key),
+                        }}
+                      >
+                        <Button
+                          size="small"
+                          type="text"
+                          className="sg-list-action-btn"
+                          aria-label="更多操作"
+                        >
+                          <MoreHorizontal size={15} />
+                        </Button>
+                      </Dropdown>
+                    </>
+                  )}
                 </div>
               </div>
             );

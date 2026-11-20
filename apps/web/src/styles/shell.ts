@@ -684,6 +684,53 @@ select {
 .sg-list-action-btn.ai.ant-btn {
   color: var(--zx-brand);
 }
+.sg-list-action-btn.restore.ant-btn {
+  color: #10b981;
+}
+.sg-list-action-btn.restore.ant-btn:hover {
+  color: #10b981 !important;
+  background: rgba(16, 185, 129, 0.14) !important;
+}
+.sg-list-action-btn.danger.ant-btn {
+  color: var(--sg-danger);
+}
+.sg-list-action-btn.danger.ant-btn:hover {
+  color: #fff !important;
+  background: rgba(239, 68, 68, 0.86) !important;
+}
+.zx-trash-btn {
+  height: 32px;
+  padding: 0 13px;
+  border-radius: 999px;
+  border: 1px solid var(--zx-border-strong);
+  background: var(--zx-surface-subtle);
+  color: var(--sg-fg-2);
+  font-size: 12.5px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  transition: border-color 140ms ease, background 140ms ease, color 140ms ease;
+}
+.zx-trash-btn:hover:not(:disabled) {
+  border-color: var(--zx-brand-border);
+  color: var(--sg-fg);
+}
+.zx-trash-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.zx-trash-btn.danger {
+  color: var(--sg-danger);
+  border-color: rgba(239, 68, 68, 0.34);
+  background: rgba(239, 68, 68, 0.08);
+}
+.zx-trash-btn.danger:hover:not(:disabled) {
+  color: #fff;
+  background: rgba(225, 29, 72, 0.88);
+  border-color: rgba(244, 63, 94, 0.85);
+}
 .sg-input,
 .sg-textarea,
 .sg-select {

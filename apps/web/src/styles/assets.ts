@@ -187,7 +187,7 @@ export const useAssetsStyles = createStyles(({ css }) => ({
   border: 1px solid var(--zx-border);
   box-shadow: var(--zx-card-shadow);
   display: grid;
-  grid-template-columns: minmax(0, 1.5fr) 112px 124px 146px 132px 36px;
+  grid-template-columns: minmax(0, 1.5fr) 112px 124px 146px 132px auto;
   align-items: center;
   gap: 14px;
   font-size: 13px;

@@ -29,6 +29,16 @@ function safeFileName(name: string): string {
   return name.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "file";
 }
 
+async function permanentDeleteAsset(
+  ctx: AppContext,
+  actor: ActorContext,
+  assetId: string,
+): Promise<void> {
+  const objectKeys = await ctx.store.listAssetBlobKeys(actor.workspaceId, assetId);
+  await ctx.store.permanentDelete(actor, assetId);
+  await Promise.all(objectKeys.map((key) => ctx.storage.delete(key)));
+}
+
 export function registerAssets(app: FastifyInstance): void {
   const ctx: AppContext = app.ctx;
 
@@ -410,9 +420,7 @@ export function registerAssets(app: FastifyInstance): void {
     const { id } = req.params as { id: string };
     const asset = await ctx.store.getAsset(req.actor.workspaceId, id);
     if (!asset) throw notFound("资产");
-    const objectKeys = await ctx.store.listAssetBlobKeys(req.actor.workspaceId, id);
-    await ctx.store.permanentDelete(req.actor, id);
-    await Promise.all(objectKeys.map((key) => ctx.storage.delete(key)));
+    await permanentDeleteAsset(ctx, req.actor, id);
     await ctx.store.audit(
       req.actor.workspaceId,
       req.actor.subject,
@@ -534,12 +542,22 @@ export function registerAssets(app: FastifyInstance): void {
   app.post("/api/v1/assets:batch", async (req) => {
     const body = z
       .object({
-        action: z.enum(["delete", "restore"]),
+        action: z.enum(["delete", "restore", "permanent"]),
         ids: z.array(z.string()).min(1),
       })
       .parse(req.body);
     await Promise.all(body.ids.map((id) => requireAssetAccess(ctx, req.actor, id, "delete")));
-    const changed = await ctx.store.batchUpdateAssets(req.actor, body.ids, body.action);
+    let changed = 0;
+    if (body.action === "permanent") {
+      for (const id of body.ids) {
+        const asset = await ctx.store.getAsset(req.actor.workspaceId, id);
+        if (!asset) continue;
+        await permanentDeleteAsset(ctx, req.actor, id);
+        changed += 1;
+      }
+    } else {
+      changed = await ctx.store.batchUpdateAssets(req.actor, body.ids, body.action);
+    }
     await ctx.store.audit(
       req.actor.workspaceId,
       req.actor.subject,

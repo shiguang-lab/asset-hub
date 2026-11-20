@@ -1,7 +1,7 @@
 import { Empty, formatRelative, Loading, useToast } from "@shiguang/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { MenuProps } from "antd";
-import { Button, Dropdown, Select } from "antd";
+import { App, Button, Dropdown, Select } from "antd";
 import {
   BookOpen,
   ChartNoAxesCombined,
@@ -16,7 +16,9 @@ import {
   MonitorPlay,
   MoreHorizontal,
   Plus,
+  RotateCcw,
   Search,
+  Trash2,
   Upload,
   X,
 } from "lucide-react";
@@ -139,6 +141,7 @@ async function loadAllAssets(): Promise<Asset[]> {
 export function AssetsPage() {
   const navigate = useNavigate();
   const toast = useToast();
+  const { modal } = App.useApp();
   const { confirmDelete } = useDeleteConfirm();
   const queryClient = useQueryClient();
   const authSession = getAuthSession();
@@ -163,13 +166,23 @@ export function AssetsPage() {
   });
 
   const batchMutation = useMutation({
-    mutationFn: (input: { action: "delete" | "restore"; ids: string[] }) =>
+    mutationFn: (input: { action: "delete" | "restore" | "permanent"; ids: string[] }) =>
       api("/assets:batch", { method: "POST", body: input }),
-    onSuccess: () => {
-      toast("success", "操作成功");
+    onSuccess: (_data, variables) => {
+      const count = variables.ids.length;
+      if (variables.action === "restore") {
+        toast("success", count > 1 ? `已恢复 ${count} 个资产` : "资产已恢复");
+      } else if (variables.action === "permanent") {
+        toast("success", count > 1 ? `已彻底删除 ${count} 个资产` : "资产已彻底删除");
+      } else {
+        toast("success", "已移入回收站");
+      }
       void queryClient.invalidateQueries({ queryKey: ["assets"] });
       void queryClient.invalidateQueries({ queryKey: ["assets", "storage"] });
       void queryClient.invalidateQueries({ queryKey: ["home"] });
+    },
+    onError: (error) => {
+      toast("error", error instanceof Error ? error.message : "操作失败");
     },
   });
 
@@ -179,6 +192,32 @@ export function AssetsPage() {
       title: count > 1 ? `删除 ${count} 个资产？` : `删除资产「${targets[0]?.title}」？`,
       content: "删除后可在回收站恢复。",
       onConfirm: () => batchMutation.mutate({ action: "delete", ids: targets.map((t) => t.id) }),
+    });
+  };
+
+  const confirmPermanentDeleteAssets = (targets: { id: string; title: string }[]) => {
+    if (targets.length === 0) return;
+    const count = targets.length;
+    confirmDelete({
+      title:
+        count > 1 ? `清空回收站中的 ${count} 个资产？` : `彻底删除资产「${targets[0]?.title}」？`,
+      content:
+        count > 1
+          ? "彻底删除后不可恢复，将永久移除这些资产及历史版本。"
+          : "彻底删除后不可恢复，将永久移除该资产及历史版本。",
+      okText: "彻底删除",
+      onConfirm: () => batchMutation.mutate({ action: "permanent", ids: targets.map((t) => t.id) }),
+    });
+  };
+
+  const confirmRestoreAllAssets = (targets: { id: string }[]) => {
+    if (targets.length === 0) return;
+    modal.confirm({
+      title: `恢复全部 ${targets.length} 个资产？`,
+      content: "这些资产将恢复到删除前的状态。",
+      okText: "全部恢复",
+      cancelText: "取消",
+      onOk: () => batchMutation.mutate({ action: "restore", ids: targets.map((t) => t.id) }),
     });
   };
 
@@ -410,7 +449,11 @@ export function AssetsPage() {
       ) : paged.length === 0 ? (
         <Empty
           title={includeDeleted ? "回收站为空" : "没有匹配的资产"}
-          hint="创建文档、上传文件或发起调研后，资产会出现在这里。"
+          hint={
+            includeDeleted
+              ? "删除的资产会先移入回收站，可在此恢复或彻底删除。"
+              : "创建文档、上传文件或发起调研后，资产会出现在这里。"
+          }
         />
       ) : (
         <div className="zx-strip-list">
@@ -419,6 +462,8 @@ export function AssetsPage() {
               display: "flex",
               alignItems: "center",
               justifyContent: "space-between",
+              gap: 12,
+              flexWrap: "wrap",
               fontSize: 13,
               fontWeight: 700,
               color: "var(--sg-fg-2)",
@@ -426,16 +471,38 @@ export function AssetsPage() {
             }}
           >
             <span>{includeDeleted ? "回收站资产" : "全部资产流"}</span>
-            <Select
-              value={sort}
-              onChange={setSort}
-              variant="borderless"
-              style={{ minWidth: 120 }}
-              options={[
-                { value: "updatedAt", label: "按最近更新" },
-                { value: "title", label: "按名称排序" },
-              ]}
-            />
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              {includeDeleted && items.length > 0 && (
+                <>
+                  <button
+                    type="button"
+                    className="zx-trash-btn"
+                    disabled={batchMutation.isPending}
+                    onClick={() => confirmRestoreAllAssets(items)}
+                  >
+                    <RotateCcw size={13.5} /> 全部恢复
+                  </button>
+                  <button
+                    type="button"
+                    className="zx-trash-btn danger"
+                    disabled={batchMutation.isPending}
+                    onClick={() => confirmPermanentDeleteAssets(items)}
+                  >
+                    <Trash2 size={13.5} /> 清空回收站
+                  </button>
+                </>
+              )}
+              <Select
+                value={sort}
+                onChange={setSort}
+                variant="borderless"
+                style={{ minWidth: 120 }}
+                options={[
+                  { value: "updatedAt", label: "按最近更新" },
+                  { value: "title", label: "按名称排序" },
+                ]}
+              />
+            </div>
           </div>
 
           {paged.map((asset) => {
@@ -449,8 +516,13 @@ export function AssetsPage() {
               <div
                 key={asset.id}
                 className="zx-asset-strip"
+                style={includeDeleted ? { cursor: "default" } : undefined}
                 onClick={(e) => {
                   if ((e.target as HTMLElement).closest(".ant-dropdown, button")) return;
+                  if (includeDeleted) {
+                    toast("info", "该资产在回收站中，请先点击「恢复」后再查看");
+                    return;
+                  }
                   navigate(assetHref(asset));
                 }}
               >
@@ -502,45 +574,72 @@ export function AssetsPage() {
                   <span>{formatRelative(asset.updatedAt)}</span>
                 </div>
 
-                <div style={{ display: "flex", justifyContent: "flex-end" }}>
-                  <Dropdown
-                    trigger={["click"]}
-                    placement="bottomRight"
-                    open={openAssetMenuId === asset.id}
-                    onOpenChange={(open) => setOpenAssetMenuId(open ? asset.id : null)}
-                    menu={{
-                      items: [
-                        { key: "open", label: "打开资产" },
-                        ...(workspaceWritable && !includeDeleted
-                          ? [{ key: "edit", label: "编辑资产" }]
-                          : []),
-                        includeDeleted
-                          ? { key: "restore", label: "恢复" }
-                          : { key: "delete", label: "删除", danger: true },
-                      ] satisfies MenuProps["items"],
-                      onClick: ({ key }) => {
-                        setOpenAssetMenuId(null);
-                        if (key === "open") navigate(assetHref(asset));
-                        if (key === "edit") navigate(`/assets/${asset.id}/edit`);
-                        if (key === "delete") {
-                          confirmDeleteAssets([{ id: asset.id, title: asset.title }]);
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "flex-end",
+                    gap: 4,
+                  }}
+                >
+                  {includeDeleted ? (
+                    <>
+                      <Button
+                        size="small"
+                        type="text"
+                        className="sg-list-action-btn restore"
+                        title="恢复资产"
+                        aria-label="恢复资产"
+                        onClick={() => batchMutation.mutate({ action: "restore", ids: [asset.id] })}
+                      >
+                        <RotateCcw size={14.5} />
+                      </Button>
+                      <Button
+                        size="small"
+                        type="text"
+                        className="sg-list-action-btn danger"
+                        title="彻底删除"
+                        aria-label="彻底删除"
+                        onClick={() =>
+                          confirmPermanentDeleteAssets([{ id: asset.id, title: asset.title }])
                         }
-                        if (key === "restore") {
-                          batchMutation.mutate({ action: "restore", ids: [asset.id] });
-                        }
-                      },
-                    }}
-                  >
-                    <Button
-                      size="small"
-                      type="text"
-                      className="sg-list-action-btn"
-                      onClick={(e) => e.stopPropagation()}
-                      aria-label="更多操作"
+                      >
+                        <Trash2 size={14.5} />
+                      </Button>
+                    </>
+                  ) : (
+                    <Dropdown
+                      trigger={["click"]}
+                      placement="bottomRight"
+                      open={openAssetMenuId === asset.id}
+                      onOpenChange={(open) => setOpenAssetMenuId(open ? asset.id : null)}
+                      menu={{
+                        items: [
+                          { key: "open", label: "打开资产" },
+                          ...(workspaceWritable ? [{ key: "edit", label: "编辑资产" }] : []),
+                          { key: "delete", label: "删除", danger: true },
+                        ] satisfies MenuProps["items"],
+                        onClick: ({ key }) => {
+                          setOpenAssetMenuId(null);
+                          if (key === "open") navigate(assetHref(asset));
+                          if (key === "edit") navigate(`/assets/${asset.id}/edit`);
+                          if (key === "delete") {
+                            confirmDeleteAssets([{ id: asset.id, title: asset.title }]);
+                          }
+                        },
+                      }}
                     >
-                      <MoreHorizontal size={16} />
-                    </Button>
-                  </Dropdown>
+                      <Button
+                        size="small"
+                        type="text"
+                        className="sg-list-action-btn"
+                        onClick={(e) => e.stopPropagation()}
+                        aria-label="更多操作"
+                      >
+                        <MoreHorizontal size={16} />
+                      </Button>
+                    </Dropdown>
+                  )}
                 </div>
               </div>
             );

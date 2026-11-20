@@ -25,6 +25,13 @@ export const useDocumentCardsStyles = createStyles(({ css }) => ({
   transform: translateY(-3px);
   border-color: var(--zx-brand-border);
 }
+.zx-paper-card.is-trashed {
+  cursor: default;
+}
+.zx-paper-card.is-trashed:hover {
+  transform: none;
+  border-color: var(--zx-border-strong);
+}
 
 .zx-paper-preview {
   height: 132px;
@@ -68,6 +75,24 @@ export const useDocumentCardsStyles = createStyles(({ css }) => ({
 .zx-mini-act.ai {
   color: var(--zx-brand);
   border-color: var(--zx-brand-border);
+}
+.zx-mini-act.restore {
+  color: #34d399;
+  border-color: rgba(52, 211, 153, 0.36);
+}
+.zx-mini-act.restore:hover {
+  color: #ecfdf5;
+  background: rgba(6, 95, 70, 0.92);
+  border-color: rgba(52, 211, 153, 0.75);
+}
+.zx-mini-act.danger {
+  color: #fda4af;
+  border-color: rgba(244, 63, 94, 0.36);
+}
+.zx-mini-act.danger:hover {
+  color: #fff;
+  background: rgba(190, 18, 60, 0.92);
+  border-color: rgba(244, 63, 94, 0.85);
 }
 
 .zx-paper-body {
