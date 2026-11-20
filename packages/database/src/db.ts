@@ -46,6 +46,23 @@ export class Db {
   async exec(sql: string): Promise<void> {
     await this.pool.query(sql);
   }
+  async transaction<T>(fn: (txDb: Db) => Promise<T>): Promise<T> {
+    if (typeof this.pool.connect !== "function") {
+      return fn(this);
+    }
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const result = await fn(new Db(client as unknown as Pool));
+      await client.query("COMMIT");
+      return result;
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
 }
 
 export interface OpenDatabaseOptions {

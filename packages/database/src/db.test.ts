@@ -3,7 +3,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Pool } from "pg";
 import { beforeEach, describe, expect, it } from "vitest";
-import { applyMigrations } from "./db.js";
+import { applyMigrations, Db } from "./db.js";
+import { LocalObjectStore } from "./storage.js";
+import { Store } from "./store.js";
 
 /**
  * 迁移执行器的行为可以完全用一个记录调用序列的假 pool 验证，无需真实 Postgres：
@@ -123,5 +125,89 @@ describe("applyMigrations", () => {
     const bad = createFakePool({ failOn: (sql) => sql.includes("0001_init.sql") });
     await expect(applyMigrations(bad.pool, dir)).rejects.toThrow();
     expect(bad.releasedCount()).toBe(1);
+  });
+});
+
+describe("Store.permanentDelete", () => {
+  const actor = {
+    workspaceId: "ws_1",
+    workspaceType: "personal" as const,
+    workspaceRole: "owner" as const,
+    subject: "user_1",
+    displayName: "测试用户",
+    requestId: "req_test_1",
+    tokenScopes: ["read", "write"] as ("read" | "write")[],
+    isService: false,
+  };
+
+  it("在事务中按子表到主表顺序清理发布、权限、补丁、关系和版本记录", async () => {
+    const clientCalls: Recorded[] = [];
+    let released = 0;
+    const pool = {
+      connect: async () => ({
+        query: async (sql: string, params?: unknown[]) => {
+          clientCalls.push({ sql, params });
+          if (sql.startsWith("SELECT id FROM assets")) {
+            return { rowCount: 1, rows: [{ id: "ast_1" }] };
+          }
+          return { rowCount: 0, rows: [] };
+        },
+        release: () => {
+          released += 1;
+        },
+      }),
+    } as unknown as Pool;
+
+    const store = new Store(new Db(pool), new LocalObjectStore(tmpdir()));
+    await store.permanentDelete(actor, "ast_1");
+
+    const sqls = clientCalls.map((c) => c.sql);
+    expect(sqls[0]).toBe("BEGIN");
+    expect(sqls.at(-1)).toBe("COMMIT");
+    expect(released).toBe(1);
+
+    const idx = (fragment: string) => sqls.findIndex((sql) => sql.includes(fragment));
+    expect(idx("DELETE FROM publish_comments")).toBeLessThan(idx("DELETE FROM publishes"));
+    expect(idx("DELETE FROM publish_visitors")).toBeLessThan(idx("DELETE FROM publishes"));
+    expect(idx("DELETE FROM publish_access_events")).toBeLessThan(idx("DELETE FROM publishes"));
+    expect(idx("DELETE FROM short_links")).toBeLessThan(idx("DELETE FROM publishes"));
+    expect(idx("DELETE FROM publish_releases")).toBeLessThan(idx("DELETE FROM publishes"));
+    expect(idx("DELETE FROM publishes")).toBeLessThan(idx("DELETE FROM assets"));
+    expect(idx("DELETE FROM asset_acl")).toBeLessThan(idx("DELETE FROM assets"));
+    expect(idx("DELETE FROM proposed_patches")).toBeLessThan(idx("DELETE FROM assets"));
+    expect(idx("DELETE FROM asset_relations")).toBeLessThan(idx("DELETE FROM assets"));
+    expect(idx("DELETE FROM asset_blobs")).toBeLessThan(idx("DELETE FROM asset_versions"));
+    expect(idx("DELETE FROM asset_versions")).toBeLessThan(idx("DELETE FROM assets"));
+  });
+
+  it("删除子表失败时回滚事务并释放连接", async () => {
+    const clientCalls: Recorded[] = [];
+    let released = 0;
+    const pool = {
+      connect: async () => ({
+        query: async (sql: string, params?: unknown[]) => {
+          clientCalls.push({ sql, params });
+          if (sql.startsWith("SELECT id FROM assets")) {
+            return { rowCount: 1, rows: [{ id: "ast_1" }] };
+          }
+          if (sql.includes("DELETE FROM publishes")) {
+            throw new Error("fk boom");
+          }
+          return { rowCount: 0, rows: [] };
+        },
+        release: () => {
+          released += 1;
+        },
+      }),
+    } as unknown as Pool;
+
+    const store = new Store(new Db(pool), new LocalObjectStore(tmpdir()));
+    await expect(store.permanentDelete(actor, "ast_1")).rejects.toThrow("fk boom");
+
+    const sqls = clientCalls.map((c) => c.sql);
+    expect(sqls).toContain("ROLLBACK");
+    expect(sqls).not.toContain("COMMIT");
+    expect(sqls.some((sql) => sql.includes("DELETE FROM assets"))).toBe(false);
+    expect(released).toBe(1);
   });
 });

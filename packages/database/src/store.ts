@@ -1190,18 +1190,54 @@ export class Store {
   }
 
   async permanentDelete(actor: ActorContext, assetId: string): Promise<void> {
-    await this.db
-      .prepare("DELETE FROM asset_relations WHERE source_asset_id = ? OR target_asset_id = ?")
-      .run(assetId, assetId);
-    await this.db
-      .prepare(
-        "DELETE FROM asset_blobs WHERE version_id IN (SELECT id FROM asset_versions WHERE asset_id = ?)",
-      )
-      .run(assetId);
-    await this.db.prepare("DELETE FROM asset_versions WHERE asset_id = ?").run(assetId);
-    await this.db
-      .prepare("DELETE FROM assets WHERE id = ? AND workspace_id = ?")
-      .run(assetId, actor.workspaceId);
+    await this.db.transaction(async (tx) => {
+      const existing = (await tx
+        .prepare("SELECT id FROM assets WHERE id = ? AND workspace_id = ?")
+        .get(assetId, actor.workspaceId)) as Row | undefined;
+      if (!existing) return;
+
+      // 彻底删除资产前先清理所有外键子表，避免因历史发布/分享/补丁/权限记录触发外键约束错误
+      await tx
+        .prepare(
+          "DELETE FROM publish_comments WHERE publish_id IN (SELECT id FROM publishes WHERE asset_id = ?)",
+        )
+        .run(assetId);
+      await tx
+        .prepare(
+          "DELETE FROM publish_visitors WHERE publish_id IN (SELECT id FROM publishes WHERE asset_id = ?)",
+        )
+        .run(assetId);
+      await tx
+        .prepare(
+          "DELETE FROM publish_access_events WHERE publish_id IN (SELECT id FROM publishes WHERE asset_id = ?)",
+        )
+        .run(assetId);
+      await tx
+        .prepare(
+          "DELETE FROM short_links WHERE publish_id IN (SELECT id FROM publishes WHERE asset_id = ?)",
+        )
+        .run(assetId);
+      await tx
+        .prepare(
+          "DELETE FROM publish_releases WHERE publish_id IN (SELECT id FROM publishes WHERE asset_id = ?)",
+        )
+        .run(assetId);
+      await tx.prepare("DELETE FROM publishes WHERE asset_id = ?").run(assetId);
+      await tx.prepare("DELETE FROM asset_acl WHERE asset_id = ?").run(assetId);
+      await tx.prepare("DELETE FROM proposed_patches WHERE asset_id = ?").run(assetId);
+      await tx
+        .prepare("DELETE FROM asset_relations WHERE source_asset_id = ? OR target_asset_id = ?")
+        .run(assetId, assetId);
+      await tx
+        .prepare(
+          "DELETE FROM asset_blobs WHERE version_id IN (SELECT id FROM asset_versions WHERE asset_id = ?)",
+        )
+        .run(assetId);
+      await tx.prepare("DELETE FROM asset_versions WHERE asset_id = ?").run(assetId);
+      await tx
+        .prepare("DELETE FROM assets WHERE id = ? AND workspace_id = ?")
+        .run(assetId, actor.workspaceId);
+    });
   }
 
   async addRelation(
