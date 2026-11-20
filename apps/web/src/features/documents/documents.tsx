@@ -401,6 +401,9 @@ export function DocumentsPage() {
     },
     onError: (error) => {
       toast("error", error instanceof Error ? error.message : "操作失败");
+      void queryClient.invalidateQueries({ queryKey: ["assets", "document"] });
+      void queryClient.invalidateQueries({ queryKey: ["assets"] });
+      void queryClient.invalidateQueries({ queryKey: ["home"] });
     },
   });
 

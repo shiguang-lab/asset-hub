@@ -1,6 +1,10 @@
+import type { ActorContext, Asset } from "@shiguang/contracts";
+import type { Store } from "@shiguang/database";
 import { describe, expect, it } from "vitest";
 import { DomainError } from "../platform/errors.js";
+import type { AppContext } from "../types.js";
 import {
+  authorizeBatchAssetIds,
   collectImportFolders,
   downloadableAssetContent,
   extractAndUploadResources,
@@ -211,5 +215,68 @@ describe("uniqueImportAssetPath", () => {
         new Set(["guides/USAGE", "guides/USAGE (1)"]),
       ),
     ).toBe("guides/USAGE (2)");
+  });
+});
+
+describe("authorizeBatchAssetIds", () => {
+  const actor: ActorContext = {
+    subject: "user-1",
+    workspaceId: "ws_1",
+    workspaceType: "team",
+    workspaceRole: "editor",
+    requestId: "req_test",
+    isService: false,
+    tokenScopes: ["read", "write"],
+  };
+
+  function makeAsset(id: string, ownerSubject = "user-1"): Asset {
+    return {
+      id,
+      workspaceId: "ws_1",
+      ownerSubject,
+      type: "document",
+      title: id,
+      path: "",
+      description: "",
+      visibility: "private",
+      status: "deleted",
+      sourceType: "manual",
+      currentVersionId: null,
+      lockVersion: 1,
+      deletedAt: "2026-11-20T00:00:00.000Z",
+      publishedUrl: null,
+      createdAt: "2026-11-20T00:00:00.000Z",
+      updatedAt: "2026-11-20T00:00:00.000Z",
+    };
+  }
+
+  function makeCtx(records: Record<string, Asset>): AppContext {
+    return {
+      store: {
+        getAsset: async (_ws: string, id: string) => records[id] ?? null,
+        listAcl: async () => [],
+      } as unknown as Store,
+    } as AppContext;
+  }
+
+  it("skips already-deleted missing ids for batch permanent delete", async () => {
+    const ctx = makeCtx({ ast_alive: makeAsset("ast_alive") });
+    await expect(
+      authorizeBatchAssetIds(ctx, actor, ["ast_stale", "ast_alive"], "permanent"),
+    ).resolves.toEqual(["ast_alive"]);
+  });
+
+  it("still throws notFound for missing ids on non-permanent batch actions", async () => {
+    const ctx = makeCtx({ ast_alive: makeAsset("ast_alive") });
+    await expect(
+      authorizeBatchAssetIds(ctx, actor, ["ast_stale", "ast_alive"], "restore"),
+    ).rejects.toMatchObject({ code: "RESOURCE_NOT_FOUND", status: 404 });
+  });
+
+  it("rejects unauthorized existing assets during batch permanent delete", async () => {
+    const ctx = makeCtx({ ast_other: makeAsset("ast_other", "other-user") });
+    await expect(
+      authorizeBatchAssetIds(ctx, actor, ["ast_stale", "ast_other"], "permanent"),
+    ).rejects.toMatchObject({ status: 403 });
   });
 });

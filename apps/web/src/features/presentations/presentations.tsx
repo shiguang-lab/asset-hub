@@ -1767,6 +1767,9 @@ export function PresentationsPage() {
     },
     onError: (error) => {
       toast("error", error instanceof Error ? error.message : "操作失败");
+      void queryClient.invalidateQueries({ queryKey: ["assets", "presentation"] });
+      void queryClient.invalidateQueries({ queryKey: ["assets"] });
+      void queryClient.invalidateQueries({ queryKey: ["home"] });
     },
   });
   const confirmPermanentDeletePresentations = (targets: Asset[]) => {

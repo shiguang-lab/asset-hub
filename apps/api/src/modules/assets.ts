@@ -39,6 +39,29 @@ async function permanentDeleteAsset(
   await Promise.all(objectKeys.map((key) => ctx.storage.delete(key)));
 }
 
+/**
+ * 校验批量操作目标资产权限：永久删除具备幂等性，对已不存在的过期 ID 直接跳过，
+ * 避免旧缓存中混入已删除记录时整批报错“资产不存在”。
+ */
+export async function authorizeBatchAssetIds(
+  ctx: AppContext,
+  actor: ActorContext,
+  ids: string[],
+  action: "delete" | "restore" | "permanent",
+): Promise<string[]> {
+  const authorizedIds: string[] = [];
+  for (const id of ids) {
+    const asset = await ctx.store.getAsset(actor.workspaceId, id);
+    if (!asset) {
+      if (action === "permanent") continue;
+      throw notFound("资产");
+    }
+    await requireAssetAccess(ctx, actor, id, "delete");
+    authorizedIds.push(id);
+  }
+  return authorizedIds;
+}
+
 export function registerAssets(app: FastifyInstance): void {
   const ctx: AppContext = app.ctx;
 
@@ -546,17 +569,15 @@ export function registerAssets(app: FastifyInstance): void {
         ids: z.array(z.string()).min(1),
       })
       .parse(req.body);
-    await Promise.all(body.ids.map((id) => requireAssetAccess(ctx, req.actor, id, "delete")));
+    const targetIds = await authorizeBatchAssetIds(ctx, req.actor, body.ids, body.action);
     let changed = 0;
     if (body.action === "permanent") {
-      for (const id of body.ids) {
-        const asset = await ctx.store.getAsset(req.actor.workspaceId, id);
-        if (!asset) continue;
+      for (const id of targetIds) {
         await permanentDeleteAsset(ctx, req.actor, id);
         changed += 1;
       }
-    } else {
-      changed = await ctx.store.batchUpdateAssets(req.actor, body.ids, body.action);
+    } else if (targetIds.length > 0) {
+      changed = await ctx.store.batchUpdateAssets(req.actor, targetIds, body.action);
     }
     await ctx.store.audit(
       req.actor.workspaceId,
