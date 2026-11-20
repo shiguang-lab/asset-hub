@@ -3,6 +3,30 @@ import react from "@vitejs/plugin-react";
 import { defineConfig, loadEnv, type PluginOption } from "vite";
 import { createLocalAuthMiddleware, LocalAuthBroker } from "./dev/local-auth-broker.js";
 
+function resolveVendorChunk(id: string): string | undefined {
+  if (!id.includes("node_modules")) return undefined;
+  if (
+    id.includes("/react/") ||
+    id.includes("/react-dom/") ||
+    id.includes("/react-router") ||
+    id.includes("/scheduler/")
+  ) {
+    return "vendor-react";
+  }
+  if (id.includes("/@tanstack/")) return "vendor-query";
+  if (id.includes("/lucide-react/")) return "vendor-icons";
+  if (
+    id.includes("/antd/") ||
+    id.includes("/antd-style/") ||
+    id.includes("/@ant-design/") ||
+    id.includes("/@rc-component/") ||
+    id.includes("/rc-")
+  ) {
+    return "vendor-antd";
+  }
+  return undefined;
+}
+
 export default defineConfig(({ command, mode }) => {
   const repoRoot = resolve(import.meta.dirname, "../..");
   const env = { ...loadEnv(mode, repoRoot, ""), ...process.env };
@@ -41,6 +65,13 @@ export default defineConfig(({ command, mode }) => {
 
   return {
     plugins,
+    build: {
+      rolldownOptions: {
+        output: {
+          manualChunks: resolveVendorChunk,
+        },
+      },
+    },
     server: {
       host: brokerEnabled ? "127.0.0.1" : undefined,
       proxy: {

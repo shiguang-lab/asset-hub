@@ -1,81 +1,266 @@
+import { Loading } from "@shiguang/ui";
+import { type ComponentType, lazy, Suspense } from "react";
 import { createBrowserRouter } from "react-router-dom";
-import { AssetDetailPage } from "../features/assets/asset-detail.js";
-import { AssetEditPage } from "../features/assets/asset-edit.js";
-import { AssetsPage } from "../features/assets/assets.js";
-import { AssistantPage } from "../features/assistant/assistant.js";
-import { BillingPage } from "../features/billing/billing.js";
-import { DatasetDetailPage, DatasetsPage } from "../features/datasets/datasets.js";
-import { DocumentsPage } from "../features/documents/documents.js";
-import { DocumentEditorPage } from "../features/documents/editor.js";
-import { HtmlEditorPage } from "../features/documents/html-editor.js";
-import { DocumentPreviewPage } from "../features/documents/preview.js";
-import { ThumbnailRenderPage } from "../features/documents/thumbnail-render.js";
-import { HomePage } from "../features/home/home.js";
-import {
-  KnowledgeDetailPage,
-  KnowledgeNewPage,
-  KnowledgePage,
-} from "../features/knowledge/knowledge.js";
-import { NotFoundPage } from "../features/misc/not-found.js";
-import { NotificationsPage } from "../features/notifications/notifications.js";
-import { PresentationNewPage } from "../features/presentations/presentation-new.js";
-import {
-  PresentationEditorPage,
-  PresentationPlayerPage,
-  PresentationSnapshotPlayerPage,
-  PresentationsPage,
-} from "../features/presentations/presentations.js";
-import { ProfilePage } from "../features/profile/profile.js";
-import { PublishesPage } from "../features/publishing/publishes.js";
-import { ResearchNewPage, ResearchPage } from "../features/research/research.js";
-import { SettingsPage } from "../features/settings/settings.js";
-import { TaskDetailPage, TaskNewPage, TasksPage } from "../features/tasks/tasks.js";
-import { TemplatesPage } from "../features/templates/templates.js";
 import { Shell } from "../shell/layout.js";
+
+function lazyRoute(loader: () => Promise<{ default: ComponentType }>) {
+  const Component = lazy(loader);
+  return (
+    <Suspense fallback={<Loading loading minHeight={360} />}>
+      <Component />
+    </Suspense>
+  );
+}
 
 export const router = createBrowserRouter([
   {
     path: "/render/thumbnail",
-    element: <ThumbnailRenderPage />,
+    element: lazyRoute(() =>
+      import("../features/documents/thumbnail-render.js").then((m) => ({
+        default: m.ThumbnailRenderPage,
+      })),
+    ),
   },
   {
     path: "/",
     element: <Shell />,
     children: [
-      { index: true, element: <HomePage /> },
-      { path: "assets", element: <AssetsPage /> },
-      { path: "assets/:id", element: <AssetDetailPage /> },
-      { path: "assets/:id/edit", element: <AssetEditPage /> },
-      { path: "documents", element: <DocumentsPage /> },
-      { path: "documents/new", element: <DocumentEditorPage /> },
-      { path: "documents/:id/preview", element: <DocumentPreviewPage /> },
-      { path: "documents/:id", element: <DocumentEditorPage /> },
-      { path: "html/new", element: <HtmlEditorPage /> },
-      { path: "html/:id", element: <HtmlEditorPage /> },
-      { path: "knowledge", element: <KnowledgePage /> },
-      { path: "knowledge/new", element: <KnowledgeNewPage /> },
-      { path: "knowledge/:id", element: <KnowledgeDetailPage /> },
-      { path: "research", element: <ResearchPage /> },
-      { path: "research/new", element: <ResearchNewPage /> },
-      { path: "tasks", element: <TasksPage /> },
-      { path: "tasks/new", element: <TaskNewPage /> },
-      { path: "tasks/:id", element: <TaskDetailPage /> },
-      { path: "datasets", element: <DatasetsPage /> },
-      { path: "datasets/:id", element: <DatasetDetailPage /> },
-      { path: "presentations", element: <PresentationsPage /> },
-      { path: "presentations/new", element: <PresentationNewPage /> },
-      { path: "presentations/generate/:taskId", element: <PresentationNewPage /> },
-      { path: "presentations/:id", element: <PresentationEditorPage /> },
-      { path: "presentations/:id/play", element: <PresentationPlayerPage /> },
-      { path: "presentations/snapshot/:taskId", element: <PresentationSnapshotPlayerPage /> },
-      { path: "templates", element: <TemplatesPage /> },
-      { path: "notifications", element: <NotificationsPage /> },
-      { path: "billing", element: <BillingPage /> },
-      { path: "profile", element: <ProfilePage /> },
-      { path: "publishes", element: <PublishesPage /> },
-      { path: "assistant", element: <AssistantPage /> },
-      { path: "settings", element: <SettingsPage /> },
-      { path: "*", element: <NotFoundPage /> },
+      {
+        index: true,
+        element: lazyRoute(() =>
+          import("../features/home/home.js").then((m) => ({ default: m.HomePage })),
+        ),
+      },
+      {
+        path: "assets",
+        element: lazyRoute(() =>
+          import("../features/assets/assets.js").then((m) => ({ default: m.AssetsPage })),
+        ),
+      },
+      {
+        path: "assets/:id",
+        element: lazyRoute(() =>
+          import("../features/assets/asset-detail.js").then((m) => ({
+            default: m.AssetDetailPage,
+          })),
+        ),
+      },
+      {
+        path: "assets/:id/edit",
+        element: lazyRoute(() =>
+          import("../features/assets/asset-edit.js").then((m) => ({ default: m.AssetEditPage })),
+        ),
+      },
+      {
+        path: "documents",
+        element: lazyRoute(() =>
+          import("../features/documents/documents.js").then((m) => ({ default: m.DocumentsPage })),
+        ),
+      },
+      {
+        path: "documents/new",
+        element: lazyRoute(() =>
+          import("../features/documents/editor.js").then((m) => ({
+            default: m.DocumentEditorPage,
+          })),
+        ),
+      },
+      {
+        path: "documents/:id/preview",
+        element: lazyRoute(() =>
+          import("../features/documents/preview.js").then((m) => ({
+            default: m.DocumentPreviewPage,
+          })),
+        ),
+      },
+      {
+        path: "documents/:id",
+        element: lazyRoute(() =>
+          import("../features/documents/editor.js").then((m) => ({
+            default: m.DocumentEditorPage,
+          })),
+        ),
+      },
+      {
+        path: "html/new",
+        element: lazyRoute(() =>
+          import("../features/documents/html-editor.js").then((m) => ({
+            default: m.HtmlEditorPage,
+          })),
+        ),
+      },
+      {
+        path: "html/:id",
+        element: lazyRoute(() =>
+          import("../features/documents/html-editor.js").then((m) => ({
+            default: m.HtmlEditorPage,
+          })),
+        ),
+      },
+      {
+        path: "knowledge",
+        element: lazyRoute(() =>
+          import("../features/knowledge/knowledge.js").then((m) => ({ default: m.KnowledgePage })),
+        ),
+      },
+      {
+        path: "knowledge/new",
+        element: lazyRoute(() =>
+          import("../features/knowledge/knowledge.js").then((m) => ({
+            default: m.KnowledgeNewPage,
+          })),
+        ),
+      },
+      {
+        path: "knowledge/:id",
+        element: lazyRoute(() =>
+          import("../features/knowledge/knowledge.js").then((m) => ({
+            default: m.KnowledgeDetailPage,
+          })),
+        ),
+      },
+      {
+        path: "research",
+        element: lazyRoute(() =>
+          import("../features/research/research.js").then((m) => ({ default: m.ResearchPage })),
+        ),
+      },
+      {
+        path: "research/new",
+        element: lazyRoute(() =>
+          import("../features/research/research.js").then((m) => ({ default: m.ResearchNewPage })),
+        ),
+      },
+      {
+        path: "tasks",
+        element: lazyRoute(() =>
+          import("../features/tasks/tasks.js").then((m) => ({ default: m.TasksPage })),
+        ),
+      },
+      {
+        path: "tasks/new",
+        element: lazyRoute(() =>
+          import("../features/tasks/tasks.js").then((m) => ({ default: m.TaskNewPage })),
+        ),
+      },
+      {
+        path: "tasks/:id",
+        element: lazyRoute(() =>
+          import("../features/tasks/tasks.js").then((m) => ({ default: m.TaskDetailPage })),
+        ),
+      },
+      {
+        path: "datasets",
+        element: lazyRoute(() =>
+          import("../features/datasets/datasets.js").then((m) => ({ default: m.DatasetsPage })),
+        ),
+      },
+      {
+        path: "datasets/:id",
+        element: lazyRoute(() =>
+          import("../features/datasets/datasets.js").then((m) => ({
+            default: m.DatasetDetailPage,
+          })),
+        ),
+      },
+      {
+        path: "presentations",
+        element: lazyRoute(() =>
+          import("../features/presentations/presentations.js").then((m) => ({
+            default: m.PresentationsPage,
+          })),
+        ),
+      },
+      {
+        path: "presentations/new",
+        element: lazyRoute(() =>
+          import("../features/presentations/presentation-new.js").then((m) => ({
+            default: m.PresentationNewPage,
+          })),
+        ),
+      },
+      {
+        path: "presentations/generate/:taskId",
+        element: lazyRoute(() =>
+          import("../features/presentations/presentation-new.js").then((m) => ({
+            default: m.PresentationNewPage,
+          })),
+        ),
+      },
+      {
+        path: "presentations/:id",
+        element: lazyRoute(() =>
+          import("../features/presentations/presentations.js").then((m) => ({
+            default: m.PresentationEditorPage,
+          })),
+        ),
+      },
+      {
+        path: "presentations/:id/play",
+        element: lazyRoute(() =>
+          import("../features/presentations/presentations.js").then((m) => ({
+            default: m.PresentationPlayerPage,
+          })),
+        ),
+      },
+      {
+        path: "presentations/snapshot/:taskId",
+        element: lazyRoute(() =>
+          import("../features/presentations/presentations.js").then((m) => ({
+            default: m.PresentationSnapshotPlayerPage,
+          })),
+        ),
+      },
+      {
+        path: "templates",
+        element: lazyRoute(() =>
+          import("../features/templates/templates.js").then((m) => ({ default: m.TemplatesPage })),
+        ),
+      },
+      {
+        path: "notifications",
+        element: lazyRoute(() =>
+          import("../features/notifications/notifications.js").then((m) => ({
+            default: m.NotificationsPage,
+          })),
+        ),
+      },
+      {
+        path: "billing",
+        element: lazyRoute(() =>
+          import("../features/billing/billing.js").then((m) => ({ default: m.BillingPage })),
+        ),
+      },
+      {
+        path: "profile",
+        element: lazyRoute(() =>
+          import("../features/profile/profile.js").then((m) => ({ default: m.ProfilePage })),
+        ),
+      },
+      {
+        path: "publishes",
+        element: lazyRoute(() =>
+          import("../features/publishing/publishes.js").then((m) => ({ default: m.PublishesPage })),
+        ),
+      },
+      {
+        path: "assistant",
+        element: lazyRoute(() =>
+          import("../features/assistant/assistant.js").then((m) => ({ default: m.AssistantPage })),
+        ),
+      },
+      {
+        path: "settings",
+        element: lazyRoute(() =>
+          import("../features/settings/settings.js").then((m) => ({ default: m.SettingsPage })),
+        ),
+      },
+      {
+        path: "*",
+        element: lazyRoute(() =>
+          import("../features/misc/not-found.js").then((m) => ({ default: m.NotFoundPage })),
+        ),
+      },
     ],
   },
 ]);
