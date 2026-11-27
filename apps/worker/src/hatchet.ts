@@ -176,13 +176,15 @@ export class HatchetRuntime {
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           await api
-            .projectResult({
-              resultSchema: "failure/v1",
+            .postComputeResults({
+              kind: "knowledge.failed",
               taskId: payload.sourceId,
               runId: ctx.runId,
-              attempt: 1,
-              outputs: [],
-              failures: [{ item: "knowledge", reason: message, retryable: true }],
+              data: {
+                kbId: payload.kbId,
+                sourceId: payload.sourceId,
+                error: message,
+              },
             })
             .catch(() => undefined);
           await api.nackOutbox(payload.outboxEventId).catch(() => undefined);
@@ -196,11 +198,12 @@ export class HatchetRuntime {
 export class HatchetRelay {
   private stopped = false;
   private timer: NodeJS.Timeout | null = null;
+  private readonly handedOff = new Set<string>();
 
   constructor(
     private readonly runtime: HatchetRuntime,
     private readonly api: ApiClient,
-    private readonly state: WorkerState,
+    private readonly _state: WorkerState,
     private readonly logger: Logger,
     private readonly pollIntervalMs: number,
     private readonly thumbnails?: ThumbnailService,
@@ -229,16 +232,11 @@ export class HatchetRelay {
 
     for (const event of events) {
       if (this.stopped) return;
-      if (this.state.hasEvent(event.id)) {
-        await this.api.ackOutbox(event.id).catch(() => undefined);
+      if (this.handedOff.has(event.id)) {
         continue;
       }
-      // Only mark the event as handed off after it has been successfully
-      // enqueued to Hatchet. Marking before the enqueue would let a failed
-      // enqueue get acknowledged as a no-op on the next poll, silently dropping
-      // the event.
       if (await this.dispatch(event)) {
-        this.state.markEvent(event.id, event.eventType);
+        this.handedOff.add(event.id);
       }
     }
   }

@@ -38,15 +38,25 @@ describe("parseImportedDocumentFile", () => {
     });
   });
 
-  it("keeps Office and PDF files outside the editable document type", () => {
-    expect(() => parseImportedDocumentFile("报告.docx", Buffer.from("content"))).toThrowError(
+  it("rejects unsupported binary formats and parses valid formats", () => {
+    expect(() => parseImportedDocumentFile("程序.exe", Buffer.from("MZ..."))).toThrowError(
       DomainError,
     );
     try {
-      parseImportedDocumentFile("报告.pdf", Buffer.from("content"));
+      parseImportedDocumentFile("数据.bin", Buffer.from("content"));
     } catch (error) {
       expect(error).toMatchObject({ code: "DOCUMENT_FORMAT_UNSUPPORTED", status: 400 });
     }
+  });
+
+  it("extracts text from valid PDF document", () => {
+    const fakePdf = Buffer.from(
+      "%PDF-1.4\n1 0 obj\n<< /Length 40 >>\nstream\nBT\n/F1 12 Tf\n(Hello PDF World) Tj\nET\nendstream\nendobj\n%%EOF",
+      "utf8",
+    );
+    const parsed = parseImportedDocumentFile("test-doc.pdf", fakePdf);
+    expect(parsed.title).toBe("test-doc");
+    expect(parsed.markdown).toContain("Hello PDF World");
   });
 });
 

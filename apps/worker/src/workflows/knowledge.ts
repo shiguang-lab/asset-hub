@@ -1,3 +1,4 @@
+import { createAiService } from "@shiguang/ai-core";
 import { chunkText, extractPlainText } from "@shiguang/content";
 import type { ObjectStore } from "@shiguang/database";
 import { type StepContext, step } from "./helpers.js";
@@ -39,8 +40,9 @@ export async function runKnowledgeWorkflow(
     text: string;
     charStart: number;
     charEnd: number;
+    embedding?: number[];
   }> = [];
-  await step(ctx, "knowledge.chunk", 65, "分块并计算定位信息", async () => {
+  await step(ctx, "knowledge.chunk", 60, "分块并计算定位信息", async () => {
     chunks = chunkText(text).map((c) => ({
       ordinal: c.ordinal,
       headingPath: c.headingPath,
@@ -50,7 +52,28 @@ export async function runKnowledgeWorkflow(
     }));
   });
 
-  await step(ctx, "knowledge.index", 90, "写入索引并更新来源状态", async () => {
+  await step(ctx, "knowledge.embed", 80, "生成向量嵌入", async () => {
+    try {
+      const ai = createAiService();
+      const texts = chunks.map((c) => c.text);
+      const batchSize = 20;
+      for (let i = 0; i < texts.length; i += batchSize) {
+        const batchTexts = texts.slice(i, i + batchSize);
+        const embeddings = await ai.embed(batchTexts);
+        for (let j = 0; j < embeddings.length; j++) {
+          const target = chunks[i + j];
+          const emb = embeddings[j];
+          if (target && emb) {
+            target.embedding = emb;
+          }
+        }
+      }
+    } catch (err) {
+      ctx.logger.warn({ err: String(err) }, "vector embedding generation skipped");
+    }
+  });
+
+  await step(ctx, "knowledge.index", 95, "写入索引并更新来源状态", async () => {
     const res = await ctx.api.postComputeResults({
       kind: "knowledge.indexed",
       taskId: ctx.taskId,

@@ -10,6 +10,7 @@ export const eventTypeSchema = z.enum([
   "task.completed",
   "task.partial",
   "task.failed",
+  "task.cancelled",
   "knowledge.source.added",
   "knowledge.source.ready",
   "knowledge.source.failed",
@@ -42,6 +43,7 @@ export const eventPayloads = {
     failures: z.array(z.string()),
   }),
   "task.failed": z.object({ taskId: z.string(), error: z.string() }),
+  "task.cancelled": z.object({ taskId: z.string() }),
   "knowledge.source.added": z.object({ sourceId: z.string(), kbId: z.string() }),
   "knowledge.source.ready": z.object({
     sourceId: z.string(),

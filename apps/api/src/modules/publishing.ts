@@ -332,6 +332,9 @@ export async function buildAndAttachRelease(
     ...(asset.type === "file" && !content?.text
       ? { markdown: `# ${asset.title}\n\n该文件已发布，可通过下载按钮获取原始文件。` }
       : {}),
+    ...(asset.type === "dataset" && !content?.text
+      ? { markdown: datasetPreviewMarkdown(asset.title, content?.manifest ?? null) }
+      : {}),
     ...(asset.type === "presentation"
       ? { html: content?.text ?? undefined }
       : asset.type === "html" && content?.text
@@ -680,6 +683,29 @@ function generatedDownloadFor(
     mediaType: file.mediaType,
     size: Buffer.byteLength(file.content),
   };
+}
+
+function datasetPreviewMarkdown(title: string, manifest: Record<string, unknown> | null): string {
+  const rows = Array.isArray(manifest?.rows)
+    ? (manifest.rows.slice(0, 100) as Array<Record<string, unknown>>)
+    : [];
+  if (rows.length === 0) {
+    return `# ${title}\n\n该数据集已发布。`;
+  }
+  const cols = Object.keys(rows[0] ?? {});
+  if (cols.length === 0) {
+    return `# ${title}\n\n共 ${rows.length} 行数据。`;
+  }
+  const escapeCell = (v: unknown) =>
+    String(v ?? "")
+      .replace(/\|/g, "\\|")
+      .replace(/\n/g, " ");
+  const header = `| ${cols.map(escapeCell).join(" | ")} |`;
+  const sep = `| ${cols.map(() => "---").join(" | ")} |`;
+  const body = rows
+    .map((row) => `| ${cols.map((c) => escapeCell(row[c])).join(" | ")} |`)
+    .join("\n");
+  return `# ${title}\n\n${header}\n${sep}\n${body}\n`;
 }
 
 function safeReleaseFileName(name: string): string {

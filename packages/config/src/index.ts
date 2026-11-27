@@ -128,8 +128,8 @@ export function loadModelGatewayConfig(): ModelGatewayConfig {
     "deepseek-flash";
 
   return {
-    baseUrl: process.env.MODEL_GATEWAY_URL ?? "https://ai.shiguanglab.com/v1",
-    apiKey: process.env.MODEL_GATEWAY_API_KEY ?? "sk-9532ceff57cbb74d-804864-b3a07f46",
+    baseUrl: process.env.MODEL_GATEWAY_URL?.trim() || null,
+    apiKey: process.env.MODEL_GATEWAY_API_KEY?.trim() || null,
     timeoutMs: Number(process.env.MODEL_GATEWAY_TIMEOUT_MS ?? 120_000),
     streamFirstByteTimeoutMs: Number(
       process.env.MODEL_GATEWAY_STREAM_FIRST_BYTE_TIMEOUT_MS ?? 600_000,

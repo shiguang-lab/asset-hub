@@ -30,6 +30,33 @@ export function PublishesPage() {
   });
   const [qr, setQr] = useState<{ url: string; dataUrl: string } | null>(null);
   const [rebuildTarget, setRebuildTarget] = useState<Publish | null>(null);
+  const [commentTarget, setCommentTarget] = useState<Publish | null>(null);
+
+  const { data: commentsData, isLoading: commentsLoading } = useQuery<{
+    comments: Array<{
+      id: string;
+      publishId: string;
+      releaseId: string;
+      authorSubject: string;
+      authorName: string;
+      content: string;
+      createdAt: string;
+    }>;
+  }>({
+    queryKey: ["publish-comments", commentTarget?.id],
+    queryFn: () => api("/comments", { params: { publishId: commentTarget?.id } }),
+    enabled: Boolean(commentTarget),
+  });
+
+  const deleteComment = useMutation({
+    mutationFn: (commentId: string) => api(`/comments/${commentId}`, { method: "DELETE" }),
+    onSuccess: () => {
+      toast("success", "已删除评论");
+      void queryClient.invalidateQueries({ queryKey: ["publish-comments", commentTarget?.id] });
+    },
+    onError: (e: Error) => toast("error", e.message),
+  });
+
   const { data: rebuildReferences } = useQuery<{
     references: Array<{ id: string; title: string; type: string; visibility: string }>;
   }>({
@@ -51,6 +78,7 @@ export function PublishesPage() {
       toast("success", "已撤销发布");
       void queryClient.invalidateQueries({ queryKey: ["publishes"] });
     },
+    onError: (e: Error) => toast("error", e.message),
   });
 
   const rebuild = useMutation({
@@ -64,6 +92,7 @@ export function PublishesPage() {
       setRebuildTarget(null);
       void queryClient.invalidateQueries({ queryKey: ["publishes"] });
     },
+    onError: (e: Error) => toast("error", e.message),
   });
 
   const titleOf = (assetId: string) =>
@@ -114,6 +143,9 @@ export function PublishesPage() {
                       <Button size="small" onClick={() => setQr({ url: p.url ?? "", dataUrl: "" })}>
                         二维码
                       </Button>
+                      <Button size="small" onClick={() => setCommentTarget(p)}>
+                        评论管理
+                      </Button>
                       <Button size="small" onClick={() => setRebuildTarget(p)}>
                         重新发布
                       </Button>
@@ -154,16 +186,31 @@ export function PublishesPage() {
       <Modal
         open={Boolean(rebuildTarget)}
         title="确认发布关联资源"
-        onCancel={() => {
-          if (rebuildTarget)
-            rebuild.mutate({ id: rebuildTarget.id, allowPrivateReferences: false });
-        }}
-        onOk={() => {
-          if (rebuildTarget) rebuild.mutate({ id: rebuildTarget.id, allowPrivateReferences: true });
-        }}
-        cancelText="仅发布当前文档"
-        okText="一起发布并允许访问"
-        confirmLoading={rebuild.isPending}
+        onCancel={() => setRebuildTarget(null)}
+        footer={
+          <div className="sg-row">
+            <Button onClick={() => setRebuildTarget(null)}>取消</Button>
+            <Button
+              disabled={rebuild.isPending}
+              onClick={() => {
+                if (rebuildTarget)
+                  rebuild.mutate({ id: rebuildTarget.id, allowPrivateReferences: false });
+              }}
+            >
+              仅发布当前文档
+            </Button>
+            <Button
+              type="primary"
+              loading={rebuild.isPending}
+              onClick={() => {
+                if (rebuildTarget)
+                  rebuild.mutate({ id: rebuildTarget.id, allowPrivateReferences: true });
+              }}
+            >
+              一起发布并允许访问
+            </Button>
+          </div>
+        }
         destroyOnHidden
       >
         <p className="sg-subtle">
@@ -179,6 +226,47 @@ export function PublishesPage() {
             </div>
           ))}
         </Scrollbar>
+      </Modal>
+
+      <Modal
+        open={Boolean(commentTarget)}
+        title={`评论管理 · ${titleOf(commentTarget?.assetId ?? "")}`}
+        onCancel={() => setCommentTarget(null)}
+        footer={<Button onClick={() => setCommentTarget(null)}>关闭</Button>}
+        width={640}
+        destroyOnHidden
+      >
+        {commentsLoading ? (
+          <Loading loading />
+        ) : (commentsData?.comments?.length ?? 0) === 0 ? (
+          <Empty title="暂无评论" hint="该发布页面还没有访客发表评论。" />
+        ) : (
+          <Scrollbar style={{ maxHeight: 420 }}>
+            <div className="sg-col" style={{ gap: 12 }}>
+              {commentsData?.comments.map((c) => (
+                <div key={c.id} className="sg-card sg-row-between" style={{ padding: 12 }}>
+                  <div style={{ flex: 1, minWidth: 0, marginRight: 12 }}>
+                    <div className="sg-row" style={{ gap: 8, marginBottom: 4 }}>
+                      <strong>{c.authorName}</strong>
+                      <span className="sg-subtle" style={{ fontSize: 12 }}>
+                        {formatDate(c.createdAt)}
+                      </span>
+                    </div>
+                    <div style={{ fontSize: 13, wordBreak: "break-word" }}>{c.content}</div>
+                  </div>
+                  <Button
+                    size="small"
+                    danger
+                    loading={deleteComment.isPending}
+                    onClick={() => deleteComment.mutate(c.id)}
+                  >
+                    删除
+                  </Button>
+                </div>
+              ))}
+            </div>
+          </Scrollbar>
+        )}
       </Modal>
     </div>
   );

@@ -1,5 +1,7 @@
 import type { ObjectStore } from "@shiguang/database";
+import { runDatasetQueryWorkflow, runFileProcessWorkflow } from "./data-query.js";
 import { runDatasetImportWorkflow } from "./dataset-import.js";
+import { runExportWorkflow } from "./export.js";
 import { runGitSyncWorkflow } from "./git-sync.js";
 import type { StepContext } from "./helpers.js";
 import { runPresentationWorkflow } from "./presentation.js";
@@ -27,11 +29,17 @@ export async function runTaskWorkflow(
     case "git_sync":
       await runGitSyncWorkflow(ctx, spec);
       break;
+    case "export":
+      await runExportWorkflow(ctx, spec, storage);
+      break;
+    case "dataset_query":
+      await runDatasetQueryWorkflow(ctx, spec, storage);
+      break;
+    case "file_process":
+      await runFileProcessWorkflow(ctx, spec, storage);
+      break;
     case "knowledge_index":
     case "publish_bundle":
-    case "export":
-    case "file_process":
-    case "dataset_query":
       await ctx.api.projectResult({
         resultSchema: "noop/v1",
         taskId: ctx.taskId,

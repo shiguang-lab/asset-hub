@@ -778,15 +778,57 @@ export function KnowledgePage() {
                             style={{ fontWeight: 500, color: "var(--sg-muted)" }}
                             className="tabular"
                           >
-                            PDF 35% · Word 25% · 表格/PPT 28%
+                            {(() => {
+                              const total = selectedSources.length;
+                              if (total === 0) return "暂无来源";
+                              const uploads = selectedSources.filter(
+                                (s) => s.sourceType === "upload",
+                              ).length;
+                              const assetsCount = selectedSources.filter(
+                                (s) => s.sourceType === "asset",
+                              ).length;
+                              const urls = selectedSources.filter(
+                                (s) => s.sourceType === "url",
+                              ).length;
+                              return `文件 ${uploads} · 资产 ${assetsCount} · 网页 ${urls}`;
+                            })()}
                           </span>
                         </div>
                         <div className="zx-dist-bar">
-                          <i style={{ width: "35%", background: "#6366F1" }} />
-                          <i style={{ width: "25%", background: "#0EA5E9" }} />
-                          <i style={{ width: "16%", background: "#10B981" }} />
-                          <i style={{ width: "12%", background: "#A855F7" }} />
-                          <i style={{ width: "12%", background: "#F59E0B" }} />
+                          {(() => {
+                            const total = Math.max(selectedSources.length, 1);
+                            const uploads = selectedSources.filter(
+                              (s) => s.sourceType === "upload",
+                            ).length;
+                            const assetsCount = selectedSources.filter(
+                              (s) => s.sourceType === "asset",
+                            ).length;
+                            const urls = selectedSources.filter(
+                              (s) => s.sourceType === "url",
+                            ).length;
+                            return (
+                              <>
+                                <i
+                                  style={{
+                                    width: `${(uploads / total) * 100}%`,
+                                    background: "#6366F1",
+                                  }}
+                                />
+                                <i
+                                  style={{
+                                    width: `${(assetsCount / total) * 100}%`,
+                                    background: "#0EA5E9",
+                                  }}
+                                />
+                                <i
+                                  style={{
+                                    width: `${(urls / total) * 100}%`,
+                                    background: "#10B981",
+                                  }}
+                                />
+                              </>
+                            );
+                          })()}
                         </div>
                       </div>
 
@@ -845,7 +887,9 @@ export function KnowledgePage() {
                                 style={{ color: "var(--sg-muted)", fontSize: 11.5 }}
                                 className="tabular"
                               >
-                                {index === 0 ? "14:30" : index === 1 ? "昨天" : "05-16"}
+                                {"createdAt" in source && typeof source.createdAt === "string"
+                                  ? formatRelative(source.createdAt)
+                                  : "示例"}
                               </span>
                             </button>
                           );
@@ -1037,8 +1081,17 @@ export function KnowledgeDetailPage() {
   const [assetId, setAssetId] = useState("");
   const [url, setUrl] = useState("");
   const [file, setFile] = useState<File | null>(null);
+  const [askInput, setAskInput] = useState("");
   const [askQuery, setAskQuery] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
+  const [activeCitation, setActiveCitation] = useState<{
+    index: number;
+    sourceId?: string;
+    sourceTitle: string;
+    excerpt: string;
+    headingPath: string;
+    ordinal?: number;
+  } | null>(null);
   const { styles } = useKnowledgeDetailStyles();
 
   const { data: kb } = useQuery<KnowledgeBase & { sources: KnowledgeSource[] }>({
@@ -1064,10 +1117,17 @@ export function KnowledgeDetailPage() {
       }),
     enabled: searchQuery.trim().length > 0,
   });
-  const { data: askResult } = useQuery<{
+  const { data: askResult, isFetching: asking } = useQuery<{
     answer: string;
     insufficient: boolean;
-    citations: Array<{ index: number; sourceTitle: string; excerpt: string; headingPath: string }>;
+    citations: Array<{
+      index: number;
+      sourceId?: string;
+      sourceTitle: string;
+      excerpt: string;
+      headingPath: string;
+      ordinal?: number;
+    }>;
   }>({
     queryKey: ["knowledge-ask", id, askQuery],
     queryFn: () =>
@@ -1108,13 +1168,16 @@ export function KnowledgeDetailPage() {
       toast("success", "已重新加入队列");
       void queryClient.invalidateQueries({ queryKey: ["knowledge", id] });
     },
+    onError: (e: Error) => toast("error", e.message),
   });
 
   const removeSource = useMutation({
     mutationFn: (sid: string) => api(`/knowledge-bases/${id}/sources/${sid}`, { method: "DELETE" }),
     onSuccess: () => {
+      toast("success", "来源已移除");
       void queryClient.invalidateQueries({ queryKey: ["knowledge", id] });
     },
+    onError: (e: Error) => toast("error", e.message),
   });
 
   if (!kb) return <Loading loading />;
@@ -1148,14 +1211,16 @@ export function KnowledgeDetailPage() {
           <Card>
             <div className="sg-row">
               <Input
-                value={askQuery}
-                onChange={(e) => setAskQuery(e.target.value)}
+                value={askInput}
+                onChange={(e) => setAskInput(e.target.value)}
+                onPressEnter={() => askInput.trim() && setAskQuery(askInput.trim())}
                 placeholder="基于知识库提问，例如：越南消费金融的主要玩家有哪些？"
               />
               <Button
                 type="primary"
-                onClick={() => setAskQuery(askQuery)}
-                disabled={!askQuery.trim()}
+                loading={asking}
+                onClick={() => setAskQuery(askInput.trim())}
+                disabled={!askInput.trim()}
               >
                 提问
               </Button>
@@ -1170,7 +1235,13 @@ export function KnowledgeDetailPage() {
                   <div className="sg-mt">
                     <strong className="sg-h3">引用来源</strong>
                     {askResult.citations.map((c) => (
-                      <div key={c.index} className={`sg-card ${styles.citation}`}>
+                      <button
+                        type="button"
+                        key={c.index}
+                        className={`sg-card ${styles.citation}`}
+                        style={{ width: "100%", textAlign: "left", cursor: "pointer" }}
+                        onClick={() => setActiveCitation(c)}
+                      >
                         <div className="sg-row">
                           <span className="sg-badge sg-badge-accent">[{c.index}]</span>
                           <strong>{c.sourceTitle}</strong>
@@ -1178,8 +1249,27 @@ export function KnowledgeDetailPage() {
                         <p className={`sg-subtle ${styles.citationExcerpt}`}>
                           {c.headingPath || "正文"} · {c.excerpt.slice(0, 120)}…
                         </p>
-                      </div>
+                      </button>
                     ))}
+                  </div>
+                )}
+                {activeCitation && (
+                  <div className="sg-card sg-mt">
+                    <div className="sg-row-between">
+                      <strong>
+                        [{activeCitation.index}] {activeCitation.sourceTitle}
+                      </strong>
+                      <Button size="small" type="text" onClick={() => setActiveCitation(null)}>
+                        关闭
+                      </Button>
+                    </div>
+                    <p className="sg-subtle" style={{ margin: "6px 0" }}>
+                      章节：{activeCitation.headingPath || "正文"}
+                      {activeCitation.ordinal !== undefined
+                        ? ` · 分块 #${activeCitation.ordinal + 1}`
+                        : ""}
+                    </p>
+                    <p style={{ whiteSpace: "pre-wrap", margin: 0 }}>{activeCitation.excerpt}</p>
                   </div>
                 )}
               </div>

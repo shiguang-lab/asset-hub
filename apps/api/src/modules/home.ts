@@ -1,4 +1,5 @@
 import type { FastifyInstance } from "fastify";
+import { z } from "zod";
 import { requireAdmin } from "../platform/authorization.js";
 import type { AppContext } from "../types.js";
 
@@ -40,12 +41,15 @@ export function registerHome(app: FastifyInstance): void {
   });
 
   app.patch("/api/v1/me", async (req) => {
-    const body = (req.body ?? {}) as {
-      name?: string;
-      defaultQuality?: "economy" | "balanced" | "best";
-      defaultLanguage?: string;
-      notifyEmail?: boolean;
-    };
+    const body = z
+      .object({
+        name: z.string().trim().min(1).max(100).optional(),
+        avatarUrl: z.string().url().max(2000).nullable().optional(),
+        defaultQuality: z.enum(["economy", "balanced", "best"]).optional(),
+        defaultLanguage: z.string().min(2).max(20).optional(),
+        notifyEmail: z.boolean().optional(),
+      })
+      .parse(req.body ?? {});
     const profile = await ctx.store.updateUserProfile(req.actor.subject, body);
     return profile;
   });

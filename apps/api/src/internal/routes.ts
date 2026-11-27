@@ -111,7 +111,7 @@ export function registerInternalRoutes(app: FastifyInstance): void {
     if (event.detail) patch.currentStep = event.detail;
     if (event.checkpoint) patch.checkpoint = event.checkpoint;
     const updated = await ctx.store.updateTask(task.workspaceId, task.id, patch);
-    let streamEvent;
+    let streamEvent: Awaited<ReturnType<typeof ctx.store.appendTaskStreamEvent>> | undefined;
     if (event.stream) {
       streamEvent = await ctx.store.appendTaskStreamEvent({
         taskId: task.id,
@@ -485,7 +485,7 @@ export function registerInternalRoutes(app: FastifyInstance): void {
   app.post("/internal/v1/compute/results", async (req) => {
     const body = z
       .object({
-        kind: z.enum(["dataset_import", "knowledge.indexed"]),
+        kind: z.enum(["dataset_import", "knowledge.indexed", "knowledge.failed"]),
         taskId: z.string(),
         runId: z.string(),
         data: z.record(z.string(), z.unknown()),
@@ -535,6 +535,30 @@ export function registerInternalRoutes(app: FastifyInstance): void {
         contentHash: d.contentHash,
       });
       await ctx.store.insertInbox(inboxKey, "compute-results");
+      const task = await ctx.store.getTaskAny(body.taskId);
+      if (task) {
+        await ctx.store.updateTask(task.workspaceId, task.id, {
+          status: "completed",
+          progress: 100,
+          currentStep: "导入完成",
+        });
+        await ctx.bus.emit({
+          eventId: nextId("evt"),
+          eventType: "task.completed",
+          schemaVersion: 1,
+          occurredAt: nowIso(),
+          producer: "compute-worker",
+          tenantId: task.workspaceId,
+          aggregate: { type: "task", id: task.id, version: 1 },
+          trace: {},
+          data: { taskId: task.id, outputAssetIds: [] },
+        });
+        ctx.sse.broadcast(task.workspaceId, {
+          id: nextId("evt"),
+          event: "task.completed",
+          data: { taskId: task.id, status: "completed", outputAssetIds: [] },
+        });
+      }
       await ctx.store.audit(
         dataset.workspaceId,
         "internal",
@@ -569,6 +593,7 @@ export function registerInternalRoutes(app: FastifyInstance): void {
               text: z.string(),
               charStart: z.number(),
               charEnd: z.number(),
+              embedding: z.array(z.number()).optional(),
             }),
           ),
         })
@@ -598,6 +623,42 @@ export function registerInternalRoutes(app: FastifyInstance): void {
       });
       return { ok: true, sourceId: d.sourceId, chunkCount: d.chunks.length };
     }
+
+    if (body.kind === "knowledge.failed") {
+      const d = z
+        .object({
+          kbId: z.string(),
+          sourceId: z.string(),
+          error: z.string(),
+        })
+        .parse(body.data);
+      const source = await ctx.store.getKnowledgeSource(d.kbId, d.sourceId);
+      if (!source) return { ok: false, reason: "source_not_found" };
+      await ctx.store.updateKnowledgeSource(d.kbId, d.sourceId, {
+        status: "failed",
+        error: d.error,
+      });
+      await ctx.bus.emit({
+        eventId: nextId("evt"),
+        eventType: "knowledge.source.failed",
+        schemaVersion: 1,
+        occurredAt: nowIso(),
+        producer: "worker",
+        tenantId: source.workspaceId,
+        aggregate: { type: "knowledge_source", id: d.sourceId, version: 1 },
+        trace: {},
+        data: { sourceId: d.sourceId, kbId: d.kbId, error: d.error },
+      });
+      const ownerSubject =
+        (await ctx.store.getWorkspaceOwnerSubject(source.workspaceId)) ?? "dev-user";
+      await ctx.bus.notify(source.workspaceId, ownerSubject, {
+        type: "knowledge_failed",
+        title: `知识库来源索引失败：${source.title}`,
+        body: d.error,
+        link: `/knowledge/${d.kbId}`,
+      });
+      return { ok: true, sourceId: d.sourceId, status: "failed" };
+    }
     return { ok: false, reason: "unknown_kind" };
   });
 
@@ -624,7 +685,7 @@ export function registerInternalRoutes(app: FastifyInstance): void {
         lastError: z.string().optional(),
       })
       .parse(req.body);
-    ctx.store
+    await ctx.store
       .getDb()
       .prepare(
         "UPDATE git_connections SET status = ?, last_sync_at = ?, last_sync_status = ?, last_error = ?, updated_at = ? WHERE id = ?",
@@ -645,6 +706,7 @@ export function registerInternalRoutes(app: FastifyInstance): void {
       id: s.id,
       workspaceId: s.workspace_id,
       name: s.name,
+      taskType: s.task_type,
       goal: s.goal,
       spec: parseJson(s.spec_json),
     })),
@@ -690,7 +752,7 @@ export function registerInternalRoutes(app: FastifyInstance): void {
       tenantId: body.workspaceId,
       aggregate: { type: "task", id: task.id, version: 1 },
       trace: {},
-      data: { taskId: task.id, taskType: "research", spec: { ...body.spec, goal: body.goal } },
+      data: { taskId: task.id, taskType: task.type, spec: { ...body.spec, goal: body.goal } },
     });
     return { ok: true, taskId: task.id };
   });

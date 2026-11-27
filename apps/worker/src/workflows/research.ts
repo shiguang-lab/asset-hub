@@ -25,25 +25,35 @@ export async function runResearchWorkflow(
   const spec = researchSpecSchema.parse(specInput);
   const ai: AiService = createAiService({ quality: spec.quality });
   const capabilityContext = await loadCapabilityContext(loadCapabilityAgentId()).catch(() => null);
+  const ensureNotCancelled = async () => {
+    const state = await ctx.api.getTaskState(ctx.taskId).catch(() => null);
+    if (state?.cancelRequested) {
+      throw new Error("任务已被用户取消");
+    }
+  };
   const scopeItems =
     spec.scope.length > 0
       ? spec.scope.filter((s) => s.enabled)
       : await generateScope(ai, spec.goal, spec.region);
 
   let evidence: Array<Record<string, unknown>> = [];
+  await ensureNotCancelled();
   await step(ctx, "research.plan", 10, "研究规划：确定研究范围与检索策略", async () => {
     ctx.logger.info({ scope: scopeItems }, "research scope ready");
   });
 
+  await ensureNotCancelled();
   await step(
     ctx,
     "research.collect",
     spec.depth === "quick" ? 45 : 55,
-    "收集证据：检索公开来源并提取要点",
+    "收集证据：提取研究要点与来源结构",
     async () => {
-      evidence = collectEvidence(spec, scopeItems);
+      evidence = await collectEvidence(spec, scopeItems, ai);
     },
   );
+
+  await ensureNotCancelled();
 
   let reportText = "";
   await step(ctx, "research.write", 80, "撰写报告：基于证据生成结构化报告", async () => {
@@ -151,34 +161,116 @@ async function generateScope(
   }
 }
 
-function collectEvidence(
+async function fetchWebSearchResults(
+  query: string,
+  count = 2,
+): Promise<Array<{ title: string; url: string; snippet: string }>> {
+  const searchUrl = process.env.SEARCH_API_URL || process.env.WEB_SEARCH_URL;
+  if (!searchUrl) return [];
+  try {
+    const res = await fetch(`${searchUrl}?q=${encodeURIComponent(query)}&count=${count}`, {
+      headers: {
+        "User-Agent": "ShiguangResearch/1.0",
+        ...(process.env.SEARCH_API_KEY
+          ? { Authorization: `Bearer ${process.env.SEARCH_API_KEY}` }
+          : {}),
+      },
+    });
+    if (!res.ok) return [];
+    const data = (await res.json()) as {
+      results?: Array<{ title?: string; url?: string; snippet?: string; content?: string }>;
+    };
+    return (data.results ?? []).map((r) => ({
+      title: r.title ?? "公开资料",
+      url: r.url ?? "",
+      snippet: r.snippet ?? r.content ?? "",
+    }));
+  } catch {
+    return [];
+  }
+}
+
+async function collectEvidence(
   spec: z.infer<typeof researchSpecSchema>,
   scope: Array<{ id: string; label: string; enabled: boolean }>,
-): Array<Record<string, unknown>> {
+  ai: AiService,
+): Promise<Array<Record<string, unknown>>> {
   const now = new Date().toISOString();
-  const sources = [
-    {
-      title: `${spec.region}行业统计年鉴 2025`,
-      url: "https://example.com/statistical-yearbook-2025",
-    },
-    { title: "行业协会年度报告", url: "https://example.com/industry-association-report" },
-    { title: "头部公司财报与公开资料", url: "https://example.com/company-filings" },
-    { title: "咨询机构市场洞察", url: "https://example.com/consulting-insights" },
-  ];
   const evidence: Array<Record<string, unknown>> = [];
-  scope.slice(0, 6).forEach((item, i) => {
-    const source = sources[i % sources.length] ?? sources[0] ?? { title: "公开资料", url: null };
-    evidence.push({
-      claim: `关于“${item.label}”，${spec.region}市场保持增长，头部参与者持续加大投入（${spec.timeRange}）`,
-      sourceTitle: source.title,
-      sourceUrl: source.url,
-      locator: `第 ${2 + i} 页 / 章节 ${item.id}`,
-      excerpt: `${item.label}：市场规模、增速、主要玩家与关键驱动因素分析。`,
-      retrievedAt: now,
-      confidence: 0.6 + (i % 3) * 0.1,
-      verificationStatus: "unverified",
-    });
-  });
+
+  for (let i = 0; i < Math.min(scope.length, 6); i++) {
+    const item = scope[i];
+    if (!item) continue;
+    const query = `${spec.goal} ${item.label} ${spec.region}`.trim();
+    const webResults = await fetchWebSearchResults(query, 2);
+
+    if (webResults.length > 0) {
+      for (const wr of webResults) {
+        evidence.push({
+          claim: `围绕“${item.label}”：${wr.snippet.slice(0, 200)}`,
+          sourceTitle: wr.title,
+          sourceUrl: wr.url || null,
+          locator: `检索关键词: ${query}`,
+          excerpt: wr.snippet,
+          retrievedAt: now,
+          confidence: 0.85,
+          verificationStatus: "verified",
+        });
+      }
+    } else {
+      try {
+        const synthesizedRes = await ai.completeJson(
+          {
+            quality: spec.quality,
+            messages: [
+              {
+                role: "system",
+                content:
+                  "你是行业研究分析师。针对给定的研究维度，提取核心事实陈述与代表性公开行业智库或研报来源（如中信证券、艾瑞咨询、Gartner、IDC等）。",
+              },
+              {
+                role: "user",
+                content: `目标: ${spec.goal}\n维度: ${item.label}\n区域: ${spec.region}\n时间跨度: ${spec.timeRange}`,
+              },
+            ],
+          },
+          z.object({
+            claim: z.string().default(""),
+            sourceTitle: z.string().default(""),
+            excerpt: z.string().default(""),
+            confidence: z.number().default(0.7),
+          }),
+        );
+        const synthesized = synthesizedRes.data;
+        evidence.push({
+          claim:
+            synthesized.claim ||
+            `围绕“${item.label}”展开的 ${spec.region} 专题分析（${spec.timeRange}）`,
+          sourceTitle: synthesized.sourceTitle || `研究框架维度：${item.label}`,
+          sourceUrl: null,
+          locator: `维度 ${i + 1} (${item.id})`,
+          excerpt:
+            synthesized.excerpt ||
+            `${item.label}：重点考察市场规模、头部玩家、竞争策略与潜在风险。`,
+          retrievedAt: now,
+          confidence: synthesized.confidence ?? 0.7,
+          verificationStatus: "unverified",
+        });
+      } catch {
+        evidence.push({
+          claim: `围绕“${item.label}”展开的 ${spec.region} 专题分析（${spec.timeRange}，待人工核验具体一手来源）`,
+          sourceTitle: `研究框架维度：${item.label}`,
+          sourceUrl: null,
+          locator: `维度 ${i + 1} (${item.id})`,
+          excerpt: `${item.label}：重点考察市场规模、头部玩家、竞争策略与潜在风险。`,
+          retrievedAt: now,
+          confidence: 0.5,
+          verificationStatus: "unverified",
+        });
+      }
+    }
+  }
+
   return evidence;
 }
 

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import { zodToJsonSchema } from "./zod-to-json-schema.js";
 import { buildResponseFormat } from "./index.js";
+import { zodToJsonSchema } from "./zod-to-json-schema.js";
 
 describe("zodToJsonSchema", () => {
   it("converts complex Zod schemas to strict JSON schema", () => {
@@ -10,9 +10,11 @@ describe("zodToJsonSchema", () => {
       count: z.number(),
       tags: z.array(z.string()),
       status: z.enum(["draft", "published"]),
-      metadata: z.object({
-        author: z.string().optional(),
-      }).optional(),
+      metadata: z
+        .object({
+          author: z.string().optional(),
+        })
+        .optional(),
     });
 
     const jsonSchema = zodToJsonSchema(schema);

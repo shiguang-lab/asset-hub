@@ -442,6 +442,17 @@ export function registerPresentations(app: FastifyInstance): void {
       profile: body.profile ?? "research",
       prompt: body.prompt ?? "",
     };
+    if (body.templateId) {
+      const tpl = await ctx.store.getTemplate(req.actor.workspaceId, body.templateId);
+      if (tpl) {
+        spec.templateId = tpl.id;
+        spec.templateName = tpl.name;
+        spec.templateContent = tpl.content;
+        if (!body.theme && typeof tpl.content.theme === "string") {
+          spec.theme = tpl.content.theme;
+        }
+      }
+    }
     if (body.assetId) {
       await requireAssetAccess(ctx, req.actor, body.assetId, "read");
       const sourceContent = await ctx.store.readContent(body.assetId);

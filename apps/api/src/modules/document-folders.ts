@@ -1,6 +1,7 @@
 import { assetPathSchema } from "@shiguang/contracts";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
+import { requireAssetAccess } from "../platform/authorization.js";
 import { badRequest } from "../platform/errors.js";
 import type { AppContext } from "../types.js";
 
@@ -33,6 +34,13 @@ export function registerDocumentFolders(app: FastifyInstance): void {
       .refine((value) => value.from !== value.to, "新目录名不能与原目录相同")
       .refine((value) => !value.to.startsWith(`${value.from}/`), "目录不能移动到自身内部")
       .parse(req.body);
+    const underFolder = await ctx.store.listAssets(req.actor.workspaceId, {
+      pathPrefix: from,
+      limit: 1000,
+    });
+    for (const asset of underFolder.items) {
+      await requireAssetAccess(ctx, req.actor, asset.id, "write");
+    }
     await ctx.store.renameDocumentFolder(req.actor.workspaceId, from, to);
     await ctx.store.audit(
       req.actor.workspaceId,

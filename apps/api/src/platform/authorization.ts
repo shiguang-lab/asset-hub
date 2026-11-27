@@ -48,6 +48,10 @@ export async function requireAssetAccess(
     return asset;
   }
 
+  const isAssetOwner =
+    asset.ownerSubject === actor.subject ||
+    (actor.tokenOwnerSubject !== undefined && asset.ownerSubject === actor.tokenOwnerSubject);
+
   const acl = await ctx.store.listAcl(asset.id);
   const grant = acl.find(
     (entry) =>
@@ -58,25 +62,20 @@ export async function requireAssetAccess(
     const memberVisible =
       actor.workspaceType === "team" &&
       ["member_only", "link", "public", "unlisted"].includes(asset.visibility);
-    if (
-      asset.ownerSubject === actor.subject ||
-      memberVisible ||
-      aclRole === "editor" ||
-      aclRole === "viewer"
-    ) {
+    if (isAssetOwner || memberVisible || aclRole === "editor" || aclRole === "viewer") {
       return asset;
     }
     throw forbidden("当前用户没有读取该资产的权限");
   }
   if (action === "write") {
-    if (asset.ownerSubject === actor.subject || aclRole === "editor") return asset;
+    if (isAssetOwner || aclRole === "editor") return asset;
     throw forbidden("当前用户没有编辑该资产的权限");
   }
   if (action === "delete") {
-    if (asset.ownerSubject === actor.subject) return asset;
+    if (isAssetOwner) return asset;
     throw forbidden("只有资产所有者或组织管理员可以删除该资产");
   }
-  if (asset.ownerSubject === actor.subject) return asset;
+  if (isAssetOwner) return asset;
   throw forbidden("只有资产所有者或组织管理员可以管理该资产");
 }
 

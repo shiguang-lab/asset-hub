@@ -13,22 +13,25 @@ import {
 
 const FALLBACK_TEMPLATES = [
   {
-    id: "industry-research",
+    id: "",
     type: "research",
     name: "行业调研",
     description: "全面的行业研究与趋势分析框架",
+    goal: "行业市场规模、主要参与者与未来趋势调研",
   },
   {
-    id: "competitive-analysis",
+    id: "",
     type: "research",
     name: "竞品分析",
     description: "多维度竞品对比矩阵与商业洞察",
+    goal: "核心竞品功能、定价与商业模式对比分析",
   },
   {
-    id: "solution-presentation",
+    id: "",
     type: "presentation",
     name: "技术方案演示",
     description: "面向架构评审与路演的演示模板",
+    goal: "技术方案设计与系统演进路线演示",
   },
 ];
 
@@ -61,8 +64,14 @@ export function HomePage() {
   const submit = () => {
     const text = goal.trim();
     if (!text) return;
-    if (/调研|研究|分析|research/i.test(text)) {
+    if (/演示|ppt|slides|presentation|汇报/i.test(text)) {
+      navigate(`/presentations/new?topic=${encodeURIComponent(text)}`);
+    } else if (/知识库|knowledge/i.test(text)) {
+      navigate(`/knowledge/new?name=${encodeURIComponent(text)}`);
+    } else if (/调研|研究|分析|research/i.test(text)) {
       navigate(`/research/new?goal=${encodeURIComponent(text)}`);
+    } else if (/问答|提问|助手|ask|chat/i.test(text)) {
+      navigate(`/assistant?q=${encodeURIComponent(text)}`);
     } else {
       navigate(`/documents/new?title=${encodeURIComponent(text)}`);
     }
@@ -256,12 +265,23 @@ export function HomePage() {
           </div>
           <div className="zx-tpl-gallery">
             {templates.map((template, index) => {
-              const href =
-                template.type === "research"
+              const fallbackGoal =
+                "goal" in template && typeof template.goal === "string"
+                  ? template.goal
+                  : template.name;
+              const href = template.id
+                ? template.type === "research"
                   ? `/research/new?template=${template.id}`
-                  : `/presentations/new?template=${template.id}`;
+                  : `/presentations/new?template=${template.id}`
+                : template.type === "research"
+                  ? `/research/new?goal=${encodeURIComponent(fallbackGoal)}`
+                  : `/presentations/new?topic=${encodeURIComponent(fallbackGoal)}`;
               return (
-                <article key={template.id} className="zx-pano-tpl" onClick={() => navigate(href)}>
+                <article
+                  key={template.id || template.name}
+                  className="zx-pano-tpl"
+                  onClick={() => navigate(href)}
+                >
                   <div className="zx-pano-art">
                     <PanoramicTemplateArt index={index} />
                   </div>

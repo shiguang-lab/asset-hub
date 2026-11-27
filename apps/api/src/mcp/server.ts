@@ -10,6 +10,7 @@ import {
 } from "@shiguang/contracts";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
+import { buildAndAttachRelease } from "../modules/publishing.js";
 import { requireAssetAccess } from "../platform/authorization.js";
 import { forbidden, unauthorized } from "../platform/errors.js";
 import type { AppContext } from "../types.js";
@@ -286,6 +287,33 @@ export function registerMcp(app: FastifyInstance, ctx: AppContext): void {
           password: null,
           expiresAt: q.expiresAt ?? null,
         });
+        await buildAndAttachRelease(ctx, actor.workspaceId, publish.id, q.assetId, false);
+        const updated = await ctx.store.getPublish(actor.workspaceId, publish.id);
+        const shortUrl = `${ctx.config.publicGatewayBase}/s/${(updated ?? publish).shortSlug}`;
+        await ctx.store.setAssetPublishedUrl(actor.workspaceId, q.assetId, shortUrl);
+        await ctx.store.audit(
+          actor.workspaceId,
+          actor.subject,
+          "publish.create",
+          publish.id,
+          "success",
+          { assetId: q.assetId, visibility: q.visibility, via: "mcp" },
+        );
+        await ctx.bus.emit({
+          eventId: nextId("evt"),
+          eventType: "publish.released",
+          schemaVersion: 1,
+          occurredAt: nowIso(),
+          producer: "mcp",
+          tenantId: actor.workspaceId,
+          aggregate: { type: "publish", id: publish.id, version: 1 },
+          trace: {},
+          data: {
+            publishId: publish.id,
+            slug: publish.slug,
+            releaseId: updated?.activeReleaseId ?? "",
+          },
+        });
         return {
           content: [
             {
@@ -293,6 +321,7 @@ export function registerMcp(app: FastifyInstance, ctx: AppContext): void {
               text: JSON.stringify({
                 publishId: publish.id,
                 url: `${ctx.config.publicGatewayBase}/p/${publish.slug}`,
+                shortUrl,
                 visibility: publish.visibility,
               }),
             },

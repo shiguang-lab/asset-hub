@@ -247,9 +247,9 @@ describe("SG_STATICIZE_CSS", () => {
     expect(SG_STATICIZE_CSS).toContain("opacity: 1 !important");
     expect(SG_STATICIZE_CSS).toContain("visibility: visible !important");
     expect(SG_STATICIZE_CSS).toContain("transform: none !important");
-    expect(SG_STATICIZE_CSS.split("html[data-sg-static=\"1\"] [data-sg-page] [data-sg-enter]")[0]).not.toContain(
-      "transform: none !important",
-    );
+    expect(
+      SG_STATICIZE_CSS.split('html[data-sg-static="1"] [data-sg-page] [data-sg-enter]')[0],
+    ).not.toContain("transform: none !important");
     expect(SG_STATICIZE_CSS).not.toContain("animation: none !important");
     expect(SG_STATICIZE_CSS).toContain("transition: none");
   });

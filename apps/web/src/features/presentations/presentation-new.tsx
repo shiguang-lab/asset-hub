@@ -256,17 +256,43 @@ export function PresentationNewPage() {
   const [params] = useSearchParams();
   const toast = useToast();
   const routeDraft = (location.state as { draft?: PresentationDraft } | null)?.draft;
-  const [assetId, setAssetId] = useState(routeDraft?.assetId ?? params.get("assetId") ?? "");
-  const [title, setTitle] = useState(routeDraft?.title ?? "我的在线演示");
-  const [prompt, setPrompt] = useState(routeDraft?.prompt ?? "");
+  const initialTopic = params.get("topic") ?? "";
+  const initialTemplateId = params.get("template") ?? "";
+  const [assetId, setAssetId] = useState(
+    routeDraft?.assetId ?? params.get("assetId") ?? params.get("asset") ?? "",
+  );
+  const [title, setTitle] = useState(
+    routeDraft?.title ?? (initialTopic ? initialTopic.slice(0, 60) : "我的在线演示"),
+  );
+  const [prompt, setPrompt] = useState(routeDraft?.prompt ?? initialTopic);
   const [profile, setProfile] = useState(routeDraft?.profile ?? "research");
   const [theme, setTheme] = useState(routeDraft?.theme ?? "dark");
+  const [templateId] = useState(initialTemplateId);
 
   const assets = useQuery({
     queryKey: ["presentation-source-assets"],
     queryFn: () => api<{ items: Asset[] }>("/assets", { params: { limit: 100 } }),
     enabled: !taskId,
   });
+  const templates = useQuery({
+    queryKey: ["templates", "presentation"],
+    queryFn: () =>
+      api<
+        Array<{ id: string; name: string; description: string; content: Record<string, unknown> }>
+      >("/templates", { params: { type: "presentation" } }),
+    enabled: !taskId && Boolean(templateId),
+  });
+  useEffect(() => {
+    if (!templateId || !templates.data) return;
+    const tpl = templates.data.find((t) => t.id === templateId);
+    if (!tpl) return;
+    if (!initialTopic && !routeDraft?.title) setTitle(tpl.name);
+    const tplTheme = typeof tpl.content?.theme === "string" ? tpl.content.theme : null;
+    if (tplTheme && ["light", "dark", "brand", "minimal", "gradient"].includes(tplTheme)) {
+      setTheme(tplTheme);
+    }
+    if (!prompt && tpl.description) setPrompt(tpl.description);
+  }, [templateId, templates.data]);
   const task = useQuery({
     queryKey: ["presentation-generation-task", taskId],
     queryFn: () => api<Task>(`/tasks/${taskId}`),
@@ -303,6 +329,7 @@ export function PresentationNewPage() {
         method: "POST",
         body: {
           ...(assetId ? { assetId } : {}),
+          ...(templateId ? { templateId } : {}),
           title,
           prompt,
           profile,

@@ -2,7 +2,7 @@ import { Avatar, Field, useToast } from "@shiguang/ui";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Button, Card, Input, Select, Switch } from "antd";
 import { createStyles } from "antd-style";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { api } from "../../entities/api.js";
 
 const useProfileStyles = createStyles(() => ({
@@ -34,12 +34,21 @@ export function ProfilePage() {
   const [language, setLanguage] = useState("zh-CN");
   const [notifyEmail, setNotifyEmail] = useState(false);
 
+  const profile = data?.profile;
+  useEffect(() => {
+    if (!profile) return;
+    setName(profile.name ?? "");
+    setQuality(profile.defaultQuality || "balanced");
+    setLanguage(profile.defaultLanguage || "zh-CN");
+    setNotifyEmail(Boolean(profile.notifyEmail));
+  }, [profile]);
+
   const save = useMutation({
     mutationFn: () =>
       api("/me", {
         method: "PATCH",
         body: {
-          name: name || undefined,
+          name: name.trim() || undefined,
           defaultQuality: quality,
           defaultLanguage: language,
           notifyEmail,
@@ -49,7 +58,6 @@ export function ProfilePage() {
     onError: (e: Error) => toast("error", e.message),
   });
 
-  const profile = data?.profile;
   return (
     <div>
       <h1 className="sg-h1 sg-mb">个人中心</h1>
@@ -65,14 +73,14 @@ export function ProfilePage() {
         <Card>
           <Field label="显示名称">
             <Input
-              value={(name || profile?.name) ?? ""}
+              value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder={profile?.name}
+              placeholder={profile?.name || "输入显示名称"}
             />
           </Field>
           <Field label="默认语言">
             <Select
-              value={(language || profile?.defaultLanguage) ?? "zh-CN"}
+              value={language}
               onChange={setLanguage}
               options={[
                 { value: "zh-CN", label: "简体中文" },
@@ -82,7 +90,7 @@ export function ProfilePage() {
           </Field>
           <Field label="默认 AI 质量模式">
             <Select
-              value={(quality || profile?.defaultQuality) ?? "balanced"}
+              value={quality}
               onChange={setQuality}
               options={[
                 { value: "economy", label: "经济" },
@@ -93,12 +101,14 @@ export function ProfilePage() {
           </Field>
           <div className="sg-row-between">
             <span>邮件通知（P1）</span>
-            <Switch
-              checked={(notifyEmail || profile?.notifyEmail) ?? false}
-              onChange={setNotifyEmail}
-            />
+            <Switch checked={notifyEmail} onChange={setNotifyEmail} />
           </div>
-          <Button type="primary" className="sg-mt" onClick={() => save.mutate()}>
+          <Button
+            type="primary"
+            className="sg-mt"
+            loading={save.isPending}
+            onClick={() => save.mutate()}
+          >
             保存
           </Button>
         </Card>

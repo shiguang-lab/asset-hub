@@ -4,6 +4,7 @@ AI 原生知识与数字资产工作空间（Asset First · AI Everywhere · Age
 仓库采用 pnpm/Turborepo 与 Go Workspace 组成的 monorepo，按 PRD V1.0 / 72 张 UI 交互图 /
 技术架构文档实现，覆盖 P0 全流程，可直接本地交付运行。
 
+- [V2.0 产品演进规划（基于现状重构）](./docs/product/product-evolution-plan-v2.md)
 - [总体技术架构](./docs/architecture/technical-architecture.md)
 - [基础设施选型](./docs/architecture/infrastructure-selection.md)
 - [数据架构](./docs/architecture/data-architecture.md)

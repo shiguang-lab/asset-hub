@@ -1844,14 +1844,12 @@ export function PresentationsPage() {
               {
                 label: "总浏览量",
                 value: totalViews.toLocaleString("zh-CN"),
-                delta: "21%",
                 icon: Eye,
                 tone: "cyan",
               },
               {
                 label: "平均点赞",
                 value: averageLikes.toLocaleString("zh-CN"),
-                delta: "18%",
                 icon: ThumbsUp,
                 tone: "orange",
               },
@@ -1865,9 +1863,11 @@ export function PresentationsPage() {
                   <div>
                     <small>{item.label}</small>
                     <strong>{item.value}</strong>
-                    <p>
-                      较上月 <TrendingUp size={11} /> {"delta" in item ? item.delta : "16%"}
-                    </p>
+                    {analytics?.growthRate != null && (
+                      <p>
+                        较上月 <TrendingUp size={11} /> {analytics.growthRate}%
+                      </p>
+                    )}
                   </div>
                 </article>
               );
@@ -2186,29 +2186,21 @@ export function PresentationsPage() {
           <section className="sg-presentation-analytics">
             <div className="sg-presentation-side-title">
               <h2>演示数据概览</h2>
-              <Select
-                value="30"
-                onChange={() => undefined}
-                options={[{ value: "30", label: "近 30 天" }]}
-                className="sg-presentation-range"
-              />
+              <span className="sg-subtle">近 30 天</span>
             </div>
             <PresentationTrendChart daily={analytics?.daily ?? []} />
             <dl>
               <div>
                 <dt>浏览量</dt>
                 <dd>{totalViews.toLocaleString("zh-CN")}</dd>
-                <small>↑ 21%</small>
               </div>
               <div>
                 <dt>独立访客</dt>
                 <dd>{uniqueVisitors.toLocaleString("zh-CN")}</dd>
-                <small>↑ 18%</small>
               </div>
               <div>
                 <dt>平均观看时长</dt>
                 <dd>{averageWatchTime}</dd>
-                <small>↑ 12%</small>
               </div>
             </dl>
           </section>
@@ -2365,6 +2357,10 @@ export function PresentationEditorPage() {
   const [aiInsertKind, setAiInsertKind] = useState<string>("text");
   const [aiInsertInstruction, setAiInsertInstruction] = useState("");
   const previewRef = useRef<HTMLIFrameElement>(null);
+  const lastSavedHtmlRef = useRef<string>("");
+  const initializedPresentationRef = useRef<string | null>(null);
+  const [savedAt, setSavedAt] = useState<string | null>(null);
+  const [saveFailed, setSaveFailed] = useState(false);
   const postPreviewNavigation = useCallback((pageId: string | null) => {
     previewRef.current?.contentWindow?.postMessage(
       { source: "sg-editor", type: "navigate", pageId },
@@ -2381,8 +2377,21 @@ export function PresentationEditorPage() {
   useShellBreadcrumb("在线演示", data?.asset.title ?? "未命名演示");
 
   useEffect(() => {
-    if (data) resetHtml(data.html);
-  }, [data]);
+    if (!data) return;
+    if (initializedPresentationRef.current !== data.asset.id) {
+      initializedPresentationRef.current = data.asset.id;
+      lastSavedHtmlRef.current = data.html;
+      resetHtml(data.html);
+    }
+    setSavedAt(
+      new Date(data.asset.updatedAt).toLocaleTimeString("zh-CN", {
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: false,
+      }),
+    );
+  }, [data, resetHtml]);
 
   // 撤销 / 重做快捷键（useHistory 提供，稳定）
   useEffect(() => {
@@ -2443,11 +2452,17 @@ export function PresentationEditorPage() {
           setDataAttribute(tree, it.id, "data-sg-w", it.w);
           setDataAttribute(tree, it.id, "data-sg-h", it.h);
         }, `drag-${it.id}`);
-      } else if (data.type === "rotate" && data.rotItem) {
-        const it = data.rotItem;
-        applyAst((tree) => {
-          setDataAttribute(tree, it.id, "data-sg-rot", it.rot);
-        }, `drag-${it.id}`);
+      } else if (data.type === "rotate") {
+        const rotItem =
+          data.rotItem ??
+          (data.item && "rot" in data.item
+            ? (data.item as unknown as { id: string; rot: string })
+            : null);
+        if (rotItem) {
+          applyAst((tree) => {
+            setDataAttribute(tree, rotItem.id, "data-sg-rot", rotItem.rot);
+          }, `drag-${rotItem.id}`);
+        }
       } else if (data.type === "edit-text" && data.id) {
         if (typeof data.text === "string") editText(data.id, data.text);
         setSelectedIds([data.id]);
@@ -2688,12 +2703,48 @@ export function PresentationEditorPage() {
   ]);
 
   const saveMutation = useMutation({
-    mutationFn: () => api(`/presentations/${id}`, { method: "PUT", body: { html } }),
-    onSuccess: () => {
-      toast("success", "已保存");
+    mutationFn: (opts?: { silent?: boolean; snapshot?: string }) =>
+      api(`/presentations/${id}`, {
+        method: "PUT",
+        body: { html: opts?.snapshot ?? html },
+      }),
+    onSuccess: (_res, opts) => {
+      lastSavedHtmlRef.current = opts?.snapshot ?? html;
+      setSaveFailed(false);
+      setSavedAt(
+        new Date().toLocaleTimeString("zh-CN", {
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+          hour12: false,
+        }),
+      );
+      if (!opts?.silent) toast("success", "已保存");
       void queryClient.invalidateQueries({ queryKey: ["presentation", id] });
     },
+    onError: (error: Error) => {
+      setSaveFailed(true);
+      toast("error", error.message || "保存失败");
+    },
   });
+
+  const isDirty = Boolean(data) && html.length > 0 && html !== lastSavedHtmlRef.current;
+
+  useEffect(() => {
+    if (!isDirty || saveMutation.isPending) return;
+    const snapshot = html;
+    const timer = window.setTimeout(() => {
+      saveMutation.mutate({ silent: true, snapshot });
+    }, 1500);
+    return () => window.clearTimeout(timer);
+  }, [html, isDirty, saveMutation]);
+
+  useEffect(() => {
+    if (!data?.html) return;
+    const detected = detectThemeFromHtml(data.html);
+    setTheme(detected.theme);
+    setThemePalette(detected.palette);
+  }, [data?.asset.id, data?.html]);
 
   const aiEdit = useMutation({
     mutationFn: () =>
@@ -2751,7 +2802,15 @@ export function PresentationEditorPage() {
       <div className="sg-row-between sg-mb">
         <div>
           <span className="sg-subtle">
-            已自动保存 · {new Date().toLocaleTimeString("zh-CN", { hour12: false })}
+            {saveMutation.isPending
+              ? "正在保存…"
+              : saveFailed
+                ? "保存失败，请点击保存重试"
+                : isDirty
+                  ? "有未保存修改（自动保存中…）"
+                  : savedAt
+                    ? `已保存 · ${savedAt}`
+                    : "未修改"}
           </span>
         </div>
         <div className="sg-row">
@@ -2770,7 +2829,11 @@ export function PresentationEditorPage() {
           <Button size="small" onClick={() => setAiInsertOpen(true)}>
             ✦ AI 生成元素
           </Button>
-          <Button size="small" onClick={() => saveMutation.mutate()}>
+          <Button
+            size="small"
+            loading={saveMutation.isPending}
+            onClick={() => saveMutation.mutate({ snapshot: html })}
+          >
             保存
           </Button>
           <Button size="small" onClick={() => navigate(`/presentations/${id}/play`)}>
@@ -3328,7 +3391,7 @@ export function PresentationPlayback({
                     {page.title || `第 ${index + 1} 页`}
                     <small className={styles.drawerItemLayout}>
                       {page.layout === "title"
-                        ? "PHO同业APP分析"
+                        ? "封面"
                         : page.layout === "section"
                           ? "章节"
                           : "专题分析"}
@@ -3378,4 +3441,60 @@ export function PresentationSnapshotPlayerPage() {
       onExit={() => navigate(-1)}
     />
   );
+}
+
+const KNOWN_THEME_PALETTES: Record<string, [string, string, string, string, string]> = {
+  light: ["#ffffff", "#172033", "#667085", "#f7f8fb", "#6d5dfc"],
+  dark: ["#0f1420", "#f5f7ff", "#9aa3b8", "#161b2b", "#8b7bff"],
+  brand: ["#ffffff", "#1a2a4f", "#6b7a99", "#f2f4f8", "#f04e2c"],
+  minimal: ["#fafafa", "#111111", "#666666", "#f0f0f0", "#888888"],
+  gradient: ["#0d0b1e", "#ffffff", "#c4b8e8", "#1a1430", "#7c5cff"],
+};
+
+function detectThemeFromHtml(html: string): {
+  theme: string;
+  palette: {
+    background: string;
+    textPrimary: string;
+    textSecondary: string;
+    surface: string;
+    primary: string;
+  } | null;
+} {
+  const rootMatch = html.match(/:root\s*\{([^}]*)\}/);
+  if (!rootMatch?.[1]) return { theme: "light", palette: null };
+  const readVar = (name: string) =>
+    rootMatch[1]
+      .match(new RegExp(`${name}\\s*:\\s*([^;]+)`))?.[1]
+      ?.trim()
+      .toLowerCase() ?? "";
+  const background = readVar("--sg-background");
+  const textPrimary = readVar("--sg-text-primary");
+  const textSecondary = readVar("--sg-text-secondary");
+  const surface = readVar("--sg-surface");
+  const primary = readVar("--sg-primary");
+  for (const [key, tuple] of Object.entries(KNOWN_THEME_PALETTES)) {
+    if (
+      tuple[0] === background &&
+      tuple[1] === textPrimary &&
+      tuple[2] === textSecondary &&
+      tuple[3] === surface &&
+      tuple[4] === primary
+    ) {
+      return { theme: key, palette: null };
+    }
+  }
+  if (background && textPrimary && primary) {
+    return {
+      theme: "light",
+      palette: {
+        background,
+        textPrimary,
+        textSecondary: textSecondary || "#667085",
+        surface: surface || "#f7f8fb",
+        primary,
+      },
+    };
+  }
+  return { theme: "light", palette: null };
 }

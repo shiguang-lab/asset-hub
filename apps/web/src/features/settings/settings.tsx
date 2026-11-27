@@ -2,7 +2,7 @@ import { Field, formatDate, Loading, Scrollbar, useToast } from "@shiguang/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button, Card, Input, Select, Switch, Tabs } from "antd";
 import { createStyles } from "antd-style";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   addOrganizationMember,
   fetchOrganizationMembers,
@@ -101,18 +101,26 @@ function GitSettings() {
   const [repoUrl, setRepoUrl] = useState("");
   const [branch, setBranch] = useState("main");
   const [syncPath, setSyncPath] = useState("/");
-  const [localDir, _setLocalDir] = useState("");
+  const [localDir, setLocalDir] = useState("");
 
   const create = useMutation({
     mutationFn: () =>
       api<GitConnection>("/integrations/git", {
         method: "POST",
-        body: { name, provider, repoUrl, branch, syncPath, localDir: localDir || undefined },
+        body: {
+          name,
+          provider,
+          repoUrl: provider === "local" && localDir ? localDir : repoUrl,
+          branch,
+          syncPath,
+          localDir: localDir || (provider === "local" ? repoUrl : "") || undefined,
+        },
       }),
     onSuccess: () => {
       toast("success", "Git 连接已创建");
       setName("");
       setRepoUrl("");
+      setLocalDir("");
       void queryClient.invalidateQueries({ queryKey: ["git"] });
     },
     onError: (e: Error) => toast("error", e.message),
@@ -125,11 +133,13 @@ function GitSettings() {
       void queryClient.invalidateQueries({ queryKey: ["git"] });
       void queryClient.invalidateQueries({ queryKey: ["tasks"] });
     },
+    onError: (e: Error) => toast("error", e.message),
   });
 
   const remove = useMutation({
     mutationFn: (id: string) => api(`/integrations/git/${id}`, { method: "DELETE" }),
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["git"] }),
+    onError: (e: Error) => toast("error", e.message),
   });
 
   return (
@@ -256,7 +266,7 @@ function DomainSettings() {
     queryFn: () => api("/publishes"),
   });
   const [domain, setDomain] = useState("");
-  const [token, setToken] = useState("");
+  const [tokensById, setTokensById] = useState<Record<string, string>>({});
 
   const create = useMutation({
     mutationFn: () =>
@@ -271,10 +281,13 @@ function DomainSettings() {
 
   const verify = useMutation({
     mutationFn: (id: string) =>
-      api(`/integrations/domains/${id}/verify`, { method: "POST", body: { token } }),
-    onSuccess: () => {
+      api(`/integrations/domains/${id}/verify`, {
+        method: "POST",
+        body: { token: tokensById[id] ?? "" },
+      }),
+    onSuccess: (_res, id) => {
       toast("success", "域名验证通过");
-      setToken("");
+      setTokensById((prev) => ({ ...prev, [id]: "" }));
       void queryClient.invalidateQueries({ queryKey: ["domains"] });
     },
     onError: (e: Error) => toast("error", e.message),
@@ -342,8 +355,8 @@ function DomainSettings() {
               <code>{d.verification_token}</code>
               <div className="sg-row sg-mt-sm">
                 <Input
-                  value={token}
-                  onChange={(e) => setToken(e.target.value)}
+                  value={tokensById[d.id] ?? ""}
+                  onChange={(e) => setTokensById((prev) => ({ ...prev, [d.id]: e.target.value }))}
                   placeholder="粘贴验证 Token"
                   className={styles.dnsInput}
                 />
@@ -555,23 +568,38 @@ function ProfileSettings() {
   const [name, setName] = useState("");
   const [quality, setQuality] = useState("balanced");
   const [notify, setNotify] = useState(false);
+  useEffect(() => {
+    const profile = data?.profile;
+    if (!profile) return;
+    setName(profile.name ?? "");
+    setQuality(profile.defaultQuality || "balanced");
+    setNotify(Boolean(profile.notifyEmail));
+  }, [data?.profile]);
   const save = useMutation({
     mutationFn: () =>
-      api("/me", { method: "PATCH", body: { name, defaultQuality: quality, notifyEmail: notify } }),
+      api("/me", {
+        method: "PATCH",
+        body: {
+          name: name.trim() || undefined,
+          defaultQuality: quality,
+          notifyEmail: notify,
+        },
+      }),
     onSuccess: () => toast("success", "个人设置已保存"),
+    onError: (e: Error) => toast("error", e.message),
   });
   return (
     <Card>
       <Field label="显示名称">
         <Input
-          value={name || (data?.profile.name ?? "")}
+          value={name}
           onChange={(e) => setName(e.target.value)}
-          placeholder={data?.profile.name}
+          placeholder={data?.profile.name || "输入显示名称"}
         />
       </Field>
       <Field label="默认 AI 质量模式">
         <Select
-          value={quality || (data?.profile.defaultQuality ?? "balanced")}
+          value={quality}
           onChange={setQuality}
           options={[
             { value: "economy", label: "经济" },
@@ -582,9 +610,14 @@ function ProfileSettings() {
       </Field>
       <div className="sg-row-between">
         <span>邮件通知（P1）</span>
-        <Switch checked={notify || (data?.profile.notifyEmail ?? false)} onChange={setNotify} />
+        <Switch checked={notify} onChange={setNotify} />
       </div>
-      <Button type="primary" className="sg-mt" onClick={() => save.mutate()}>
+      <Button
+        type="primary"
+        className="sg-mt"
+        loading={save.isPending}
+        onClick={() => save.mutate()}
+      >
         保存
       </Button>
     </Card>
@@ -619,6 +652,16 @@ function McpSettings() {
     },
   });
   const config = data?.config;
+  const { data: scopeAssets } = useQuery<{ items: Array<{ id: string; title: string }> }>({
+    queryKey: ["mcp-scope-assets"],
+    queryFn: () => api("/assets", { params: { limit: 100 } }),
+    enabled: config?.enabled === true && config?.scope === "assets",
+  });
+  const { data: scopeKbs } = useQuery<Array<{ id: string; name: string }>>({
+    queryKey: ["mcp-scope-kbs"],
+    queryFn: () => api("/knowledge-bases"),
+    enabled: config?.enabled === true && config?.scope === "knowledge_bases",
+  });
   return (
     <div className="sg-col">
       <Card>
@@ -641,7 +684,7 @@ function McpSettings() {
               <Field label="访问范围">
                 <Select
                   value={config.scope}
-                  onChange={(v) => update.mutate({ scope: v as McpConfig["scope"] })}
+                  onChange={(v) => update.mutate({ scope: v as McpConfig["scope"], scopeIds: [] })}
                   options={[
                     { value: "all", label: "全部资产" },
                     { value: "knowledge_bases", label: "指定知识库" },
@@ -649,6 +692,31 @@ function McpSettings() {
                   ]}
                 />
               </Field>
+              {config.scope === "knowledge_bases" && (
+                <Field label="允许访问的知识库">
+                  <Select
+                    mode="multiple"
+                    value={config.scopeIds}
+                    onChange={(ids) => update.mutate({ scopeIds: ids })}
+                    placeholder="选择可访问的知识库…"
+                    options={(scopeKbs ?? []).map((kb) => ({ value: kb.id, label: kb.name }))}
+                  />
+                </Field>
+              )}
+              {config.scope === "assets" && (
+                <Field label="允许访问的资产">
+                  <Select
+                    mode="multiple"
+                    value={config.scopeIds}
+                    onChange={(ids) => update.mutate({ scopeIds: ids })}
+                    placeholder="选择可访问的资产…"
+                    options={(scopeAssets?.items ?? []).map((a) => ({
+                      value: a.id,
+                      label: a.title || a.id,
+                    }))}
+                  />
+                </Field>
+              )}
             </div>
             <div className="sg-row-between sg-mt">
               <div>
@@ -796,7 +864,12 @@ function PublishSettings() {
   });
   return (
     <Card>
-      <h3 className="sg-h3">已发布内容</h3>
+      <div className="sg-row-between sg-mb-sm">
+        <h3 className="sg-h3">已发布内容</h3>
+        <Button size="small" onClick={() => (window.location.href = "/publishes")}>
+          管理全部发布（二维码 / 撤销）
+        </Button>
+      </div>
       {(data?.length ?? 0) === 0 ? (
         <p className="sg-subtle">还没有发布内容。在文档 / 演示详情页点击“发布”即可生成稳定 URL。</p>
       ) : (

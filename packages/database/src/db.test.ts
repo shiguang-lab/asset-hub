@@ -211,3 +211,153 @@ describe("Store.permanentDelete", () => {
     expect(released).toBe(1);
   });
 });
+
+describe("Store V2 安全性与并发修复", () => {
+  it("claimOutbox 使用 FOR UPDATE SKIP LOCKED 原子抢占任务", async () => {
+    const calls: Recorded[] = [];
+    const pool = {
+      query: async (sql: string, params?: unknown[]) => {
+        calls.push({ sql, params });
+        return {
+          rowCount: 1,
+          rows: [
+            {
+              id: "obx_1",
+              event_type: "task.created",
+              payload_json: JSON.stringify({ taskId: "tsk_1" }),
+              status: "claimed",
+              attempt: 1,
+              claimed_at: new Date().toISOString(),
+              created_at: new Date().toISOString(),
+            },
+          ],
+        };
+      },
+    } as unknown as Pool;
+
+    const store = new Store(new Db(pool), new LocalObjectStore(tmpdir()));
+    const claimed = await store.claimOutbox(5, 60);
+
+    expect(claimed).toHaveLength(1);
+    expect(calls[0]?.sql).toContain("UPDATE outbox_events");
+    expect(calls[0]?.sql).toContain("FOR UPDATE SKIP LOCKED");
+    expect(calls[0]?.sql).toContain("RETURNING *");
+    expect(calls[0]?.params).toContain(5);
+  });
+
+  it("readContent 在传入 versionId 时必须校验 asset_versions.asset_id 归属", async () => {
+    const calls: Recorded[] = [];
+    const now = new Date().toISOString();
+    const pool = {
+      query: async (sql: string, params?: unknown[]) => {
+        calls.push({ sql, params });
+        if (sql.includes("FROM assets")) {
+          return {
+            rowCount: 1,
+            rows: [
+              {
+                id: "ast_target",
+                workspace_id: "ws_1",
+                owner_subject: "user_1",
+                type: "document",
+                title: "doc",
+                path: "",
+                description: "",
+                visibility: "private",
+                status: "normal",
+                source_type: "manual",
+                current_version_id: "ver_own",
+                lock_version: 1,
+                deleted_at: null,
+                published_url: null,
+                created_at: now,
+                updated_at: now,
+              },
+            ],
+          };
+        }
+        return { rowCount: 0, rows: [] };
+      },
+    } as unknown as Pool;
+
+    const store = new Store(new Db(pool), new LocalObjectStore(tmpdir()));
+    const result = await store.readContent("ast_target", "ver_foreign");
+
+    expect(result).toBeNull();
+    const blobQuery = calls.find((c) => c.sql.includes("ab.role = 'content'"));
+    expect(blobQuery).toBeDefined();
+    expect(blobQuery?.sql).toContain("JOIN asset_versions av ON av.id = ab.version_id");
+    expect(blobQuery?.sql).toContain("av.asset_id =");
+    expect(blobQuery?.params).toEqual(["ver_foreign", "ast_target"]);
+  });
+
+  it("applyProposedPatch 原子校验 status = 'pending' 防止重复应用", async () => {
+    const calls: Recorded[] = [];
+    let callCount = 0;
+    const pool = {
+      query: async (sql: string, params?: unknown[]) => {
+        calls.push({ sql, params });
+        callCount += 1;
+        if (callCount === 1) {
+          return { rowCount: 1, rows: [{ proposed: "new content" }] };
+        }
+        return { rowCount: 0, rows: [] };
+      },
+    } as unknown as Pool;
+
+    const store = new Store(new Db(pool), new LocalObjectStore(tmpdir()));
+    const first = await store.applyProposedPatch("ast_1", "pat_1");
+    expect(first).toBe("new content");
+    expect(calls[0]?.sql).toContain("WHERE id = $1 AND asset_id = $2 AND status = 'pending'");
+    expect(calls[0]?.sql).toContain("RETURNING proposed");
+
+    await expect(store.applyProposedPatch("ast_1", "pat_1")).resolves.toBeNull();
+  });
+
+  it("updateUserProfile 与 createSchedule 使用原生布尔值并持久化 avatarUrl", async () => {
+    const calls: Recorded[] = [];
+    const pool = {
+      query: async (sql: string, params?: unknown[]) => {
+        calls.push({ sql, params });
+        if (sql.includes("FROM users")) {
+          return {
+            rowCount: 1,
+            rows: [
+              {
+                subject: "user_1",
+                name: "新昵称",
+                email: "u@example.com",
+                avatar_url: "https://example.com/a.png",
+                default_quality: "balanced",
+                default_language: "zh-CN",
+                notify_email: false,
+                workspace_id: "ws_1",
+                created_at: new Date().toISOString(),
+              },
+            ],
+          };
+        }
+        return { rowCount: 1, rows: [] };
+      },
+    } as unknown as Pool;
+
+    const store = new Store(new Db(pool), new LocalObjectStore(tmpdir()));
+    await store.updateUserProfile("user_1", {
+      avatarUrl: "https://example.com/a.png",
+      notifyEmail: false,
+    });
+    const updateCall = calls.find((c) => c.sql.includes("UPDATE users"));
+    expect(updateCall?.params).toContain(false);
+    expect(updateCall?.params).toContain("https://example.com/a.png");
+
+    await store.createSchedule("ws_1", {
+      name: "每日简报",
+      taskType: "research",
+      goal: "汇总动态",
+      spec: {},
+      cron: "daily 09:00",
+    });
+    const insertSched = calls.find((c) => c.sql.includes("INSERT INTO task_schedules"));
+    expect(insertSched?.sql).toContain("TRUE");
+  });
+});

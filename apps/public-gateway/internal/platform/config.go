@@ -92,7 +92,7 @@ func (c Config) CheckAPI() error {
 }
 
 func (c Config) FetchMeta(slug string) (body []byte, status int, err error) {
-	req, err := http.NewRequest(http.MethodGet, c.APIBase+"/internal/v1/publishes/"+slug, nil)
+	req, err := http.NewRequest(http.MethodGet, c.APIBase+"/internal/v1/publishes/"+url.PathEscape(slug), nil)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -227,7 +227,7 @@ func (c Config) FetchComments(publishID, releaseID string) ([]map[string]any, er
 
 func (c Config) Unlock(slug, password string) (UnlockResult, error) {
 	body := fmt.Sprintf(`{"password":%q}`, password)
-	req, err := http.NewRequest(http.MethodPost, c.APIBase+"/internal/v1/publishes/"+slug+"/unlock", strings.NewReader(body))
+	req, err := http.NewRequest(http.MethodPost, c.APIBase+"/internal/v1/publishes/"+url.PathEscape(slug)+"/unlock", strings.NewReader(body))
 	if err != nil {
 		return UnlockResult{}, err
 	}
@@ -288,7 +288,7 @@ func (c Config) VerifyToken(token string) bool {
 }
 
 func (c Config) ResolveDomain(host string) (DomainResolution, error) {
-	req, err := http.NewRequest(http.MethodGet, c.APIBase+"/internal/v1/domains/resolve?host="+host, nil)
+	req, err := http.NewRequest(http.MethodGet, c.APIBase+"/internal/v1/domains/resolve?host="+url.QueryEscape(host), nil)
 	if err != nil {
 		return DomainResolution{}, err
 	}

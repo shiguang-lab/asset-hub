@@ -20,6 +20,7 @@ export function registerIntegrations(app: FastifyInstance): void {
         name: body.name,
         scopes: body.scopes,
         expiresAt: body.expiresAt ?? null,
+        createdBy: req.actor.subject,
       },
       secretHash,
     );
@@ -256,6 +257,10 @@ export function registerIntegrations(app: FastifyInstance): void {
     if (!domain) throw notFound("域名");
     if (String(domain.status) !== "verified")
       throw badRequest("DOMAIN_NOT_VERIFIED", "请先完成 DNS 验证", {});
+    if (body.publishId) {
+      const publish = await ctx.store.getPublish(req.actor.workspaceId, body.publishId);
+      if (!publish) throw notFound("发布");
+    }
     await ctx.store.bindDomainPublish(req.actor.workspaceId, id, body.publishId ?? null);
     return await ctx.store.getCustomDomain(req.actor.workspaceId, id);
   });

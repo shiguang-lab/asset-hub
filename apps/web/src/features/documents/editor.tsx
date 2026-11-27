@@ -1,4 +1,4 @@
-import { autocompletion } from "@codemirror/autocomplete";
+import { autocompletion, type CompletionContext } from "@codemirror/autocomplete";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
 import { bracketMatching, indentOnInput } from "@codemirror/language";
@@ -27,6 +27,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { getAuthSession } from "../../auth/session.js";
 import {
   type Asset,
   api,
@@ -225,7 +226,6 @@ export function DocumentEditorPage() {
   const [linkPickerOpen, setLinkPickerOpen] = useState(false);
   const [linkPickerMode, setLinkPickerMode] = useState<"link" | "image">("link");
   const [linkQuery, setLinkQuery] = useState("");
-  const [_dirty, setDirty] = useState(false);
   const draftBaseRef = useRef<string>("");
   const lockVersionRef = useRef(1);
   const selfSavedVersionRef = useRef<string | null>(null);
@@ -234,7 +234,7 @@ export function DocumentEditorPage() {
   const attachmentInputRef = useRef<HTMLInputElement>(null);
   const localReadyRef = useRef<string | null>(null);
 
-  useShellBreadcrumb("文档", title || "未命名文档");
+  const draftUser = getAuthSession()?.id ?? "anonymous";
 
   const { data: asset, refetch } = useQuery<Asset>({
     queryKey: ["asset", id],
@@ -264,6 +264,11 @@ export function DocumentEditorPage() {
         },
       }),
     enabled: linkPickerOpen,
+  });
+
+  const filteredPickerItems = (linkPickerData?.items ?? []).filter((item) => {
+    if (linkPickerMode !== "image") return true;
+    return /\.(png|jpe?g|gif|webp|svg|bmp|avif)$/i.test(item.title || "");
   });
 
   const { data: versions = [] } = useQuery<DocumentVersion[]>({
@@ -402,9 +407,8 @@ export function DocumentEditorPage() {
     const serverText = asset.content?.text ?? "";
     setContent(serverText);
     draftBaseRef.current = asset.currentVersionId ?? "";
-    setDirty(false);
     void Promise.race([
-      loadDraft("dev-user", id).catch(() => null),
+      loadDraft(draftUser, id).catch(() => null),
       new Promise<null>((resolve) => setTimeout(() => resolve(null), 250)),
     ]).then((draft) => {
       if (cancelled) return;
@@ -648,17 +652,46 @@ export function DocumentEditorPage() {
         indentOnInput(),
         ...auroraEditorExtensions,
         keymap.of([...defaultKeymap, ...historyKeymap]),
-        autocompletion(),
+        autocompletion({
+          override: [
+            async (context: CompletionContext) => {
+              const match = context.matchBefore(/(?:\[\[|@)([^\]@\n]*)/);
+              if (!match) return null;
+              const isAt = match.text.startsWith("@");
+              const q = (isAt ? match.text.slice(1) : match.text.slice(2)).trim();
+              try {
+                const res = await api<{ items: Asset[] }>("/assets", {
+                  params: { q: q || undefined, limit: 12 },
+                });
+                const candidates = res.items.filter((item) => item.id !== id);
+                return {
+                  from: match.from,
+                  options: candidates.map((item) => {
+                    const isImage =
+                      item.type === "file" && /\.(png|jpe?g|gif|webp|svg|bmp)$/i.test(item.title);
+                    const prefix = isImage ? "!" : "";
+                    return {
+                      label: item.title || item.id,
+                      detail: item.type,
+                      apply: `${prefix}[${item.title || "资产"}](asset:${item.id})`,
+                    };
+                  }),
+                };
+              } catch {
+                return null;
+              }
+            },
+          ],
+        }),
         langConf.of(markdown({ base: markdownLanguage })),
         EditorView.updateListener.of((update) => {
           if (update.docChanged) {
             const text = update.state.doc.toString();
             setContent(text);
             setSaveState("saving");
-            setDirty(true);
             if (id)
               void saveDraft({
-                key: `dev-user:${id}`,
+                key: `${draftUser}:${id}`,
                 assetId: id,
                 baseVersionId: draftBaseRef.current,
                 content: text,
@@ -684,8 +717,7 @@ export function DocumentEditorPage() {
       selfSavedVersionRef.current = updated.currentVersionId;
       draftBaseRef.current = updated.currentVersionId ?? "";
       setSaveState("saved");
-      setDirty(false);
-      await markSynced("dev-user", id, updated.currentVersionId ?? "");
+      await markSynced(draftUser, id, updated.currentVersionId ?? "");
       queryClient.setQueryData<Asset>(["asset", id], (current) => ({
         ...(current ?? updated),
         ...updated,
@@ -833,7 +865,7 @@ export function DocumentEditorPage() {
               onClick: ({ key }) => {
                 if (key === "copy") void copyPublishedLink();
                 if (key === "export") exportMarkdown();
-                if (key === "presentation") navigate(`/presentations/new?asset=${id}`);
+                if (key === "presentation") navigate(`/presentations/new?assetId=${id}`);
                 if (key === "asset") navigate(`/assets/${id}`);
                 if (key === "delete" && id) {
                   confirmDelete({
@@ -863,7 +895,7 @@ export function DocumentEditorPage() {
       {tab === "内容编辑" && (
         <div className="zx-floating-ai-bar">
           <button type="button" className="zx-ai-chip" onClick={() => openLinkPicker("link")}>
-            <Link2 size={13.5} /> 引用知识库
+            <Link2 size={13.5} /> 引用资产
           </button>
           <button type="button" className="zx-ai-chip" onClick={() => openLinkPicker("image")}>
             <ImagePlus size={13.5} /> 插入图片
@@ -985,7 +1017,7 @@ export function DocumentEditorPage() {
           {attachments.length === 0 ? (
             <Empty
               title="还没有附件"
-              hint="支持 APK、XLSX、PNG、PDF 等格式，单个文件最大 200MB。"
+              hint="支持 APK、XLSX、PNG、PDF 等格式，单个文件最大 100MB。"
             />
           ) : (
             <div className="sg-col">
@@ -1133,13 +1165,35 @@ export function DocumentEditorPage() {
               </div>
             ) : (
               headings.map((h, i) => (
-                <div
+                <button
                   key={i}
+                  type="button"
                   className={`zx-toc-item ${i === 0 ? "first" : ""}`}
-                  style={{ paddingLeft: 12 + (h.level - 1) * 12 }}
+                  style={{
+                    paddingLeft: 12 + (h.level - 1) * 12,
+                    width: "100%",
+                    textAlign: "left",
+                    background: "none",
+                    border: "none",
+                    cursor: "pointer",
+                  }}
+                  onClick={() => {
+                    const view = viewRef.current;
+                    if (!view) return;
+                    const docText = view.state.doc.toString();
+                    const headingLine = `${"#".repeat(h.level)} ${h.text}`;
+                    const idx = docText.indexOf(headingLine);
+                    if (idx >= 0) {
+                      view.dispatch({
+                        selection: { anchor: idx },
+                        scrollIntoView: true,
+                      });
+                      view.focus();
+                    }
+                  }}
                 >
                   {h.text}
-                </div>
+                </button>
               ))
             )}
           </Scrollbar>
@@ -1188,10 +1242,17 @@ export function DocumentEditorPage() {
             placeholder="搜索资产名称…"
           />
           <Scrollbar className={`sg-col ${styles.pickerResults}`}>
-            {(linkPickerData?.items?.length ?? 0) === 0 ? (
-              <Empty title="没有找到资产" hint="换个关键词试试，或先在资产中心创建。" />
+            {filteredPickerItems.length === 0 ? (
+              <Empty
+                title={linkPickerMode === "image" ? "没有找到图片资产" : "没有找到资产"}
+                hint={
+                  linkPickerMode === "image"
+                    ? "请先上传图片文件（png/jpg/webp/svg），或换个关键词。"
+                    : "换个关键词试试，或先在资产中心创建。"
+                }
+              />
             ) : (
-              linkPickerData?.items.map((item) => (
+              filteredPickerItems.map((item) => (
                 <button
                   key={item.id}
                   type="button"

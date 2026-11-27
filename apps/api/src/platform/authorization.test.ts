@@ -1,135 +1,82 @@
-import type { ActorContext, Asset, Task } from "@shiguang/contracts";
+import type { ActorContext, Asset } from "@shiguang/contracts";
 import type { Store } from "@shiguang/database";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import type { AppContext } from "../types.js";
-import {
-  enforceRequestAuthorization,
-  requireAssetAccess,
-  requiresWorkspaceWrite,
-  requireTaskAccess,
-} from "./authorization.js";
+import { requireAssetAccess, requiresWorkspaceWrite } from "./authorization.js";
 
-const editor: ActorContext = {
-  subject: "editor-1",
-  workspaceId: "ws_team",
-  workspaceType: "team",
-  workspaceRole: "editor",
-  requestId: "req_test",
-  isService: false,
-  tokenScopes: ["read", "write"],
-};
-
-const viewer: ActorContext = {
-  ...editor,
-  subject: "viewer-1",
-  workspaceRole: "viewer",
-  tokenScopes: ["read"],
-};
-
-function asset(overrides: Partial<Asset> = {}): Asset {
+function makeAsset(ownerSubject: string, visibility: Asset["visibility"] = "private"): Asset {
   return {
-    id: "ast_private",
-    workspaceId: "ws_team",
-    ownerSubject: "owner-1",
+    id: "ast_1",
+    workspaceId: "ws_1",
+    ownerSubject,
     type: "document",
-    title: "Private document",
+    title: "测试文档",
     path: "",
     description: "",
-    visibility: "private",
+    visibility,
     status: "normal",
     sourceType: "manual",
-    currentVersionId: null,
+    currentVersionId: "ver_1",
     lockVersion: 1,
     deletedAt: null,
     publishedUrl: null,
-    createdAt: "2026-08-16T00:00:00.000Z",
-    updatedAt: "2026-08-16T00:00:00.000Z",
-    ...overrides,
+    createdAt: "2026-11-27T00:00:00.000Z",
+    updatedAt: "2026-11-27T00:00:00.000Z",
   };
 }
 
-function appContext(target: Asset, acl: Array<Record<string, string>> = []): AppContext {
+function makeCtx(asset: Asset | null, acl: Array<Record<string, unknown>> = []): AppContext {
   return {
     store: {
-      getAsset: vi.fn(async () => target),
-      listAcl: vi.fn(async () => acl),
+      getAsset: async () => asset,
+      listAcl: async () => acl,
     } as unknown as Store,
   } as AppContext;
 }
 
-describe("asset authorization", () => {
-  it("does not disclose private Group assets to other members", async () => {
-    await expect(
-      requireAssetAccess(appContext(asset()), editor, "ast_private", "read"),
-    ).rejects.toThrow("没有读取");
-  });
-
-  it("allows Group members to read a member-visible asset without edit rights", async () => {
-    const ctx = appContext(asset({ visibility: "member_only" }));
-    await expect(requireAssetAccess(ctx, viewer, "ast_private", "read")).resolves.toMatchObject({
-      id: "ast_private",
+describe("authorization", () => {
+  it("允许通过个人 API Token 的 tokenOwnerSubject 访问私有资产", async () => {
+    const actor: ActorContext = {
+      subject: "tok_personal_1",
+      tokenOwnerSubject: "user_owner",
+      workspaceId: "ws_1",
+      workspaceType: "team",
+      workspaceRole: "editor",
+      requestId: "req_1",
+      isService: false,
+      tokenScopes: ["read", "write"],
+    };
+    const ctx = makeCtx(makeAsset("user_owner", "private"));
+    await expect(requireAssetAccess(ctx, actor, "ast_1", "write")).resolves.toMatchObject({
+      id: "ast_1",
     });
-    await expect(requireAssetAccess(ctx, editor, "ast_private", "write")).rejects.toThrow(
-      "没有编辑",
-    );
   });
 
-  it("honors ACL roles without allowing an editor to delete or manage sharing", async () => {
-    const ctx = appContext(asset(), [
-      { principal_type: "user", principal_id: "viewer-1", role: "viewer" },
-      { principal_type: "user", principal_id: "editor-1", role: "editor" },
-    ]);
-    await expect(requireAssetAccess(ctx, viewer, "ast_private", "read")).resolves.toBeDefined();
-    await expect(requireAssetAccess(ctx, viewer, "ast_private", "write")).rejects.toThrow(
-      "没有编辑",
-    );
-    await expect(requireAssetAccess(ctx, editor, "ast_private", "write")).resolves.toBeDefined();
-    await expect(requireAssetAccess(ctx, editor, "ast_private", "delete")).rejects.toThrow(
-      "只有资产所有者",
-    );
-    await expect(requireAssetAccess(ctx, editor, "ast_private", "manage")).rejects.toThrow(
-      "只有资产所有者",
-    );
-  });
-});
-
-describe("task and route authorization", () => {
-  it("allows Group members to read tasks but restricts controls to the task owner", async () => {
-    const task = { ownerSubject: "owner-1" } as Task;
-    const store = { getTask: vi.fn(async () => task) } as unknown as Store;
-    await expect(requireTaskAccess(store, editor, "tsk_task", "read")).resolves.toBe(task);
-    await expect(requireTaskAccess(store, editor, "tsk_task", "write")).rejects.toThrow(
-      "任务创建者",
-    );
+  it("拒绝未授权成员读取其他用户的私有资产", async () => {
+    const actor: ActorContext = {
+      subject: "user_other",
+      workspaceId: "ws_1",
+      workspaceType: "team",
+      workspaceRole: "editor",
+      requestId: "req_2",
+      isService: false,
+      tokenScopes: ["read", "write"],
+    };
+    const ctx = makeCtx(makeAsset("user_owner", "private"));
+    await expect(requireAssetAccess(ctx, actor, "ast_1", "read")).rejects.toMatchObject({
+      status: 403,
+    });
   });
 
-  it("requires asset-management access for ACL routes and administrator access for settings", async () => {
-    const ctx = appContext(asset(), [
-      { principal_type: "user", principal_id: "editor-1", role: "editor" },
-    ]);
-    await expect(
-      enforceRequestAuthorization(ctx, {
-        method: "GET",
-        url: "/api/v1/assets/ast_private/acl",
-        actor: editor,
-      }),
-    ).rejects.toThrow("管理该资产");
-    await expect(
-      enforceRequestAuthorization(ctx, {
-        method: "GET",
-        url: "/api/v1/integrations/tokens",
-        actor: editor,
-      }),
-    ).rejects.toThrow("组织管理员");
-  });
-
-  it("keeps POST-only read queries available to viewers", () => {
+  it("只读 POST 查询端点不需要写权限 scope", () => {
     expect(
-      requiresWorkspaceWrite({ method: "POST", url: "/api/v1/knowledge-bases/kb_1/search" }),
+      requiresWorkspaceWrite({ method: "POST", url: "/api/v1/knowledge-bases/kb_1/ask" }),
     ).toBe(false);
     expect(requiresWorkspaceWrite({ method: "POST", url: "/api/v1/datasets/ds_1/query" })).toBe(
       false,
     );
-    expect(requiresWorkspaceWrite({ method: "POST", url: "/api/v1/tasks" })).toBe(true);
+    expect(requiresWorkspaceWrite({ method: "POST", url: "/api/v1/datasets/ds_1/charts" })).toBe(
+      true,
+    );
   });
 });

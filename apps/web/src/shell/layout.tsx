@@ -137,7 +137,10 @@ const NAV_STUDIO = [
   { to: "/research", label: "调研", icon: Search },
   { to: "/tasks", label: "任务", icon: CheckCircle2 },
   { to: "/presentations", label: "在线演示", icon: MonitorPlay },
+  { to: "/datasets", label: "数据看板", icon: Database },
   { to: "/templates", label: "模板", icon: LayoutTemplate },
+  { to: "/assistant", label: "AI 助手", icon: Sparkles },
+  { to: "/publishes", label: "已发布", icon: Share2 },
 ];
 
 const NAV = [...NAV_MAIN, ...NAV_STUDIO];
@@ -580,6 +583,17 @@ export function Shell() {
                   }}
                 >
                   <Link
+                    to="/notifications"
+                    className={cx(
+                      "zx-ud-gear",
+                      location.pathname.startsWith("/notifications") && "active",
+                    )}
+                    title="通知中心"
+                    aria-label="通知中心"
+                  >
+                    <Bell size={16} />
+                  </Link>
+                  <Link
                     to="/settings"
                     className={cx(
                       "zx-ud-gear",
@@ -923,10 +937,26 @@ const CREATE_CARDS = [
 ] as const;
 
 const RECENT_TEMPLATES = [
-  { name: "行业调研", image: "/reference/template-research.webp" },
-  { name: "竞品分析", image: "/reference/template-compare.webp" },
-  { name: "技术方案演示", image: "/reference/template-presentation.webp" },
-  { name: "市场分析报告", image: "/reference/template-research.webp" },
+  {
+    name: "行业调研",
+    to: "/research/new?goal=" + encodeURIComponent("行业市场调研与竞争格局分析"),
+    image: "/reference/template-research.webp",
+  },
+  {
+    name: "竞品分析",
+    to: "/research/new?goal=" + encodeURIComponent("核心竞品产品与商业模式对比分析"),
+    image: "/reference/template-compare.webp",
+  },
+  {
+    name: "技术方案演示",
+    to: "/presentations/new?topic=" + encodeURIComponent("技术架构与方案评审演示"),
+    image: "/reference/template-presentation.webp",
+  },
+  {
+    name: "市场分析报告",
+    to: "/research/new?goal=" + encodeURIComponent("目标市场规模、增速与趋势分析"),
+    image: "/reference/template-research.webp",
+  },
 ];
 
 function CreatePopover({
@@ -936,6 +966,7 @@ function CreatePopover({
   onSelect: (key: string) => void;
   onBrowse: () => void;
 }) {
+  const navigate = useNavigate();
   return (
     <div className="sg-create-popover">
       <h2>新建</h2>
@@ -962,7 +993,7 @@ function CreatePopover({
         </div>
         <div className="sg-create-template-grid">
           {RECENT_TEMPLATES.map((template) => (
-            <button key={template.name} type="button" onClick={onBrowse}>
+            <button key={template.name} type="button" onClick={() => navigate(template.to)}>
               <img src={template.image} alt="" />
               <strong>{template.name}</strong>
             </button>
@@ -986,6 +1017,7 @@ interface SearchWorkspaceItem {
   owner: string;
   source: string;
   meta: string;
+  statusLabel?: string;
 }
 
 const SEARCH_KIND_META: Record<SearchKind, { label: string; icon: typeof FileText; tone: string }> =
@@ -1036,7 +1068,27 @@ function SearchWorkspace({
   const [previewTab, setPreviewTab] = useState<"preview" | "outline" | "sources" | "related">(
     "preview",
   );
-  const [starred, setStarred] = useState(false);
+  const [starredIds, setStarredIds] = useState<string[]>(() => {
+    try {
+      const raw = window.localStorage.getItem("sg-search-starred");
+      return raw ? (JSON.parse(raw) as string[]) : [];
+    } catch {
+      return [];
+    }
+  });
+  const toggleStar = (targetId: string) => {
+    setStarredIds((prev) => {
+      const next = prev.includes(targetId)
+        ? prev.filter((item) => item !== targetId)
+        : [...prev, targetId];
+      try {
+        window.localStorage.setItem("sg-search-starred", JSON.stringify(next));
+      } catch {
+        // ignore storage quota errors
+      }
+      return next;
+    });
+  };
   const normalizedQuery = query.trim();
   const { data, isFetching } = useQuery<SearchResult>({
     queryKey: ["search", normalizedQuery],
@@ -1059,7 +1111,7 @@ function SearchWorkspace({
           kind === "presentation"
             ? `/presentations/${asset.id}`
             : kind === "data"
-              ? `/assets/${asset.id}`
+              ? `/datasets/${asset.id}`
               : asset.type === "html"
                 ? `/html/${asset.id}`
                 : asset.type === "document" || asset.type === "report"
@@ -1074,10 +1126,20 @@ function SearchWorkspace({
       });
     }
     for (const task of data?.tasks ?? []) {
+      const statusLabel =
+        task.status === "completed"
+          ? "已完成"
+          : task.status === "failed"
+            ? "失败"
+            : task.status === "cancelled"
+              ? "已取消"
+              : task.status === "partial_completed"
+                ? "部分完成"
+                : "执行中";
       result.push({
         id: task.id,
         title: task.goal,
-        description: task.currentStep || "调研任务正在整理相关信息与输出结果",
+        description: task.currentStep || "后台任务记录",
         kind: "research",
         kindLabel: "调研",
         to: `/tasks/${task.id}`,
@@ -1087,7 +1149,8 @@ function SearchWorkspace({
             ? "我创建的"
             : task.ownerSubject || "我创建的",
         source: "task",
-        meta: `${task.status === "completed" ? "已完成" : "执行中"} · ${relativeSearchTime(task.updatedAt)}`,
+        meta: `${statusLabel} · ${relativeSearchTime(task.updatedAt)}`,
+        statusLabel,
       });
     }
     for (const knowledge of data?.knowledgeBases ?? []) {
@@ -1135,6 +1198,24 @@ function SearchWorkspace({
     filteredItems.findIndex((item) => item.id === selectedId),
   );
   const selectedItem = filteredItems[selectedIndex];
+  const isAssetSelected = Boolean(
+    selectedItem && ["document", "data", "presentation", "more"].includes(selectedItem.kind),
+  );
+  const { data: previewAsset } = useQuery<Asset>({
+    queryKey: ["search-preview-asset", selectedItem?.id],
+    queryFn: () => api<Asset>(`/assets/${selectedItem?.id}`),
+    enabled: Boolean(isAssetSelected && selectedItem?.id),
+  });
+  const previewHeadings = useMemo(() => {
+    const text = previewAsset?.content?.text ?? "";
+    if (!text) return [];
+    return text
+      .split("\n")
+      .map((line) => /^(#{1,3})\s+(.+)$/.exec(line.trim()))
+      .filter((m): m is RegExpExecArray => Boolean(m))
+      .slice(0, 12)
+      .map((m) => m[2]);
+  }, [previewAsset]);
 
   useEffect(() => {
     if (!filteredItems.length) {
@@ -1384,9 +1465,9 @@ function SearchWorkspace({
                 </div>
                 <button
                   type="button"
-                  aria-label={starred ? "取消收藏" : "收藏"}
-                  className={starred ? "active" : ""}
-                  onClick={() => setStarred((value) => !value)}
+                  aria-label={starredIds.includes(selectedItem.id) ? "取消收藏" : "收藏"}
+                  className={starredIds.includes(selectedItem.id) ? "active" : ""}
+                  onClick={() => toggleStar(selectedItem.id)}
                 >
                   <Star size={15} />
                 </button>
@@ -1404,8 +1485,8 @@ function SearchWorkspace({
                 </button>
                 <button
                   type="button"
-                  aria-label="更多操作"
-                  onClick={() => toast("info", "更多操作即将开放")}
+                  aria-label="在新标签打开"
+                  onClick={() => window.open(selectedItem.to, "_blank", "noopener,noreferrer")}
                 >
                   <MoreHorizontal size={16} />
                 </button>
@@ -1423,28 +1504,45 @@ function SearchWorkspace({
               <div className="sg-global-search-preview-body">
                 {previewTab === "preview" && (
                   <>
-                    <h3>1. 内容概览</h3>
+                    <h3>内容概览</h3>
                     <p>{selectedItem.description}</p>
-                    <SearchPreviewChart />
-                    <h3>2. 核心要点</h3>
-                    <ul>
-                      <li>关键数据与趋势已经整理为结构化内容</li>
-                      <li>来源、任务与相关资产保持可追溯关系</li>
-                      <li>可继续用于调研、知识库或在线演示</li>
-                    </ul>
+                    {previewAsset?.content?.text ? (
+                      <pre
+                        style={{
+                          whiteSpace: "pre-wrap",
+                          fontFamily: "inherit",
+                          fontSize: 12.5,
+                          lineHeight: 1.65,
+                          color: "var(--sg-subtle)",
+                          marginTop: 10,
+                        }}
+                      >
+                        {previewAsset.content.text.slice(0, 900)}
+                      </pre>
+                    ) : (
+                      <ul>
+                        <li>类型：{selectedItem.kindLabel}</li>
+                        <li>归属：{selectedItem.owner}</li>
+                        <li>状态：{selectedItem.meta}</li>
+                      </ul>
+                    )}
                   </>
                 )}
-                {previewTab === "outline" && (
-                  <ol>
-                    <li>背景与目标</li>
-                    <li>核心分析</li>
-                    <li>数据与来源</li>
-                    <li>结论与建议</li>
-                  </ol>
-                )}
+                {previewTab === "outline" &&
+                  (previewHeadings.length > 0 ? (
+                    <ol>
+                      {previewHeadings.map((heading, idx) => (
+                        <li key={idx}>{heading}</li>
+                      ))}
+                    </ol>
+                  ) : (
+                    <div className="sg-global-search-preview-empty">
+                      该内容暂无 Markdown 章节目录
+                    </div>
+                  ))}
                 {previewTab === "sources" && (
                   <div className="sg-global-search-preview-empty">
-                    来源信息将在打开内容后完整展示
+                    来源：{selectedItem.source} · {selectedItem.owner}
                   </div>
                 )}
                 {previewTab === "related" && (
@@ -1469,7 +1567,16 @@ function SearchWorkspace({
                 >
                   在新标签打开
                 </Button>
-                <Button onClick={() => toast("info", "更多操作即将开放")}>更多操作</Button>
+                {selectedItem.kind === "document" && (
+                  <Button
+                    onClick={() => {
+                      onClose();
+                      navigate(`/presentations/new?assetId=${selectedItem.id}`);
+                    }}
+                  >
+                    生成演示
+                  </Button>
+                )}
               </footer>
             </aside>
           )}
@@ -1479,7 +1586,10 @@ function SearchWorkspace({
         <button
           type="button"
           className="sg-global-search-ask"
-          onClick={() => toast("info", `可以继续向 AI 询问“${normalizedQuery}”`)}
+          onClick={() => {
+            onClose();
+            navigate(`/assistant?q=${encodeURIComponent(normalizedQuery)}`);
+          }}
         >
           <Sparkles size={15} /> 向 AI 提问
         </button>
@@ -1531,43 +1641,16 @@ function SearchResultRow({
           {item.owner} · {item.meta}
         </small>
       </div>
-      {featured && <SearchResultVisual />}
-      {item.kind === "research" && <span className="sg-global-search-status">已完成</span>}
+      {featured && (
+        <span className="sg-global-search-visual" aria-hidden="true">
+          <small>{item.kindLabel}</small>
+          <b>{item.title.slice(0, 14)}</b>
+          <i />
+        </span>
+      )}
+      {item.kind === "research" && item.statusLabel && (
+        <span className="sg-global-search-status">{item.statusLabel}</span>
+      )}
     </article>
-  );
-}
-
-function SearchResultVisual() {
-  return (
-    <span className="sg-global-search-visual" aria-hidden="true">
-      <small>MARKET REPORT</small>
-      <b>市场研究 2024</b>
-      <i />
-    </span>
-  );
-}
-
-function SearchPreviewChart() {
-  return (
-    <div className="sg-global-search-chart" role="img" aria-label="市场规模保持增长趋势">
-      <span>市场规模趋势</span>
-      <svg viewBox="0 0 320 120" aria-hidden="true">
-        <polyline
-          points="16,94 62,76 108,62 154,48 200,35 246,22 300,10"
-          fill="none"
-          stroke="#8f63ff"
-          strokeWidth="2"
-        />
-        {["16,94", "62,76", "108,62", "154,48", "200,35", "246,22", "300,10"].map((point) => {
-          const [cx, cy] = point.split(",");
-          return <circle key={point} cx={cx} cy={cy} r="3" fill="#9c73ff" />;
-        })}
-      </svg>
-      <div>
-        {["2021", "2022", "2023", "2024E", "2025E", "2026E", "2027E"].map((year) => (
-          <small key={year}>{year}</small>
-        ))}
-      </div>
-    </div>
   );
 }

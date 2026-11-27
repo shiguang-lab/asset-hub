@@ -58,7 +58,14 @@ function parse<T>(value: unknown, fallback: T): T {
 }
 
 const str = (v: unknown, fallback = ""): string => (typeof v === "string" ? v : fallback);
-const num = (v: unknown, fallback = 0): number => (typeof v === "number" ? v : fallback);
+const num = (v: unknown, fallback = 0): number => {
+  if (typeof v === "number") return Number.isFinite(v) ? v : fallback;
+  if (typeof v === "string" && v.trim() !== "") {
+    const parsed = Number(v);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return fallback;
+};
 const bool = (v: unknown): boolean => v === 1 || v === true;
 
 // Personal and organization workspaces share the initial 100 MB quota.
@@ -414,13 +421,14 @@ export class Store {
     if (!current) throw new Error("user not found");
     await this.db
       .prepare(
-        "UPDATE users SET name = ?, default_quality = ?, default_language = ?, notify_email = ? WHERE subject = ?",
+        "UPDATE users SET name = ?, avatar_url = ?, default_quality = ?, default_language = ?, notify_email = ? WHERE subject = ?",
       )
       .run(
         patch.name ?? current.name,
+        patch.avatarUrl !== undefined ? patch.avatarUrl : current.avatarUrl,
         patch.defaultQuality ?? current.defaultQuality,
         patch.defaultLanguage ?? current.defaultLanguage,
-        (patch.notifyEmail ?? current.notifyEmail) ? 1 : 0,
+        Boolean(patch.notifyEmail ?? current.notifyEmail),
         subject,
       );
     return (await this.getUserProfile(subject)) as UserProfile;
@@ -556,6 +564,7 @@ export class Store {
       since?: string;
       /** 目录树筛选：路径前缀（不含末尾斜杠），同时匹配该目录自身与其子孙。 */
       pathPrefix?: string;
+      sort?: "updated_at" | "created_at" | "title";
       limit: number;
       after?: string;
       subject?: string;
@@ -616,16 +625,22 @@ export class Store {
       params.push(afterAt, afterAt, afterId);
     }
     const where = clauses.join(" AND ");
+    const orderBy =
+      opts.sort === "created_at"
+        ? "a.created_at DESC, a.id DESC"
+        : opts.sort === "title"
+          ? "a.title ASC, a.id ASC"
+          : "a.updated_at DESC, a.id DESC";
     const totalRow = (await this.db
       .prepare(`SELECT COUNT(*) AS n FROM assets a WHERE ${where}`)
-      .get(...(params as unknown[]))) as { n: number };
+      .get(...(params as unknown[]))) as { n: number | string };
     const rows = (await this.db
       .prepare(
         `SELECT a.*, owner_user.name AS owner_display_name, ${ASSET_THUMBNAIL_SELECT}
          FROM assets a
          LEFT JOIN users owner_user ON owner_user.subject = a.owner_subject
          WHERE ${where}
-         ORDER BY a.updated_at DESC, a.id DESC LIMIT ?`,
+         ORDER BY ${orderBy} LIMIT ?`,
       )
       .all(...(params as unknown[]), opts.limit + 1)) as Row[];
     const hasMore = rows.length > opts.limit;
@@ -633,7 +648,7 @@ export class Store {
     const last = items.at(-1);
     return {
       items,
-      total: totalRow.n,
+      total: num(totalRow?.n),
       nextCursor: hasMore && last ? encodeCursor(last.updatedAt, last.id) : null,
     };
   }
@@ -1132,8 +1147,14 @@ export class Store {
     const vid = versionId ?? asset.currentVersionId;
     if (!vid) return null;
     const row = (await this.db
-      .prepare("SELECT * FROM asset_blobs WHERE version_id = ? AND role = 'content' LIMIT 1")
-      .get(vid)) as Row | undefined;
+      .prepare(
+        `SELECT ab.*
+         FROM asset_blobs ab
+         JOIN asset_versions av ON av.id = ab.version_id
+         WHERE ab.version_id = ? AND av.asset_id = ? AND ab.role = 'content'
+         LIMIT 1`,
+      )
+      .get(vid, assetId)) as Row | undefined;
     if (!row) return null;
     const mediaType = str(row.media_type, "application/octet-stream");
     if (
@@ -1370,7 +1391,7 @@ export class Store {
     const where = clauses.join(" AND ");
     const total = (await this.db
       .prepare(`SELECT COUNT(*) n FROM tasks WHERE ${where}`)
-      .get(...(params as unknown[]))) as { n: number };
+      .get(...(params as unknown[]))) as { n: number | string };
     const rows = (await this.db
       .prepare(`SELECT * FROM tasks WHERE ${where} ORDER BY created_at DESC, id DESC LIMIT ?`)
       .all(...(params as unknown[]), opts.limit + 1)) as Row[];
@@ -1379,7 +1400,7 @@ export class Store {
     const last = items.at(-1);
     return {
       items,
-      total: total.n,
+      total: num(total?.n),
       nextCursor: hasMore && last ? encodeCursor(last.createdAt, last.id) : null,
     };
   }
@@ -1550,7 +1571,7 @@ export class Store {
     if (patch.cancelRequested !== undefined) {
       await this.db
         .prepare("UPDATE tasks SET cancel_requested = ?, updated_at = ? WHERE id = ?")
-        .run(patch.cancelRequested ? 1 : 0, nowIso(), taskId);
+        .run(Boolean(patch.cancelRequested), nowIso(), taskId);
     }
     return await this.getTask(workspaceId, taskId);
   }
@@ -1729,6 +1750,7 @@ export class Store {
       sourceType: KnowledgeSource["sourceType"];
       assetVersionId?: string | null;
       url?: string | null;
+      objectKey?: string | null;
       title: string;
       contentHash?: string | null;
     },
@@ -1737,8 +1759,8 @@ export class Store {
     const id = nextId("src");
     await this.db
       .prepare(
-        `INSERT INTO knowledge_sources (id, kb_id, workspace_id, source_type, asset_version_id, url, title, status, content_hash, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`,
+        `INSERT INTO knowledge_sources (id, kb_id, workspace_id, source_type, asset_version_id, url, object_key, title, status, content_hash, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`,
       )
       .run(
         id,
@@ -1747,6 +1769,7 @@ export class Store {
         input.sourceType,
         input.assetVersionId ?? null,
         input.url ?? null,
+        input.objectKey ?? null,
         input.title,
         input.contentHash ?? null,
         now,
@@ -1782,6 +1805,7 @@ export class Store {
       sourceType: str(r.source_type) as KnowledgeSource["sourceType"],
       assetVersionId: r.asset_version_id === null ? null : str(r.asset_version_id),
       url: r.url === null ? null : str(r.url),
+      objectKey: r.object_key === null || r.object_key === undefined ? null : str(r.object_key),
       title: str(r.title),
       status: str(r.status) as SourceStatus,
       error: r.error === null ? null : str(r.error),
@@ -1838,28 +1862,56 @@ export class Store {
     kbId: string,
     sourceId: string,
     chunks: Array<
-      Pick<KnowledgeChunk, "ordinal" | "headingPath" | "text" | "charStart" | "charEnd">
+      Pick<KnowledgeChunk, "ordinal" | "headingPath" | "text" | "charStart" | "charEnd"> & {
+        embedding?: number[];
+      }
     >,
   ): Promise<void> {
     await this.db.prepare("DELETE FROM knowledge_chunks WHERE source_id = ?").run(sourceId);
-    const insert = this.db.prepare(
-      `INSERT INTO knowledge_chunks (id, kb_id, source_id, ordinal, heading_path, text, text_hash, char_start, char_end)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    );
+    const hasEmbedding = chunks.some((c) => Array.isArray(c.embedding) && c.embedding.length > 0);
+    const insert = hasEmbedding
+      ? this.db.prepare(
+          `INSERT INTO knowledge_chunks (id, kb_id, source_id, ordinal, heading_path, text, text_hash, char_start, char_end, embedding)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?::vector)`,
+        )
+      : this.db.prepare(
+          `INSERT INTO knowledge_chunks (id, kb_id, source_id, ordinal, heading_path, text, text_hash, char_start, char_end)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        );
+
     for (const chunk of chunks) {
       const id = nextId("chnk");
       const hash = hashBuffer(Buffer.from(chunk.text, "utf8"));
-      await insert.run(
-        id,
-        kbId,
-        sourceId,
-        chunk.ordinal,
-        chunk.headingPath,
-        chunk.text,
-        hash,
-        chunk.charStart,
-        chunk.charEnd,
-      );
+      if (hasEmbedding) {
+        const embStr =
+          Array.isArray(chunk.embedding) && chunk.embedding.length > 0
+            ? `[${chunk.embedding.join(",")}]`
+            : null;
+        await insert.run(
+          id,
+          kbId,
+          sourceId,
+          chunk.ordinal,
+          chunk.headingPath,
+          chunk.text,
+          hash,
+          chunk.charStart,
+          chunk.charEnd,
+          embStr,
+        );
+      } else {
+        await insert.run(
+          id,
+          kbId,
+          sourceId,
+          chunk.ordinal,
+          chunk.headingPath,
+          chunk.text,
+          hash,
+          chunk.charStart,
+          chunk.charEnd,
+        );
+      }
     }
     await this.db
       .prepare(
@@ -1874,25 +1926,59 @@ export class Store {
       .prepare(
         "SELECT COUNT(*) AS s, COALESCE(SUM(chunk_count), 0) AS c FROM knowledge_sources WHERE kb_id = ?",
       )
-      .get(kbId)) as { s: number; c: number };
+      .get(kbId)) as { s: number | string; c: number | string };
     await this.db
       .prepare(
         "UPDATE knowledge_bases SET source_count = ?, chunk_count = ?, updated_at = ? WHERE id = ?",
       )
-      .run(counts.s, counts.c, nowIso(), kbId);
+      .run(num(counts?.s), num(counts?.c), nowIso(), kbId);
   }
 
   async searchChunks(
     kbId: string,
     query: string,
     limit = 10,
+    embedding?: number[],
   ): Promise<Array<{ chunk: KnowledgeChunk; score: number; source: KnowledgeSource }>> {
     const like = `%${query}%`;
-    const rows = (await this.db
-      .prepare(
-        "SELECT *, 0 AS score FROM knowledge_chunks WHERE kb_id = ? AND (text ILIKE ? OR heading_path ILIKE ?) LIMIT ?",
-      )
-      .all(kbId, like, like, limit)) as Row[];
+    let rows: Row[] = [];
+
+    if (Array.isArray(embedding) && embedding.length > 0) {
+      const embStr = `[${embedding.join(",")}]`;
+      try {
+        // Hybrid retrieval: pgvector cosine distance + keyword match
+        rows = (await this.db
+          .prepare(
+            `SELECT *,
+              ROUND(
+                CAST(
+                  (CASE WHEN embedding IS NOT NULL THEN (1 - (embedding <=> ?::vector)) * 0.7 ELSE 0.0 END) +
+                  (CASE WHEN text ILIKE ? OR heading_path ILIKE ? THEN 0.3 ELSE 0.0 END)
+                AS numeric), 4
+              ) AS score
+             FROM knowledge_chunks
+             WHERE kb_id = ?
+               AND (
+                 (text ILIKE ? OR heading_path ILIKE ?)
+                 OR (embedding IS NOT NULL)
+               )
+             ORDER BY score DESC
+             LIMIT ?`,
+          )
+          .all(embStr, like, like, kbId, like, like, limit)) as Row[];
+      } catch {
+        // Fall back to keyword ILIKE if pgvector syntax/extension is not active in this environment
+        rows = [];
+      }
+    }
+
+    if (rows.length === 0) {
+      rows = (await this.db
+        .prepare(
+          "SELECT *, 0.5 AS score FROM knowledge_chunks WHERE kb_id = ? AND (text ILIKE ? OR heading_path ILIKE ?) LIMIT ?",
+        )
+        .all(kbId, like, like, limit)) as Row[];
+    }
     return await Promise.all(
       rows.map(async (r) => {
         const source = await this.getKnowledgeSource(kbId, str(r.source_id));
@@ -2172,6 +2258,52 @@ export class Store {
     }));
   }
 
+  async deleteSavedView(workspaceId: string, datasetId: string, viewId: string): Promise<void> {
+    await this.db
+      .prepare(
+        "DELETE FROM dataset_saved_views WHERE id = ? AND dataset_id = ? AND workspace_id = ?",
+      )
+      .run(viewId, datasetId, workspaceId);
+  }
+
+  async deleteChartSpec(workspaceId: string, datasetId: string, chartId: string): Promise<void> {
+    await this.db
+      .prepare("DELETE FROM chart_specs WHERE id = ? AND dataset_id = ? AND workspace_id = ?")
+      .run(chartId, datasetId, workspaceId);
+  }
+
+  async updateDataset(
+    workspaceId: string,
+    datasetId: string,
+    patch: { name?: string; description?: string },
+  ): Promise<Dataset | null> {
+    const current = await this.getDataset(workspaceId, datasetId);
+    if (!current) return null;
+    await this.db
+      .prepare(
+        "UPDATE datasets SET name = ?, description = ?, updated_at = ? WHERE id = ? AND workspace_id = ?",
+      )
+      .run(
+        patch.name ?? current.name,
+        patch.description !== undefined ? patch.description : current.description,
+        nowIso(),
+        datasetId,
+        workspaceId,
+      );
+    return await this.getDataset(workspaceId, datasetId);
+  }
+
+  async deleteDataset(workspaceId: string, datasetId: string): Promise<void> {
+    await this.db.transaction(async (tx) => {
+      await tx.prepare("DELETE FROM chart_specs WHERE dataset_id = ?").run(datasetId);
+      await tx.prepare("DELETE FROM dataset_saved_views WHERE dataset_id = ?").run(datasetId);
+      await tx.prepare("DELETE FROM dataset_versions WHERE dataset_id = ?").run(datasetId);
+      await tx
+        .prepare("DELETE FROM datasets WHERE id = ? AND workspace_id = ?")
+        .run(datasetId, workspaceId);
+    });
+  }
+
   /* ---------------- templates ---------------- */
 
   async listTemplates(
@@ -2393,8 +2525,8 @@ export class Store {
         patch.passwordHash !== undefined ? patch.passwordHash : current.passwordHash,
         patch.passwordSalt !== undefined ? patch.passwordSalt : current.passwordSalt,
         patch.expiresAt !== undefined ? patch.expiresAt : current.expiresAt,
-        (patch.allowDownload ?? current.allowDownload) ? 1 : 0,
-        (patch.allowCopy ?? current.allowCopy) ? 1 : 0,
+        Boolean(patch.allowDownload ?? current.allowDownload),
+        Boolean(patch.allowCopy ?? current.allowCopy),
         patch.status ?? current.status,
         nowIso(),
         publishId,
@@ -2674,6 +2806,37 @@ export class Store {
     }));
   }
 
+  async getComment(id: string): Promise<{
+    id: string;
+    publishId: string;
+    releaseId: string;
+    authorSubject: string;
+    authorName: string;
+    content: string;
+    createdAt: string;
+  } | null> {
+    const row = (await this.db
+      .prepare(
+        "SELECT id, publish_id, release_id, author_subject, author_name, content, created_at FROM publish_comments WHERE id = ?",
+      )
+      .get(id)) as Row | undefined;
+    if (!row) return null;
+    return {
+      id: str(row.id),
+      publishId: str(row.publish_id),
+      releaseId: str(row.release_id),
+      authorSubject: str(row.author_subject),
+      authorName: str(row.author_name),
+      content: str(row.content),
+      createdAt: str(row.created_at),
+    };
+  }
+
+  async deleteComment(id: string): Promise<boolean> {
+    await this.db.prepare("DELETE FROM publish_comments WHERE id = ?").run(id);
+    return true;
+  }
+
   async recordAccessEvent(input: {
     publishId: string;
     releaseId?: string | null;
@@ -2891,8 +3054,8 @@ export class Store {
       .prepare(
         "SELECT COUNT(*) AS n FROM notifications WHERE workspace_id = ? AND subject = ? AND read_at IS NULL",
       )
-      .get(workspaceId, subject)) as { n: number };
-    return row.n;
+      .get(workspaceId, subject)) as { n: number | string };
+    return num(row?.n);
   }
 
   async markNotificationRead(
@@ -2929,20 +3092,26 @@ export class Store {
 
   async createApiToken(
     workspaceId: string,
-    input: { name: string; scopes: Array<"read" | "write">; expiresAt?: string | null },
+    input: {
+      name: string;
+      scopes: Array<"read" | "write">;
+      expiresAt?: string | null;
+      createdBy?: string | null;
+    },
     secretHash: string,
   ): Promise<ApiToken> {
     const now = nowIso();
     const id = nextId("tok");
     await this.db
       .prepare(
-        "INSERT INTO api_tokens (id, workspace_id, name, secret_hash, scopes, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO api_tokens (id, workspace_id, name, secret_hash, created_by, scopes, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
       )
       .run(
         id,
         workspaceId,
         input.name,
         secretHash,
+        input.createdBy ?? null,
         json(input.scopes),
         input.expiresAt ?? null,
         now,
@@ -2952,6 +3121,7 @@ export class Store {
       workspaceId,
       name: input.name,
       secretHash,
+      createdBy: input.createdBy ?? null,
       scopes: input.scopes,
       expiresAt: input.expiresAt ?? null,
       revokedAt: null,
@@ -2969,6 +3139,7 @@ export class Store {
       workspaceId: str(r.workspace_id),
       name: str(r.name),
       secretHash: str(r.secret_hash),
+      createdBy: r.created_by === null || r.created_by === undefined ? null : str(r.created_by),
       scopes: parse<Array<"read" | "write">>(r.scopes, ["read"]),
       expiresAt: r.expires_at === null ? null : str(r.expires_at),
       revokedAt: r.revoked_at === null ? null : str(r.revoked_at),
@@ -2987,6 +3158,8 @@ export class Store {
       workspaceId: str(row.workspace_id),
       name: str(row.name),
       secretHash: str(row.secret_hash),
+      createdBy:
+        row.created_by === null || row.created_by === undefined ? null : str(row.created_by),
       scopes: parse<Array<"read" | "write">>(row.scopes, ["read"]),
       expiresAt: row.expires_at === null ? null : str(row.expires_at),
       revokedAt: row.revoked_at === null ? null : str(row.revoked_at),
@@ -3057,10 +3230,10 @@ export class Store {
       .run(
         current.id,
         workspaceId,
-        (patch.enabled ?? current.enabled) ? 1 : 0,
+        Boolean(patch.enabled ?? current.enabled),
         patch.scope ?? current.scope,
         json(patch.scopeIds ?? current.scopeIds),
-        (patch.writeEnabled ?? current.writeEnabled) ? 1 : 0,
+        Boolean(patch.writeEnabled ?? current.writeEnabled),
         patch.serverUrl ?? current.serverUrl,
         nowIso(),
       );
@@ -3125,10 +3298,23 @@ export class Store {
     return { ...input, id, status: "pending", createdAt: now, dispatchedAt: null };
   }
 
-  async claimOutbox(limit = 10, _claimTimeoutSec = 30): Promise<OutboxEvent[]> {
+  async claimOutbox(limit = 10, claimTimeoutSec = 30): Promise<OutboxEvent[]> {
+    const now = nowIso();
+    const staleBefore = new Date(Date.now() - claimTimeoutSec * 1000).toISOString();
     const rows = (await this.db
-      .prepare("SELECT * FROM outbox_events WHERE status = 'pending' ORDER BY created_at LIMIT ?")
-      .all(limit)) as Row[];
+      .prepare(
+        `UPDATE outbox_events
+         SET status = 'claimed', dispatched_at = ?
+         WHERE id IN (
+           SELECT id FROM outbox_events
+           WHERE status = 'pending' OR (status = 'claimed' AND (dispatched_at IS NULL OR dispatched_at < ?))
+           ORDER BY created_at
+           LIMIT ?
+           FOR UPDATE SKIP LOCKED
+         )
+         RETURNING *`,
+      )
+      .all(now, staleBefore, limit)) as Row[];
     return rows.map((r) => ({
       id: str(r.id),
       eventType: str(r.event_type),
@@ -3139,7 +3325,7 @@ export class Store {
       data: parse<Record<string, unknown>>(r.data_json, {}),
       status: "pending",
       createdAt: str(r.created_at),
-      dispatchedAt: null,
+      dispatchedAt: r.dispatched_at === null ? null : str(r.dispatched_at),
     }));
   }
 
@@ -3356,7 +3542,7 @@ export class Store {
     await this.db
       .prepare(
         `INSERT INTO task_schedules (id, workspace_id, name, task_type, goal, spec_json, cron, enabled, next_run_at, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, TRUE, ?, ?, ?)`,
       )
       .run(
         id,
@@ -3430,13 +3616,31 @@ export class Store {
       .run(id, workspaceId);
   }
 
-  async getDueSchedules(): Promise<Array<Record<string, unknown>>> {
+  async claimDueSchedules(limit = 10): Promise<Array<Record<string, unknown>>> {
     const now = nowIso();
-    return (await this.db
-      .prepare(
-        "SELECT * FROM task_schedules WHERE enabled = TRUE AND next_run_at IS NOT NULL AND next_run_at <= ? ORDER BY next_run_at LIMIT 10",
-      )
-      .all(now)) as Array<Record<string, unknown>>;
+    return await this.db.transaction(async (tx) => {
+      const rows = (await tx
+        .prepare(
+          "SELECT * FROM task_schedules WHERE enabled = TRUE AND next_run_at IS NOT NULL AND next_run_at <= ? ORDER BY next_run_at LIMIT ? FOR UPDATE SKIP LOCKED",
+        )
+        .all(now, limit)) as Array<Record<string, unknown>>;
+
+      for (const row of rows) {
+        const id = str(row.id);
+        const cron = str(row.cron);
+        const next = computeNextCron(cron, new Date());
+        await tx
+          .prepare(
+            "UPDATE task_schedules SET last_run_at = ?, next_run_at = ?, run_count = run_count + 1, updated_at = ? WHERE id = ?",
+          )
+          .run(now, next, now, id);
+      }
+      return rows;
+    });
+  }
+
+  async getDueSchedules(): Promise<Array<Record<string, unknown>>> {
+    return await this.claimDueSchedules(10);
   }
 
   async markScheduleRun(id: string): Promise<void> {
@@ -3588,12 +3792,13 @@ export class Store {
   }
 
   async applyProposedPatch(assetId: string, patchId: string): Promise<string | null> {
-    const patch = await this.getProposedPatch(assetId, patchId);
-    if (!patch) return null;
-    await this.db
-      .prepare("UPDATE proposed_patches SET status = 'applied' WHERE id = ?")
-      .run(patchId);
-    return str(patch.proposed);
+    const row = (await this.db
+      .prepare(
+        "UPDATE proposed_patches SET status = 'applied' WHERE id = ? AND asset_id = ? AND status = 'pending' RETURNING proposed",
+      )
+      .get(patchId, assetId)) as Row | undefined;
+    if (!row) return null;
+    return str(row.proposed);
   }
 
   getDb(): Db {

@@ -1,10 +1,10 @@
 "use client";
 
-import {Scrollbar} from "@shiguang2/components";
-import {Empty} from "@shiguang/ui";
-import {useRequest} from "ahooks";
-import {Menu as AntMenu, Avatar, Button, type MenuProps, Skeleton, Tooltip} from "antd";
-import {createStyles} from "antd-style";
+import { Empty } from "@shiguang/ui";
+import { Scrollbar } from "@shiguang2/components";
+import { useRequest } from "ahooks";
+import { Menu as AntMenu, Avatar, Button, type MenuProps, Skeleton, Tooltip } from "antd";
+import { createStyles } from "antd-style";
 import {
   AlignJustify,
   AlignLeft,
@@ -20,12 +20,20 @@ import {
   MoreHorizontal,
   StretchHorizontal,
 } from "lucide-react";
-import {type MouseEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState,} from "react";
+import {
+  type MouseEvent,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
-import {rewriteAssetLinks} from "../render/rewrite-asset-links";
-import {isClient} from "../utils/environment";
-import {InteractiveMarkdown} from "./interactive-markdown";
-import {SeoSnapshot} from "./seo-snapshot";
+import { rewriteAssetLinks } from "../render/rewrite-asset-links";
+import { isClient } from "../utils/environment";
+import { InteractiveMarkdown } from "./interactive-markdown";
+import { SeoSnapshot } from "./seo-snapshot";
 
 export interface PublicReaderContent {
   title: string;
@@ -121,7 +129,7 @@ async function fetchPresenceIdentity(): Promise<PresenceIdentity | null> {
   try {
     response = await fetch("/api/auth/session", {
       credentials: "include",
-      headers: {Accept: "application/json"},
+      headers: { Accept: "application/json" },
     });
   } catch {
     return null;
@@ -133,7 +141,7 @@ async function fetchPresenceIdentity(): Promise<PresenceIdentity | null> {
     displayName?: string;
     preferredUsername?: string;
     avatarUrl?: string | null;
-    user?: {id?: string; username?: string; avatarUrl?: string | null};
+    user?: { id?: string; username?: string; avatarUrl?: string | null };
   };
   try {
     body = (await response.json()) as typeof body;
@@ -172,7 +180,7 @@ function isHttpUrl(value: string | null | undefined): value is string {
   }
 }
 
-const usePublicReaderStyles = createStyles(({token}) => ({
+const usePublicReaderStyles = createStyles(({ token }) => ({
   headerButton: {
     width: 32,
     height: 32,
@@ -220,8 +228,8 @@ export interface PublicReaderProps {
  * hand-injected heading ids, no risk of the DOM positions drifting between
  * server and client renders.
  */
-export function PublicReader({slug, content, snapshotHtml}: PublicReaderProps) {
-  const {styles} = usePublicReaderStyles();
+export function PublicReader({ slug, content, snapshotHtml }: PublicReaderProps) {
+  const { styles } = usePublicReaderStyles();
   const rewritten = useMemo(() => rewriteAssetLinks(content), [content]);
 
   const [toc, setToc] = useState<PublicTocItem[]>([]);
@@ -251,13 +259,13 @@ export function PublicReader({slug, content, snapshotHtml}: PublicReaderProps) {
   const [clientReady, setClientReady] = useState(false);
   const [transitionsEnabled, setTransitionsEnabled] = useState(false);
 
-  const {data: presence} = useRequest(
+  const { data: presence } = useRequest(
     async (): Promise<PresenceResult> => {
       const identity = await getPresenceIdentity();
       const response = await fetch(`/p/${encodeURIComponent(slug)}/presence`, {
         method: "POST",
         credentials: "include",
-        headers: {"Content-Type": "application/json"},
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           visitorId: getOrCreateVisitorId(),
           userId: identity?.userId ?? null,
@@ -298,10 +306,10 @@ export function PublicReader({slug, content, snapshotHtml}: PublicReaderProps) {
       try {
         const response = await fetch(`/p/${encodeURIComponent(slug)}/comments`, {
           credentials: "include",
-          headers: {Accept: "application/json"},
+          headers: { Accept: "application/json" },
         });
         if (!response.ok) throw new Error("COMMENTS_UNAVAILABLE");
-        const body = (await response.json()) as {comments?: PublicComment[]};
+        const body = (await response.json()) as { comments?: PublicComment[] };
         if (!cancelled) setComments(body.comments ?? []);
       } catch {
         // Leave the section empty rather than crashing the reader.
@@ -327,7 +335,7 @@ export function PublicReader({slug, content, snapshotHtml}: PublicReaderProps) {
       const response = await fetch("/api/v1/comments", {
         method: "POST",
         credentials: "include",
-        headers: {"Content-Type": "application/json"},
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           publishId: content.publishId,
           releaseId: content.releaseId,
@@ -339,7 +347,7 @@ export function PublicReader({slug, content, snapshotHtml}: PublicReaderProps) {
         return;
       }
       if (!response.ok) throw new Error("COMMENT_FAILED");
-      const body = (await response.json()) as {comment: PublicComment};
+      const body = (await response.json()) as { comment: PublicComment };
       setComments((current) => [...current, body.comment]);
       setCommentText("");
     } catch {
@@ -433,10 +441,7 @@ export function PublicReader({slug, content, snapshotHtml}: PublicReaderProps) {
     const viewportRect = contentViewport.getBoundingClientRect();
     headingOffsetsRef.current = headings.map((element, index) => ({
       id: element.id || String(index),
-      top:
-        element.getBoundingClientRect().top -
-        viewportRect.top +
-        contentViewport.scrollTop,
+      top: element.getBoundingClientRect().top - viewportRect.top + contentViewport.scrollTop,
     }));
   }, [contentViewport]);
 
@@ -498,10 +503,10 @@ export function PublicReader({slug, content, snapshotHtml}: PublicReaderProps) {
     const onKeyDown = (event: KeyboardEvent) => {
       if (SCROLL_KEYS.has(event.key)) userScrollIntentRef.current = true;
     };
-    contentViewport.addEventListener("scroll", onContentScroll, {passive: true});
-    contentViewport.addEventListener("wheel", onUserScrollIntent, {passive: true});
-    contentViewport.addEventListener("touchmove", onUserScrollIntent, {passive: true});
-    contentViewport.addEventListener("pointermove", onUserScrollIntent, {passive: true});
+    contentViewport.addEventListener("scroll", onContentScroll, { passive: true });
+    contentViewport.addEventListener("wheel", onUserScrollIntent, { passive: true });
+    contentViewport.addEventListener("touchmove", onUserScrollIntent, { passive: true });
+    contentViewport.addEventListener("pointermove", onUserScrollIntent, { passive: true });
     contentViewport.addEventListener("keydown", onKeyDown);
     const resizeObserver =
       typeof ResizeObserver === "undefined" ? null : new ResizeObserver(scheduleMeasure);
@@ -565,7 +570,7 @@ export function PublicReader({slug, content, snapshotHtml}: PublicReaderProps) {
       navigationTargetIdRef.current = target.id;
       userScrollIntentRef.current = false;
       commitActiveToc(target.id);
-      target.scrollIntoView({behavior: "auto", block: "start"});
+      target.scrollIntoView({ behavior: "auto", block: "start" });
     }
   }, [commitActiveToc, toc]);
 
@@ -578,7 +583,7 @@ export function PublicReader({slug, content, snapshotHtml}: PublicReaderProps) {
     navigationTargetIdRef.current = item.id;
     userScrollIntentRef.current = false;
     commitActiveToc(item.id);
-    target.scrollIntoView({behavior: "smooth", block: "start"});
+    target.scrollIntoView({ behavior: "smooth", block: "start" });
     try {
       window.history.replaceState(null, "", `#${encodeURIComponent(item.id)}`);
     } catch {
@@ -603,32 +608,32 @@ export function PublicReader({slug, content, snapshotHtml}: PublicReaderProps) {
   };
 
   const moreMenuItems = useMemo<MenuProps["items"]>(
-  () => [
-    {
-      key: "copy",
-      icon: <Copy size={15}/>,
-      label: "复制链接",
-      onMouseEnter: () => setWidthSubmenuOpen(false),
-    },
-    {
-      key: "toggle-comments",
-      icon: <MessageSquare size={15}/>,
-      label: commentsOpen ? "隐藏评论" : "显示评论",
-      onMouseEnter: () => setWidthSubmenuOpen(false),
-    },
-    {
-      key: "width",
-      className: widthSubmenuOpen ? "is-active" : undefined,
-      icon: <AlignJustify size={15}/>,
-      label: "页宽设置",
-      extra: <ChevronRight size={15}/>,
-      onMouseEnter: () => setWidthSubmenuOpen(true),
-    },
-  ],
-  [widthSubmenuOpen, commentsOpen],
-);
+    () => [
+      {
+        key: "copy",
+        icon: <Copy size={15} />,
+        label: "复制链接",
+        onMouseEnter: () => setWidthSubmenuOpen(false),
+      },
+      {
+        key: "toggle-comments",
+        icon: <MessageSquare size={15} />,
+        label: commentsOpen ? "隐藏评论" : "显示评论",
+        onMouseEnter: () => setWidthSubmenuOpen(false),
+      },
+      {
+        key: "width",
+        className: widthSubmenuOpen ? "is-active" : undefined,
+        icon: <AlignJustify size={15} />,
+        label: "页宽设置",
+        extra: <ChevronRight size={15} />,
+        onMouseEnter: () => setWidthSubmenuOpen(true),
+      },
+    ],
+    [widthSubmenuOpen, commentsOpen],
+  );
 
-  const handleMoreMenuClick: MenuProps["onClick"] = ({key}) => {
+  const handleMoreMenuClick: MenuProps["onClick"] = ({ key }) => {
     if (key === "toggle-comments") {
       setCommentsOpen((open) => !open);
       setWidthMenuOpen(false);
@@ -686,8 +691,8 @@ export function PublicReader({slug, content, snapshotHtml}: PublicReaderProps) {
               suppressHydrationWarning
               icon={
                 <span className="sg-public-toc-toggle-icons" aria-hidden="true">
-                  <Menu className="sg-public-toc-toggle-menu-icon" size={18}/>
-                  <AlignLeft className="sg-public-toc-toggle-close-icon" size={18}/>
+                  <Menu className="sg-public-toc-toggle-menu-icon" size={18} />
+                  <AlignLeft className="sg-public-toc-toggle-close-icon" size={18} />
                 </span>
               }
             />
@@ -706,7 +711,7 @@ export function PublicReader({slug, content, snapshotHtml}: PublicReaderProps) {
                   <span
                     key={viewer.visitorKey}
                     className="sg-public-viewer-avatar-wrap"
-                    style={{zIndex: visibleViewers.length - index}}
+                    style={{ zIndex: visibleViewers.length - index }}
                   >
                     <Avatar className={styles.viewerAvatar} src={viewer.avatarUrl ?? undefined}>
                       {initial}
@@ -722,7 +727,7 @@ export function PublicReader({slug, content, snapshotHtml}: PublicReaderProps) {
             </div>
           ) : null}
           <span className="sg-public-visitor-count">
-            <Eye size={15}/>
+            <Eye size={15} />
             <span>{visitorCount}</span>
             <span className="sg-public-visitor-label">浏览人数</span>
           </span>
@@ -731,7 +736,7 @@ export function PublicReader({slug, content, snapshotHtml}: PublicReaderProps) {
               content.visibility === "public" ? "is-public" : "is-private"
             }`}
           >
-            {content.visibility === "public" ? <Globe2 size={13}/> : <LockKeyhole size={13}/>}
+            {content.visibility === "public" ? <Globe2 size={13} /> : <LockKeyhole size={13} />}
             {content.visibility === "public" ? "公开" : "私有"}
           </span>
           <fieldset
@@ -761,7 +766,7 @@ export function PublicReader({slug, content, snapshotHtml}: PublicReaderProps) {
               aria-label="更多操作"
               aria-expanded={widthMenuOpen}
               aria-haspopup="menu"
-              icon={<MoreHorizontal size={18}/>}
+              icon={<MoreHorizontal size={18} />}
             />
             {widthMenuOpen ? (
               <div className="sg-public-width-popover" role="menu" aria-label="更多操作">
@@ -774,14 +779,14 @@ export function PublicReader({slug, content, snapshotHtml}: PublicReaderProps) {
                 {widthSubmenuOpen ? (
                   <div className="sg-public-width-subpopover" role="menu" aria-label="页宽设置">
                     <p className="sg-public-width-subtitle">
-                      为当前窗口选择合适页宽 <HelpCircle size={14} aria-hidden="true"/>
+                      为当前窗口选择合适页宽 <HelpCircle size={14} aria-hidden="true" />
                     </p>
                     <div className="sg-public-width-options">
                       {(
                         [
-                          ["default", "默认", <AlignJustify key="default" size={15}/>],
-                          ["wide", "较宽", <StretchHorizontal key="wide" size={15}/>],
-                          ["full", "全宽", <Maximize2 key="full" size={15}/>],
+                          ["default", "默认", <AlignJustify key="default" size={15} />],
+                          ["wide", "较宽", <StretchHorizontal key="wide" size={15} />],
+                          ["full", "全宽", <Maximize2 key="full" size={15} />],
                         ] as const
                       ).map(([mode, label, icon]) => (
                         <button
@@ -820,15 +825,11 @@ export function PublicReader({slug, content, snapshotHtml}: PublicReaderProps) {
         </div>
       </header>
       <div className="sg-public-layout">
-        <SeoSnapshot title={content.title} html={snapshotHtml}/>
+        <SeoSnapshot title={content.title} html={snapshotHtml} />
         {clientReady && isClient() ? (
           <>
             <div className="sg-public-toc-container">
-              <aside
-                className="sg-public-toc-panel"
-                aria-label="文档目录"
-                aria-hidden={!tocOpen}
-              >
+              <aside className="sg-public-toc-panel" aria-label="文档目录" aria-hidden={!tocOpen}>
                 <Scrollbar ref={setTocViewport} className="sg-public-toc" scrollX={false}>
                   {toc.length > 0 ? (
                     <nav>
@@ -867,7 +868,7 @@ export function PublicReader({slug, content, snapshotHtml}: PublicReaderProps) {
                   onContextMenu={content.allowCopy ? undefined : (event) => event.preventDefault()}
                 >
                   <article className="sg-public-content">
-                    <InteractiveMarkdown source={rewritten}/>
+                    <InteractiveMarkdown source={rewritten} />
                     <footer className="sg-public-footer">由 知序 发布 · 内容可追溯</footer>
                   </article>
                 </main>
@@ -889,7 +890,7 @@ export function PublicReader({slug, content, snapshotHtml}: PublicReaderProps) {
             </div>
           </>
         ) : (
-          <PublicReaderSkeleton/>
+          <PublicReaderSkeleton />
         )}
       </div>
     </div>
@@ -929,11 +930,11 @@ function PublicComments({
       <Scrollbar className="sg-public-comments-scroll" scrollX={false}>
         {loading ? (
           <div className="sg-public-comments-loading">
-            <Skeleton active paragraph={{rows: 4}} title={false}/>
+            <Skeleton active paragraph={{ rows: 4 }} title={false} />
           </div>
         ) : comments.length === 0 ? (
           <div className="sg-public-comments-empty">
-            <Empty title="还没有评论" hint="成为第一个发表看法的人"/>
+            <Empty title="还没有评论" hint="成为第一个发表看法的人" />
           </div>
         ) : (
           <ul className="sg-public-comment-list">
@@ -942,7 +943,7 @@ function PublicComments({
                 <div className="sg-public-comment-meta">
                   <strong>{comment.authorName}</strong>
                   <time dateTime={comment.createdAt}>
-                    {new Date(comment.createdAt).toLocaleString("zh-CN", {hour12: false})}
+                    {new Date(comment.createdAt).toLocaleString("zh-CN", { hour12: false })}
                   </time>
                 </div>
                 <p className="sg-public-comment-body">{comment.content}</p>
@@ -988,7 +989,7 @@ function PublicComments({
 function PublicReaderSkeleton() {
   return (
     <main className="sg-public-content sg-public-content-skeleton" aria-hidden="true">
-      <Skeleton active title={{width: "42%"}} paragraph={{rows: 12}}/>
+      <Skeleton active title={{ width: "42%" }} paragraph={{ rows: 12 }} />
     </main>
   );
 }

@@ -46,11 +46,16 @@ export function registerKnowledge(app: FastifyInstance): void {
       const part = await req.file();
       if (!part) throw badRequest("FILE_REQUIRED", "请上传文件");
       const buffer = Buffer.from(await part.toBuffer());
+      const usage = await ctx.store.getStorageUsage(req.actor.workspaceId);
+      if (usage.usedBytes + buffer.byteLength > usage.quotaBytes) {
+        throw badRequest("STORAGE_QUOTA_EXCEEDED", "工作区存储空间已达上限");
+      }
       const hash = hashBuffer(buffer);
       const objectKey = `knowledge-sources/${req.actor.workspaceId}/${kbId}/${Date.now()}-${part.filename}`;
       await ctx.storage.put(objectKey, buffer, part.mimetype);
       const source = await ctx.store.addKnowledgeSource(req.actor.workspaceId, kbId, {
         sourceType: "upload",
+        objectKey,
         title: part.filename,
         contentHash: hash,
       });
@@ -93,6 +98,7 @@ export function registerKnowledge(app: FastifyInstance): void {
       const source = await ctx.store.addKnowledgeSource(req.actor.workspaceId, kbId, {
         sourceType: "asset",
         assetVersionId: asset.currentVersionId,
+        objectKey,
         title: body.title ?? asset.title,
         contentHash: hashBuffer(Buffer.from(text, "utf8")),
       });
@@ -153,6 +159,8 @@ export function registerKnowledge(app: FastifyInstance): void {
 
   app.post("/api/v1/knowledge-bases/:id/sources/:sid/retry", async (req) => {
     const { id: kbId, sid } = req.params as { id: string; sid: string };
+    const kb = await ctx.store.getKnowledgeBase(req.actor.workspaceId, kbId);
+    if (!kb) throw notFound("知识库");
     const source = await ctx.store.retryKnowledgeSource(kbId, sid);
     if (!source) throw notFound("知识库来源");
     await ctx.bus.emit({
@@ -164,13 +172,22 @@ export function registerKnowledge(app: FastifyInstance): void {
       tenantId: req.actor.workspaceId,
       aggregate: { type: "knowledge_source", id: sid, version: source.retryCount + 1 },
       trace: {},
-      data: { sourceId: sid, kbId },
+      data: {
+        sourceId: sid,
+        kbId,
+        ...(source.objectKey ? { objectKey: source.objectKey } : {}),
+        ...(source.url ? { url: source.url } : {}),
+        fileName: source.title,
+        contentHash: source.contentHash,
+      },
     });
     return source;
   });
 
   app.delete("/api/v1/knowledge-bases/:id/sources/:sid", async (req, reply) => {
     const { id: kbId, sid } = req.params as { id: string; sid: string };
+    const kb = await ctx.store.getKnowledgeBase(req.actor.workspaceId, kbId);
+    if (!kb) throw notFound("知识库");
     await ctx.store.removeKnowledgeSource(kbId, sid);
     return reply.code(204).send();
   });
@@ -182,7 +199,14 @@ export function registerKnowledge(app: FastifyInstance): void {
       .parse(req.body);
     const kb = await ctx.store.getKnowledgeBase(req.actor.workspaceId, kbId);
     if (!kb) throw notFound("知识库");
-    return await ctx.store.searchChunks(kbId, body.query, body.limit);
+    let embedding: number[] | undefined;
+    try {
+      const embeddings = await ctx.ai.embed(body.query);
+      if (embeddings.length > 0) embedding = embeddings[0];
+    } catch {
+      // Graceful fallback to keyword search
+    }
+    return await ctx.store.searchChunks(kbId, body.query, body.limit, embedding);
   });
 
   app.post("/api/v1/knowledge-bases/:id/ask", async (req) => {
@@ -192,7 +216,14 @@ export function registerKnowledge(app: FastifyInstance): void {
       .parse(req.body);
     const kb = await ctx.store.getKnowledgeBase(req.actor.workspaceId, kbId);
     if (!kb) throw notFound("知识库");
-    const results = await ctx.store.searchChunks(kbId, body.query, body.topK);
+    let embedding: number[] | undefined;
+    try {
+      const embeddings = await ctx.ai.embed(body.query);
+      if (embeddings.length > 0) embedding = embeddings[0];
+    } catch {
+      // Graceful fallback
+    }
+    const results = await ctx.store.searchChunks(kbId, body.query, body.topK, embedding);
     const context = results
       .map((r, i) => `CHUNK ${i + 1}:\n来源：${r.source.title}\n${r.chunk.text}`)
       .join("\n\n");
@@ -217,7 +248,17 @@ export function registerKnowledge(app: FastifyInstance): void {
         .trim()
         .replace(/^```(?:json)?\s*/i, "")
         .replace(/\s*```$/, "");
-      parsed = JSON.parse(raw) as typeof parsed;
+      const askAnswerSchema = z.object({
+        answer: z.string(),
+        citations: z.array(z.coerce.number()).default([]),
+        insufficient: z.boolean().optional(),
+      });
+      const validated = askAnswerSchema.safeParse(JSON.parse(raw));
+      if (validated.success) {
+        parsed = validated.data;
+      } else {
+        parsed.answer = res.text;
+      }
     } catch {
       parsed.answer = res.text;
     }
@@ -254,6 +295,8 @@ export function registerKnowledge(app: FastifyInstance): void {
 
   app.get("/api/v1/knowledge-bases/:id/sources/:sid/chunks", async (req) => {
     const { id: kbId, sid } = req.params as { id: string; sid: string };
+    const kb = await ctx.store.getKnowledgeBase(req.actor.workspaceId, kbId);
+    if (!kb) throw notFound("知识库");
     return await ctx.store.listChunksBySource(kbId, sid);
   });
 }

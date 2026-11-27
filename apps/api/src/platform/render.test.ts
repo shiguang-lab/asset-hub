@@ -46,10 +46,12 @@ describe("injectPublishDownloadActions", () => {
   });
 
   it("keeps presentation download links hidden for the embedded player", () => {
-    const html = injectPublishDownloadActions("<html><body>演示</body></html>", [
-      { label: "下载演示", href: "/s/demo/download" },
-    ], { presentation: true });
-    expect(html).toContain('data-sg-player-downloads hidden');
+    const html = injectPublishDownloadActions(
+      "<html><body>演示</body></html>",
+      [{ label: "下载演示", href: "/s/demo/download" }],
+      { presentation: true },
+    );
+    expect(html).toContain("data-sg-player-downloads hidden");
     expect(html).toContain('class="sg-publish-download"');
     expect(html).not.toContain("position:fixed; right:20px; top:20px");
   });

@@ -21,6 +21,10 @@ export function registerDatasets(app: FastifyInstance): void {
     const buffer = Buffer.from(await part.toBuffer());
     if (buffer.byteLength > 50 * 1024 * 1024)
       throw badRequest("FILE_TOO_LARGE", "文件不能超过 50MB");
+    const usage = await ctx.store.getStorageUsage(req.actor.workspaceId);
+    if (usage.usedBytes + buffer.byteLength > usage.quotaBytes) {
+      throw badRequest("STORAGE_QUOTA_EXCEEDED", "工作区存储空间已达上限");
+    }
     const fileName = part.filename;
     const nameField = Array.isArray(part.fields.name) ? part.fields.name[0] : part.fields.name;
     const descField = Array.isArray(part.fields.description)
@@ -117,8 +121,31 @@ export function registerDatasets(app: FastifyInstance): void {
     return result;
   });
 
+  app.patch("/api/v1/datasets/:id", async (req) => {
+    const { id } = req.params as { id: string };
+    const body = z
+      .object({
+        name: z.string().trim().min(1).max(120).optional(),
+        description: z.string().max(1000).optional(),
+      })
+      .parse(req.body);
+    const updated = await ctx.store.updateDataset(req.actor.workspaceId, id, body);
+    if (!updated) throw notFound("数据集");
+    return updated;
+  });
+
+  app.delete("/api/v1/datasets/:id", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const dataset = await ctx.store.getDataset(req.actor.workspaceId, id);
+    if (!dataset) throw notFound("数据集");
+    await ctx.store.deleteDataset(req.actor.workspaceId, id);
+    return reply.code(204).send();
+  });
+
   app.post("/api/v1/datasets/:id/views", async (req) => {
     const { id } = req.params as { id: string };
+    const dataset = await ctx.store.getDataset(req.actor.workspaceId, id);
+    if (!dataset) throw notFound("数据集");
     const body = z
       .object({ name: z.string().min(1).max(80), query: datasetQuerySchema })
       .parse(req.body);
@@ -127,11 +154,23 @@ export function registerDatasets(app: FastifyInstance): void {
 
   app.get("/api/v1/datasets/:id/views", async (req) => {
     const { id } = req.params as { id: string };
+    const dataset = await ctx.store.getDataset(req.actor.workspaceId, id);
+    if (!dataset) throw notFound("数据集");
     return await ctx.store.listSavedViews(id);
+  });
+
+  app.delete("/api/v1/datasets/:id/views/:viewId", async (req, reply) => {
+    const { id, viewId } = req.params as { id: string; viewId: string };
+    const dataset = await ctx.store.getDataset(req.actor.workspaceId, id);
+    if (!dataset) throw notFound("数据集");
+    await ctx.store.deleteSavedView(req.actor.workspaceId, id, viewId);
+    return reply.code(204).send();
   });
 
   app.post("/api/v1/datasets/:id/charts", async (req) => {
     const { id } = req.params as { id: string };
+    const dataset = await ctx.store.getDataset(req.actor.workspaceId, id);
+    if (!dataset) throw notFound("数据集");
     const body = z
       .object({
         name: z.string().min(1),
@@ -154,7 +193,17 @@ export function registerDatasets(app: FastifyInstance): void {
 
   app.get("/api/v1/datasets/:id/charts", async (req) => {
     const { id } = req.params as { id: string };
+    const dataset = await ctx.store.getDataset(req.actor.workspaceId, id);
+    if (!dataset) throw notFound("数据集");
     return await ctx.store.listChartSpecs(id);
+  });
+
+  app.delete("/api/v1/datasets/:id/charts/:chartId", async (req, reply) => {
+    const { id, chartId } = req.params as { id: string; chartId: string };
+    const dataset = await ctx.store.getDataset(req.actor.workspaceId, id);
+    if (!dataset) throw notFound("数据集");
+    await ctx.store.deleteChartSpec(req.actor.workspaceId, id, chartId);
+    return reply.code(204).send();
   });
 
   app.post("/api/v1/datasets/:id/ai-insights", async (req) => {

@@ -110,7 +110,7 @@ export function PublishDialog({
   const [copied, setCopied] = useState(false);
   const [referenceConfirmOpen, setReferenceConfirmOpen] = useState(false);
   const [referenceDecision, setReferenceDecision] = useState<boolean | null>(null);
-  const lastSyncedPublishId = useRef<string | null>(null);
+  const lastSyncedKey = useRef<string | null>(null);
 
   const { data: existingPublishes = [] } = useQuery<Publish[]>({
     queryKey: ["publishes", asset.id],
@@ -135,28 +135,27 @@ export function PublishDialog({
     void queryClient.invalidateQueries({ queryKey: ["asset", asset.id] });
   };
 
-  // Reset transient UI state when the dialog opens. The dialog is conditionally
-  // mounted by its parent, so this effectively runs once per open.
+  // Reset transient UI state when the dialog opens or targets another asset.
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      lastSyncedKey.current = null;
+      return;
+    }
     setActivePublish(null);
     setQrUrl("");
     setCopied(false);
     setReferenceConfirmOpen(false);
     setReferenceDecision(null);
-  }, [open]);
+  }, [asset.id, open]);
 
-  // Sync form fields once per publish identity (initial open, or when the query
-  // first resolves with a publish). Guarding by publish id means the refetch
-  // triggered after a create/update mutation — or any other background refetch
-  // of the same publish — will NOT clobber the user's in-progress edits. This
-  // effect also never resets activePublish/qrUrl/copied, so a freshly generated
-  // QR code survives those refetches.
+  // Sync form fields once per (asset, publish) identity so background refetches
+  // of the same publish do NOT clobber the user's in-progress edits, while switching
+  // assets cleanly re-syncs.
   useEffect(() => {
     if (!open) return;
-    const publishId = existingPublish?.id ?? null;
-    if (publishId === lastSyncedPublishId.current) return;
-    lastSyncedPublishId.current = publishId;
+    const syncKey = `${asset.id}:${existingPublish?.id ?? "draft"}`;
+    if (syncKey === lastSyncedKey.current) return;
+    lastSyncedKey.current = syncKey;
     if (existingPublish) {
       setVisibility(toShareVisibility(existingPublish.visibility));
       setPassword("");
@@ -169,7 +168,14 @@ export function PublishDialog({
       const draft = JSON.parse(
         window.localStorage.getItem(draftKey) ?? "null",
       ) as PublishDraft | null;
-      if (!draft) return;
+      if (!draft) {
+        setVisibility("public");
+        setPassword("");
+        setExpiresAt("");
+        setAllowDownload(true);
+        setAllowCopy(true);
+        return;
+      }
       setVisibility(draft.visibility);
       setPassword(draft.password);
       setExpiresAt(draft.expiresAt);
@@ -178,7 +184,7 @@ export function PublishDialog({
     } catch {
       window.localStorage.removeItem(draftKey);
     }
-  }, [draftKey, existingPublish, open]);
+  }, [asset.id, draftKey, existingPublish, open]);
 
   useEffect(() => {
     if (!shareUrl) {

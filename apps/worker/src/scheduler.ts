@@ -5,6 +5,7 @@ interface DueSchedule {
   id: string;
   workspaceId: string;
   name: string;
+  taskType?: string;
   goal: string;
   spec: Record<string, unknown>;
 }
@@ -39,7 +40,7 @@ export class Scheduler {
         );
         await this.api.postInternal("/internal/v1/tasks:create", {
           workspaceId: schedule.workspaceId,
-          type: "research",
+          type: schedule.taskType || "research",
           goal: schedule.goal,
           spec: schedule.spec,
         });

@@ -49,23 +49,23 @@ func ChunkText(text string, chunkSize int) []Chunk {
 		if body == "" {
 			continue
 		}
+		runes := []rune(body)
 		cursor := 0
-		for cursor < len(body) {
+		for cursor < len(runes) {
 			end := cursor + chunkSize
-			if end > len(body) {
-				end = len(body)
+			if end > len(runes) {
+				end = len(runes)
 			}
 			cut := end
-			if end < len(body) {
-				nl := strings.LastIndex(body[:end], "\n")
-				dot := strings.LastIndex(body[:end], "。")
-				if nl > cursor+chunkSize/2 {
-					cut = nl + 1
-				} else if dot > cursor+chunkSize/2 {
-					cut = dot + 1
+			if end < len(runes) {
+				for idx := end - 1; idx > cursor+chunkSize/2; idx-- {
+					if runes[idx] == '\n' || runes[idx] == '。' {
+						cut = idx + 1
+						break
+					}
 				}
 			}
-			piece := strings.TrimSpace(body[cursor:cut])
+			piece := strings.TrimSpace(string(runes[cursor:cut]))
 			if piece != "" {
 				chunks = append(chunks, Chunk{
 					Ordinal:     ordinal,
@@ -76,7 +76,7 @@ func ChunkText(text string, chunkSize int) []Chunk {
 				})
 				ordinal++
 			}
-			if cut >= len(body) {
+			if cut >= len(runes) {
 				break
 			}
 			next := cut - overlap
@@ -162,7 +162,7 @@ func stripHTML(html string) string {
 	for i := 0; i < len(html); i++ {
 		c := html[i]
 		if inScript > 0 {
-			if strings.HasPrefix(html[i:], "</script") {
+			if strings.HasPrefix(strings.ToLower(html[i:]), "</script") {
 				inScript = 0
 				inTag = true
 			}
@@ -207,15 +207,19 @@ func regexReplace(s, pattern, replacement string) string {
 	case `!\[([^\]]*)\]\([^)]*\)`:
 		if i := strings.Index(s, "!["); i >= 0 {
 			if j := strings.Index(s[i:], "]("); j >= 0 {
-				text := s[i+2 : i+j]
-				return strings.TrimSpace(text)
+				if k := strings.Index(s[i+j+2:], ")"); k >= 0 {
+					text := s[i+2 : i+j]
+					return strings.TrimSpace(s[:i] + text + s[i+j+2+k+1:])
+				}
 			}
 		}
 	case `\[([^\]]*)\]\([^)]*\)`:
 		if i := strings.Index(s, "["); i >= 0 {
 			if j := strings.Index(s[i:], "]("); j >= 0 {
-				text := s[i+1 : i+j]
-				return strings.TrimSpace(text)
+				if k := strings.Index(s[i+j+2:], ")"); k >= 0 {
+					text := s[i+1 : i+j]
+					return strings.TrimSpace(s[:i] + text + s[i+j+2+k+1:])
+				}
 			}
 		}
 	}
@@ -436,6 +440,30 @@ func ExecuteQuery(rows []Row, selectCols []string, filters []Filter, sortCols []
 			}
 			outRows = append(outRows, out)
 		}
+		if len(sortCols) > 0 {
+			sort.SliceStable(outRows, func(i, j int) bool {
+				for _, s := range sortCols {
+					cmp := compare(outRows[i][s.Column], outRows[j][s.Column])
+					if cmp != 0 {
+						if s.Direction == "desc" {
+							return cmp > 0
+						}
+						return cmp < 0
+					}
+				}
+				return false
+			})
+		}
+		total = len(outRows)
+		start := offset
+		end := offset + limit
+		if start > len(outRows) {
+			start = len(outRows)
+		}
+		if end > len(outRows) {
+			end = len(outRows)
+		}
+		outRows = outRows[start:end]
 	} else {
 		start := offset
 		end := offset + limit

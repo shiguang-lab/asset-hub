@@ -125,6 +125,8 @@ export class IdentityService {
     await this.store.touchApiToken(apiToken.id);
     const workspace = await this.store.getWorkspace(apiToken.workspaceId);
     if (!workspace) throw unauthorized("API Token 所属空间不存在");
+    const tokenOwnerSubject =
+      apiToken.createdBy ?? (workspace.type === "personal" ? workspace.ownerSubject : undefined);
     return {
       // A token is a distinct service principal. Sharing one synthetic subject
       // would make assets and tasks created by different tokens appear to have
@@ -136,6 +138,7 @@ export class IdentityService {
       requestId,
       isService: false,
       tokenScopes: apiToken.scopes,
+      ...(tokenOwnerSubject ? { tokenOwnerSubject } : {}),
     };
   }
 

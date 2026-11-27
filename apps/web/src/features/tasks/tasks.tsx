@@ -1,4 +1,4 @@
-import { Avatar, Empty, Loading, Scrollbar, StatusBadge, useToast } from "@shiguang/ui";
+import { Empty, Loading, Scrollbar, StatusBadge, useToast } from "@shiguang/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button, Input, Modal, Select, Switch } from "antd";
 import { createStyles } from "antd-style";
@@ -11,7 +11,6 @@ import {
   Check,
   CheckCircle2,
   ChevronDown,
-  ChevronLeft,
   ChevronRight,
   Circle,
   Clock3,
@@ -22,7 +21,6 @@ import {
   FileSpreadsheet,
   FileText,
   FolderSearch,
-  Gauge,
   Globe2,
   LayoutDashboard,
   Lightbulb,
@@ -41,7 +39,6 @@ import {
   Search,
   Share2,
   ShieldCheck,
-  Sparkles,
   Target,
   Trash2,
   TrendingUp,
@@ -53,8 +50,10 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { type Asset, api, downloadFile, type Task } from "../../entities/api.js";
+import { getAuthSession } from "../../auth/session.js";
+import { type Asset, api, downloadFile, type Notification, type Task } from "../../entities/api.js";
 import { AppTabs } from "../../shared/AppTabs.js";
+import { DocumentMarkdown } from "../../shared/document-markdown.js";
 import { useShellBreadcrumb } from "../../shell/layout.js";
 
 const ACTIVE_STATUSES = ["created", "planning", "queued", "running", "waiting_user", "paused"];
@@ -104,48 +103,6 @@ const useTaskWidthStyles = createStyles((_utils, props: { value: number }) => ({
 function TaskWidthFill({ value, as = "i" }: { value: number; as?: "i" | "b" }) {
   const { styles } = useTaskWidthStyles({ value });
   return as === "b" ? <b className={styles.fill} /> : <i className={styles.fill} />;
-}
-
-const useTaskHeightStyles = createStyles((_utils, props: { value: number }) => ({
-  fill: {
-    height: `${props.value}%`,
-  },
-}));
-
-function TaskHeightFill({ value, children }: { value: number; children?: React.ReactNode }) {
-  const { styles } = useTaskHeightStyles({ value });
-  return <i className={styles.fill}>{children}</i>;
-}
-
-const useTaskPointStyles = createStyles((_utils, props: { bottom: number; left: number }) => ({
-  point: {
-    bottom: `${props.bottom}px`,
-    left: `${props.left}%`,
-  },
-}));
-
-function TaskPoint({
-  bottom,
-  left,
-  children,
-}: {
-  bottom: number;
-  left: number;
-  children: React.ReactNode;
-}) {
-  const { styles } = useTaskPointStyles({ bottom, left });
-  return <i className={styles.point}>{children}</i>;
-}
-
-const useTaskRingStyles = createStyles((_utils, props: { progress: number }) => ({
-  ring: {
-    background: `conic-gradient(#7758dd ${props.progress}deg, #e1dceb 0) !important`,
-  },
-}));
-
-function TaskRing({ progress, children }: { progress: number; children: React.ReactNode }) {
-  const { styles } = useTaskRingStyles({ progress });
-  return <i className={styles.ring}>{children}</i>;
 }
 
 const useTaskZoomStyles = createStyles((_utils, props: { scale: number }) => ({
@@ -275,6 +232,10 @@ export function TasksPage() {
     queryKey: ["schedules"],
     queryFn: () => api("/task-schedules"),
   });
+  const { data: notifications = [] } = useQuery<Notification[]>({
+    queryKey: ["notifications"],
+    queryFn: () => api<Notification[]>("/notifications"),
+  });
   const createSchedule = useMutation({
     mutationFn: () =>
       api("/task-schedules", {
@@ -321,6 +282,10 @@ export function TasksPage() {
           <h1>任务中心</h1>
           <p>交给 AI 的复杂工作会在这里持续执行，你可以随时离开</p>
         </div>
+        <Button type="primary" onClick={() => navigate("/tasks/new")}>
+          <Plus size={14} />
+          新建任务
+        </Button>
       </div>
       <div className="sg-task-center-layout">
         <main className="sg-task-center-main">
@@ -388,7 +353,7 @@ export function TasksPage() {
               <div className="sg-task-empty">
                 <ListChecks size={34} />
                 <strong>没有匹配的任务</strong>
-                <span>调整筛选条件，或通过 Header 右侧创建新任务。</span>
+                <span>调整筛选条件，或点击右上角“新建任务”创建。</span>
               </div>
             ) : (
               visibleTasks.map((task) => {
@@ -520,9 +485,7 @@ export function TasksPage() {
           <section className="sg-task-side-card sg-task-overview-card">
             <div className="sg-task-side-title">
               <h2>任务概览</h2>
-              <span>
-                今天 <ChevronDown size={13} />
-              </span>
+              <span>实时统计</span>
             </div>
             <div className="sg-task-overview-grid">
               <div>
@@ -588,43 +551,41 @@ export function TasksPage() {
               </button>
             </div>
             <ul className="sg-task-notice-list">
-              {tasks.slice(0, 3).map((task, index) => (
-                <li key={task.id}>
-                  <i className={index === 1 ? "red" : index === 2 ? "blue" : "green"} />
-                  <span>
-                    任务“{taskTitle(task)}”
-                    {ACTIVE_STATUSES.includes(task.status) ? "正在执行" : STATUS_LABEL[task.status]}
-                  </span>
-                  <time>{index + 1} 小时前</time>
+              {notifications.length === 0 ? (
+                <li>
+                  <i className="blue" />
+                  <span>暂无系统通知</span>
                 </li>
-              ))}
+              ) : (
+                notifications.slice(0, 3).map((item) => (
+                  <li key={item.id}>
+                    <i className={item.readAt ? "blue" : "green"} />
+                    <span>{item.title}</span>
+                    <time>{shortDate(item.createdAt)}</time>
+                  </li>
+                ))
+              )}
             </ul>
           </section>
           <section className="sg-task-side-card sg-task-settings-card">
             <div className="sg-task-side-title">
               <h2>任务设置</h2>
+              <button type="button" onClick={() => navigate("/profile")}>
+                通知偏好
+              </button>
             </div>
             <dl>
               <div>
-                <dt>并发任务数</dt>
-                <dd>3 个</dd>
+                <dt>当前执行中</dt>
+                <dd>{counts.active} 个</dd>
               </div>
               <div>
-                <dt>默认执行模式</dt>
-                <dd>标准模式</dd>
+                <dt>定时任务</dt>
+                <dd>{schedules?.length ?? 0} 个</dd>
               </div>
               <div>
-                <dt>失败重试次数</dt>
-                <dd>2 次</dd>
-              </div>
-              <div>
-                <dt>任务完成通知</dt>
-                <dd>
-                  <Switch
-                    checked={true}
-                    onChange={() => toast("info", "通知设置可在设置中心修改")}
-                  />
-                </dd>
+                <dt>累计成功率</dt>
+                <dd>{successRate}%</dd>
               </div>
             </dl>
             <button
@@ -738,10 +699,31 @@ export function TaskNewPage() {
   const [depth, setDepth] = useState("standard");
   const [quality, setQuality] = useState("balanced");
   const [notify, setNotify] = useState(true);
+  const [resourceQuery, setResourceQuery] = useState("");
   const { data: assets } = useQuery<{ items: Asset[] }>({
     queryKey: ["assets", "task-new"],
     queryFn: () => api("/assets", { params: { limit: 30 } }),
     enabled: step >= 2,
+  });
+  const optimizeDescription = useMutation({
+    mutationFn: () =>
+      api<{ items: Array<{ id: string; label: string; enabled: boolean }> }>(
+        "/research/specs:preview",
+        { method: "POST", body: { goal: description.trim(), region } },
+      ),
+    onSuccess: (res) => {
+      const enabledLabels = res.items.filter((i) => i.enabled).map((i) => i.label);
+      if (enabledLabels.length > 0) {
+        setDescription(
+          (prev) =>
+            `${prev.trim().replace(/[。.]?$/, "")}。重点研究维度：${enabledLabels.join("、")}。`,
+        );
+        toast("success", "已生成结构化研究范围并补充至描述");
+      } else {
+        toast("info", "描述已较为完整");
+      }
+    },
+    onError: (err: Error) => toast("error", err.message),
   });
   const { data: history } = useQuery<{ items: Task[] }>({
     queryKey: ["tasks", "new-reference"],
@@ -825,19 +807,17 @@ export function TaskNewPage() {
                 <button
                   type="button"
                   className="sg-task-ai-optimize"
+                  disabled={optimizeDescription.isPending}
                   onClick={() => {
                     if (!description.trim()) {
                       toast("info", "请先输入任务描述");
                       return;
                     }
-                    setDescription(
-                      (value) =>
-                        `${value.replace(/[。.]?$/, "")}，请给出可核验的数据来源、关键结论和可执行建议。`,
-                    );
+                    optimizeDescription.mutate();
                   }}
                 >
                   <WandSparkles size={14} />
-                  使用 AI 优化描述
+                  {optimizeDescription.isPending ? "正在拆解优化…" : "使用 AI 优化描述"}
                 </button>
                 <div className="sg-task-new-two-col">
                   <div>
@@ -936,30 +916,40 @@ export function TaskNewPage() {
                 prefix={<Search size={15} />}
                 allowClear
                 aria-label="搜索可用资源"
+                value={resourceQuery}
+                onChange={(e) => setResourceQuery(e.target.value)}
               />
               <div className="sg-task-resource-list">
-                {(assets?.items ?? []).map((asset) => {
-                  const selected = resourceIds.includes(asset.id);
-                  return (
-                    <button
-                      type="button"
-                      key={asset.id}
-                      className={selected ? "selected" : ""}
-                      onClick={() => toggle(asset.id, resourceIds, setResourceIds)}
-                    >
-                      <span>
-                        <FileText size={17} />
-                      </span>
-                      <i>
-                        <b>{asset.title}</b>
-                        <small>
-                          {asset.type} · {asset.description || "暂无描述"}
-                        </small>
-                      </i>
-                      {selected ? <CheckCircle2 size={17} /> : <Circle size={17} />}
-                    </button>
-                  );
-                })}
+                {(assets?.items ?? [])
+                  .filter((asset) => {
+                    const q = resourceQuery.trim().toLowerCase();
+                    if (!q) return true;
+                    return `${asset.title} ${asset.type} ${asset.description ?? ""}`
+                      .toLowerCase()
+                      .includes(q);
+                  })
+                  .map((asset) => {
+                    const selected = resourceIds.includes(asset.id);
+                    return (
+                      <button
+                        type="button"
+                        key={asset.id}
+                        className={selected ? "selected" : ""}
+                        onClick={() => toggle(asset.id, resourceIds, setResourceIds)}
+                      >
+                        <span>
+                          <FileText size={17} />
+                        </span>
+                        <i>
+                          <b>{asset.title}</b>
+                          <small>
+                            {asset.type} · {asset.description || "暂无描述"}
+                          </small>
+                        </i>
+                        {selected ? <CheckCircle2 size={17} /> : <Circle size={17} />}
+                      </button>
+                    );
+                  })}
                 {(assets?.items.length ?? 0) === 0 && (
                   <Empty title="暂无可用资源" hint="可以跳过此步骤直接配置任务。" />
                 )}
@@ -1152,7 +1142,7 @@ export function TaskNewPage() {
                   <i>
                     <b>{template.name}</b>
                     <small>{template.hint}</small>
-                    <em>调研分析 · 642 次使用</em>
+                    <em>推荐模板</em>
                   </i>
                 </button>
               );
@@ -1162,26 +1152,32 @@ export function TaskNewPage() {
             <div className="sg-task-side-title">
               <h2>历史任务参考</h2>
             </div>
-            {(history?.items ?? []).slice(0, 3).map((task) => (
-              <button
-                type="button"
-                className="sg-task-history-item"
-                key={task.id}
-                onClick={() => {
-                  setName(taskTitle(task));
-                  setDescription(task.goal);
-                }}
-              >
-                <Avatar name="张伟" size={27} />
-                <span>
-                  <b>{taskTitle(task)}</b>
-                  <small>
-                    {STATUS_LABEL[task.status]} · {shortDate(task.updatedAt)}
-                  </small>
-                </span>
-                <StatusBadge status={task.status} />
-              </button>
-            ))}
+            {(history?.items ?? []).slice(0, 3).map((task) => {
+              const histMeta = taskMeta(task.type);
+              const HistIcon = histMeta.icon;
+              return (
+                <button
+                  type="button"
+                  className="sg-task-history-item"
+                  key={task.id}
+                  onClick={() => {
+                    setName(taskTitle(task));
+                    setDescription(task.goal);
+                  }}
+                >
+                  <span className={histMeta.tone}>
+                    <HistIcon size={15} />
+                  </span>
+                  <span>
+                    <b>{taskTitle(task)}</b>
+                    <small>
+                      {STATUS_LABEL[task.status]} · {shortDate(task.updatedAt)}
+                    </small>
+                  </span>
+                  <StatusBadge status={task.status} />
+                </button>
+              );
+            })}
           </section>
           <section className="sg-task-tip-card">
             <h2>
@@ -1358,13 +1354,23 @@ export function TaskDetailPage() {
             activeKey={tab}
             onChange={(key) => setTab(key as DetailTab)}
           />
-          {tab === "process" && <TaskProcess task={task} steps={steps} />}
-          {tab === "findings" && <TaskFindings task={task} evidence={evidence} />}
+          {tab === "process" && (
+            <TaskProcess
+              task={task}
+              steps={steps}
+              outputs={outputs}
+              onOpenPreview={() => setTab("preview")}
+            />
+          )}
+          {tab === "findings" && (
+            <TaskFindings task={task} evidence={evidence} onOpenSources={() => setTab("sources")} />
+          )}
           {tab === "preview" && (
             <TaskPreview
               task={task}
               outputs={outputs}
               onOpen={(asset) => openAsset(asset, navigate)}
+              onOpenReport={() => setTab("report")}
               onDownload={(asset) =>
                 void downloadFile(`/assets/${asset.id}/download`, asset.title).catch((error) =>
                   toast("error", error instanceof Error ? error.message : "下载失败"),
@@ -1376,9 +1382,13 @@ export function TaskDetailPage() {
           {tab === "report" && (
             <TaskReport
               task={task}
+              outputs={outputs}
               onDownload={() => {
                 const report = outputs.find(
-                  (asset) => asset.type === "report" || asset.type === "document",
+                  (asset) =>
+                    asset.type === "report" ||
+                    asset.type === "document" ||
+                    asset.type === "markdown",
                 );
                 if (!report) {
                   toast("info", "报告生成完成后即可下载");
@@ -1484,17 +1494,23 @@ export function TaskDetailPage() {
               </section>
               <section className="sg-task-side-card">
                 <div className="sg-task-side-title">
-                  <h2>参与团队</h2>
-                  <span>3 人</span>
+                  <h2>任务上下文</h2>
+                  <span>{outputs.length} 输出</span>
                 </div>
-                <div className="sg-task-team">
-                  <Avatar name="张伟" size={30} />
-                  <Avatar name="李然" size={30} />
-                  <Avatar name="周宁" size={30} />
-                  <button type="button" aria-label="添加成员">
-                    <Plus size={14} />
-                  </button>
-                </div>
+                <dl className="sg-task-info-list">
+                  <div>
+                    <dt>创建者</dt>
+                    <dd>{getAuthSession()?.displayName ?? "工作区成员"}</dd>
+                  </div>
+                  <div>
+                    <dt>关联资源</dt>
+                    <dd>{task.inputAssetIds?.length ?? 0} 个</dd>
+                  </div>
+                  <div>
+                    <dt>引用证据</dt>
+                    <dd>{evidence.length} 条</dd>
+                  </div>
+                </dl>
               </section>
               <section className="sg-task-side-card">
                 <div className="sg-task-side-title">
@@ -1540,7 +1556,85 @@ export function TaskDetailPage() {
   );
 }
 
-function TaskProcess({ task, steps }: { task: Task; steps: NonNullable<Task["steps"]> }) {
+function TaskProcess({
+  task,
+  steps,
+  outputs,
+  onOpenPreview,
+}: {
+  task: Task;
+  steps: NonNullable<Task["steps"]>;
+  outputs: Asset[];
+  onOpenPreview: () => void;
+}) {
+  const [liveLogs, setLiveLogs] = useState<Array<{ time: string; text: string }>>([]);
+  const [showAllLogs, setShowAllLogs] = useState(false);
+
+  useEffect(() => {
+    if (!ACTIVE_STATUSES.includes(task.status)) return;
+    const es = new EventSource(`/api/v1/tasks/${task.id}/stream`, { withCredentials: true });
+    const push = (label: string) => {
+      const now = new Date().toLocaleTimeString("zh-CN", {
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+      });
+      setLiveLogs((prev) => {
+        if (prev.at(-1)?.text === label) return prev;
+        return [...prev.slice(-30), { time: now, text: label }];
+      });
+    };
+    es.onmessage = (event) => {
+      try {
+        const parsed = JSON.parse(event.data) as {
+          currentStep?: string;
+          status?: string;
+          step?: string;
+        };
+        const msg = parsed.currentStep || parsed.step || parsed.status;
+        if (msg) push(msg);
+      } catch {
+        // ignore keepalive comments
+      }
+    };
+    es.onerror = () => {
+      es.close();
+    };
+    return () => es.close();
+  }, [task.id, task.status]);
+
+  const logEntries = useMemo(() => {
+    const items: Array<{ time: string; text: string; badge?: string; current?: boolean }> = [
+      { time: shortDate(task.createdAt), text: "任务已创建" },
+    ];
+    if (task.startedAt) {
+      items.push({ time: shortDate(task.startedAt), text: "开始执行任务" });
+    }
+    for (const s of steps) {
+      if (s.status === "pending") continue;
+      items.push({
+        time: shortDate(s.completedAt ?? s.startedAt ?? task.updatedAt),
+        text: `${s.detail || s.type}（${
+          s.status === "completed" ? "已完成" : s.status === "failed" ? "失败" : "进行中"
+        }）`,
+        badge: s.status === "running" ? `${Math.round(s.progress)}%` : undefined,
+        current: s.status === "running",
+      });
+    }
+    for (const entry of liveLogs) {
+      items.push({ time: entry.time, text: entry.text, current: true });
+    }
+    if (task.currentStep && items.at(-1)?.text !== task.currentStep) {
+      items.push({
+        time: shortDate(task.updatedAt),
+        text: task.currentStep,
+        current: ACTIVE_STATUSES.includes(task.status),
+      });
+    }
+    return items;
+  }, [liveLogs, steps, task]);
+
+  const visibleLogs = showAllLogs ? logEntries : logEntries.slice(-6);
   const displaySteps = steps.length
     ? steps
     : detailStages(task).map((stage, index) => ({
@@ -1628,86 +1722,46 @@ function TaskProcess({ task, steps }: { task: Task; steps: NonNullable<Task["ste
           <h3>执行日志</h3>
           <span>
             <i />
-            实时
+            {ACTIVE_STATUSES.includes(task.status) ? "实时" : "记录"}
           </span>
         </div>
         <div>
-          {[
-            "任务已创建",
-            "任务规划已完成",
-            "收集到相关资料",
-            "完成基础数据清洗",
-            "开始分析核心数据",
-            task.currentStep || "正在执行当前步骤",
-          ].map((line, index) => (
-            <p key={`${line}-${index}`}>
-              <time>
-                {new Date(Date.now() - (5 - index) * 180000).toLocaleTimeString("zh-CN", {
-                  hour: "2-digit",
-                  minute: "2-digit",
-                  hour12: false,
-                })}
-              </time>
-              <i className={index === 5 ? "current" : ""} />
-              <span>{line}</span>
-              {index === 2 && <b>128 条</b>}
+          {visibleLogs.map((entry, index) => (
+            <p key={`${entry.time}-${entry.text}-${index}`}>
+              <time>{entry.time}</time>
+              <i className={entry.current ? "current" : ""} />
+              <span>{entry.text}</span>
+              {entry.badge && <b>{entry.badge}</b>}
             </p>
           ))}
         </div>
-        <Button>查看完整日志</Button>
+        {logEntries.length > 6 && (
+          <Button onClick={() => setShowAllLogs((v) => !v)}>
+            {showAllLogs ? "收起日志" : `查看完整日志 (${logEntries.length})`}
+          </Button>
+        )}
       </section>
       <section className="sg-task-process-preview">
         <div className="sg-task-panel-title">
-          <h3>输出预览（部分）</h3>
-          <button type="button">
+          <h3>已生成输出（{outputs.length}）</h3>
+          <button type="button" onClick={onOpenPreview}>
             查看全部预览 <ChevronRight size={13} />
           </button>
         </div>
-        <div className="sg-task-preview-grid">
-          <article>
-            <h4>市场规模趋势图</h4>
-            <div className="sg-task-mini-line">
-              <i />
-              <i />
-              <i />
-              <i />
-              <i />
-            </div>
-          </article>
-          <article>
-            <h4>竞争格局市场份额</h4>
-            <div className="sg-task-mini-donut">
-              <i />
-            </div>
-          </article>
-          <article>
-            <h4>主要玩家对比表</h4>
-            <table>
-              <tbody>
-                <tr>
-                  <td>Home Credit</td>
-                  <td>28.5%</td>
-                </tr>
-                <tr>
-                  <td>FE Credit</td>
-                  <td>22.1%</td>
-                </tr>
-                <tr>
-                  <td>MCredit</td>
-                  <td>15.3%</td>
-                </tr>
-              </tbody>
-            </table>
-          </article>
-          <article>
-            <h4>用户增长趋势</h4>
-            <div className="sg-task-mini-bars">
-              {[42, 55, 63, 78, 91].map((height) => (
-                <TaskHeightFill key={height} value={height} />
-              ))}
-            </div>
-          </article>
-        </div>
+        {outputs.length === 0 ? (
+          <Empty title="尚无输出产物" hint="任务执行产生报告、数据或演示后将在此处显示。" />
+        ) : (
+          <div className="sg-task-preview-grid">
+            {outputs.slice(0, 4).map((asset) => (
+              <article key={asset.id}>
+                <h4>{asset.title || "未命名输出"}</h4>
+                <p className="sg-subtle">
+                  {asset.type} · {asset.status}
+                </p>
+              </article>
+            ))}
+          </div>
+        )}
       </section>
     </div>
   );
@@ -1716,54 +1770,56 @@ function TaskProcess({ task, steps }: { task: Task; steps: NonNullable<Task["ste
 function TaskFindings({
   task,
   evidence,
+  onOpenSources,
 }: {
   task: Task;
   evidence: Array<Record<string, unknown>>;
+  onOpenSources: () => void;
 }) {
-  const findings = evidence.length
-    ? evidence.slice(0, 8).map((item) => ({
-        title: String(item.claim ?? "研究发现"),
-        value: String(item.confidence ? `${Math.round(Number(item.confidence) * 100)}%` : "已验证"),
-        note: String(item.sourceTitle ?? item.source_title ?? "任务证据"),
-      }))
-    : [
-        { title: "市场规模持续增长", value: "28.7%", note: "核心指标保持增长" },
-        { title: "头部平台增长最快", value: "156%", note: "竞争格局出现分化" },
-        { title: "用户偏好线上渠道", value: "68%", note: "数字化触点成为主流" },
-        { title: "监管趋严", value: "新规影响", note: "需持续关注合规变化" },
-      ];
+  const findings = evidence.slice(0, 8).map((item) => ({
+    title: String(item.claim ?? "研究发现"),
+    value: String(item.confidence ? `${Math.round(Number(item.confidence) * 100)}%` : "已提取"),
+    note: String(item.sourceTitle ?? item.source_title ?? "任务证据"),
+  }));
   return (
     <div className="sg-task-findings">
       <section>
         <h2>AI 执行摘要</h2>
         <p>
-          任务“{taskTitle(task)}
-          ”已完成当前阶段的数据处理与交叉分析。系统将持续更新关键结论，并在任务完成后输出可核验的完整报告。
+          任务“{taskTitle(task)}”当前状态为 {STATUS_LABEL[task.status] ?? task.status}，已收集{" "}
+          {evidence.length} 条可核验证据、生成 {task.outputs?.length ?? 0} 份输出产物。
         </p>
       </section>
-      <div className="sg-task-finding-grid">
-        {findings.map((item, index) => (
-          <article key={`${item.title}-${index}`}>
-            <span>
-              {index === 0 ? (
-                <TrendingUp size={18} />
-              ) : index === 1 ? (
-                <Target size={18} />
-              ) : index === 2 ? (
-                <Users size={18} />
-              ) : (
-                <ShieldCheck size={18} />
-              )}
-            </span>
-            <h3>{item.title}</h3>
-            <strong>{item.value}</strong>
-            <p>{item.note}</p>
-            <button type="button">
-              查看详情 <ArrowRight size={13} />
-            </button>
-          </article>
-        ))}
-      </div>
+      {findings.length === 0 ? (
+        <Empty
+          title="暂无关键发现"
+          hint="任务完成资料分析并提取可核验结论后，核心发现卡片将呈现在这里。"
+        />
+      ) : (
+        <div className="sg-task-finding-grid">
+          {findings.map((item, index) => (
+            <article key={`${item.title}-${index}`}>
+              <span>
+                {index === 0 ? (
+                  <TrendingUp size={18} />
+                ) : index === 1 ? (
+                  <Target size={18} />
+                ) : index === 2 ? (
+                  <Users size={18} />
+                ) : (
+                  <ShieldCheck size={18} />
+                )}
+              </span>
+              <h3>{item.title}</h3>
+              <strong>{item.value}</strong>
+              <p>{item.note}</p>
+              <button type="button" onClick={onOpenSources}>
+                查看详情 <ArrowRight size={13} />
+              </button>
+            </article>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -1778,96 +1834,126 @@ function openAsset(asset: Asset, navigate: ReturnType<typeof useNavigate>) {
           : `/assets/${asset.id}`;
   navigate(href);
 }
+function extractMarkdownHeadings(markdown: string): string[] {
+  const matches: string[] = [];
+  for (const line of markdown.split("\n")) {
+    const m = line.match(/^#{1,3}\s+(.+)$/);
+    if (m?.[1]) matches.push(m[1].trim());
+  }
+  return matches;
+}
+
 function TaskPreview({
   task,
   outputs,
   onOpen,
+  onOpenReport,
   onDownload,
 }: {
   task: Task;
   outputs: Asset[];
   onOpen: (asset: Asset) => void;
+  onOpenReport: () => void;
   onDownload: (asset: Asset) => void;
 }) {
+  const [previewTab, setPreviewTab] = useState<"report" | "evidence" | "files">("report");
+  const reportAsset = outputs.find(
+    (asset) => asset.type === "report" || asset.type === "document" || asset.type === "markdown",
+  );
+  const { data: reportDetail } = useQuery<Asset & { content?: { kind: string; text?: string } }>({
+    queryKey: ["asset", reportAsset?.id],
+    queryFn: () => api(`/assets/${reportAsset!.id}`),
+    enabled: Boolean(reportAsset?.id),
+  });
+  const reportText = reportDetail?.content?.text ?? "";
+  const headings = useMemo(() => extractMarkdownHeadings(reportText), [reportText]);
+  const evidence = task.evidence ?? [];
+
   return (
     <div className="sg-task-output-preview">
       <div className="sg-task-preview-toolbar">
         <div>
-          <button type="button" className="active">
+          <button
+            type="button"
+            className={previewTab === "report" ? "active" : ""}
+            onClick={() => setPreviewTab("report")}
+          >
             研究报告（预览）
           </button>
-          <button type="button">数据集（部分）</button>
-          <button type="button">来源列表（部分）</button>
+          <button
+            type="button"
+            className={previewTab === "evidence" ? "active" : ""}
+            onClick={() => setPreviewTab("evidence")}
+          >
+            证据摘要（{evidence.length}）
+          </button>
+          <button
+            type="button"
+            className={previewTab === "files" ? "active" : ""}
+            onClick={() => setPreviewTab("files")}
+          >
+            输出文件（{outputs.length}）
+          </button>
         </div>
-        <Button>全屏预览</Button>
+        <Button onClick={onOpenReport}>查看完整报告</Button>
       </div>
-      <div className="sg-task-preview-body">
-        <nav>
-          <h3>目录</h3>
-          {[
-            "市场概览",
-            "市场规模分析",
-            "竞争格局",
-            "主要玩家分析",
-            "产品与模式",
-            "趋势与机会",
-            "风险与挑战",
-            "结论与建议",
-          ].map((item, index) => (
-            <button type="button" className={index === 0 ? "active" : ""} key={item}>
-              {index + 1}. {item}
-            </button>
-          ))}
-        </nav>
-        <article>
-          <h2>1. 市场概览</h2>
-          <p>{taskDescription(task)}</p>
-          <div className="sg-task-kpi-grid">
-            <div>
-              <span>市场规模（2025）</span>
-              <strong>
-                149.8<small>亿美元</small>
-              </strong>
-              <i>同比增长 28.7%</i>
-            </div>
-            <div>
-              <span>渗透率（2025）</span>
-              <strong>27.3%</strong>
-              <i>同比增长 4.2pct</i>
-            </div>
-            <div>
-              <span>用户规模</span>
-              <strong>
-                2,560<small>万人</small>
-              </strong>
-              <i>同比增长 19.5%</i>
-            </div>
-            <div>
-              <span>不良率（平均）</span>
-              <strong>3.2%</strong>
-              <i>同比下降 0.6pct</i>
-            </div>
+
+      {previewTab === "report" && (
+        <div className="sg-task-preview-body">
+          <nav>
+            <h3>目录</h3>
+            {headings.length === 0 ? (
+              <p className="sg-subtle">报告生成后将自动提取目录</p>
+            ) : (
+              headings.map((item, index) => (
+                <button
+                  type="button"
+                  className={index === 0 ? "active" : ""}
+                  key={`${item}-${index}`}
+                >
+                  {item}
+                </button>
+              ))
+            )}
+          </nav>
+          <article>
+            {reportText ? (
+              <DocumentMarkdown source={reportText} />
+            ) : (
+              <Empty
+                title={reportAsset ? "正在加载报告内容…" : "报告尚未生成"}
+                hint={
+                  reportAsset
+                    ? "请稍候"
+                    : `任务“${taskTitle(task)}”完成后，可在此直接预览完整内容。`
+                }
+              />
+            )}
+          </article>
+        </div>
+      )}
+
+      {previewTab === "evidence" && (
+        <section className="sg-task-real-outputs">
+          <div className="sg-task-panel-title">
+            <h3>证据与来源（{evidence.length}）</h3>
           </div>
-          <div className="sg-task-preview-charts">
-            <section>
-              <h3>市场规模（2019–2025）</h3>
-              <div className="sg-task-large-bars">
-                {[31, 42, 55, 67, 78, 89].map((height, index) => (
-                  <TaskHeightFill key={height} value={height}>
-                    <span>{2019 + index}</span>
-                  </TaskHeightFill>
-                ))}
+          {evidence.length === 0 ? (
+            <Empty title="暂无结构化证据" hint="任务检索到证据片段后会展示在这里。" />
+          ) : (
+            evidence.slice(0, 12).map((item, index) => (
+              <div key={String(item.id ?? index)}>
+                <Globe2 size={16} />
+                <span>
+                  <b>{String(item.sourceTitle ?? item.source_title ?? `来源 ${index + 1}`)}</b>
+                  <small>{String(item.claim ?? item.excerpt ?? "")}</small>
+                </span>
               </div>
-            </section>
-            <section>
-              <h3>细分市场占比（2025）</h3>
-              <div className="sg-task-large-donut">
-                <i />
-              </div>
-            </section>
-          </div>
-        </article>
-      </div>
+            ))
+          )}
+        </section>
+      )}
+
       <section className="sg-task-real-outputs">
         <div className="sg-task-panel-title">
           <h3>实际输出文件</h3>
@@ -1901,6 +1987,17 @@ function TaskPreview({
   );
 }
 function TaskSources({ evidence }: { evidence: Array<Record<string, unknown>> }) {
+  const [sourceQuery, setSourceQuery] = useState("");
+  const filteredEvidence = useMemo(() => {
+    const q = sourceQuery.trim().toLowerCase();
+    if (!q) return evidence;
+    return evidence.filter((item) =>
+      `${item.sourceTitle ?? item.source_title ?? ""} ${item.claim ?? item.excerpt ?? ""} ${item.locator ?? item.source_url ?? ""}`
+        .toLowerCase()
+        .includes(q),
+    );
+  }, [evidence, sourceQuery]);
+
   return (
     <div className="sg-task-sources">
       <div className="sg-task-source-head">
@@ -1911,10 +2008,12 @@ function TaskSources({ evidence }: { evidence: Array<Record<string, unknown>> })
           prefix={<Search size={15} />}
           allowClear
           aria-label="搜索来源"
+          value={sourceQuery}
+          onChange={(e) => setSourceQuery(e.target.value)}
         />
       </div>
-      {evidence.length ? (
-        evidence.map((item, index) => (
+      {filteredEvidence.length ? (
+        filteredEvidence.map((item, index) => (
           <article key={String(item.id ?? index)}>
             <span>
               <Globe2 size={17} />
@@ -1930,101 +2029,82 @@ function TaskSources({ evidence }: { evidence: Array<Record<string, unknown>> })
           </article>
         ))
       ) : (
-        <Empty title="暂无引用来源" hint="任务开始检索资料后，引用来源会实时出现在这里。" />
+        <Empty
+          title={evidence.length ? "没有匹配的来源" : "暂无引用来源"}
+          hint={
+            evidence.length
+              ? "尝试更换搜索关键词或清空筛选条件。"
+              : "任务开始检索资料后，引用来源会实时出现在这里。"
+          }
+        />
       )}
     </div>
   );
 }
-function TaskReport({ task, onDownload }: { task: Task; onDownload: () => void }) {
-  const [currentPage, setCurrentPage] = useState(18);
+function TaskReport({
+  task,
+  outputs,
+  onDownload,
+}: {
+  task: Task;
+  outputs: Asset[];
+  onDownload: () => void;
+}) {
   const [zoom, setZoom] = useState(100);
-  const [activeSection, setActiveSection] = useState("6.1 发展趋势");
-  const outline = [
-    { label: "封面", state: "done" },
-    { label: "执行摘要", state: "done" },
-    { label: "目录", state: "done" },
-    { label: "1. 市场概览", state: "done" },
-    { label: "2. 市场规模分析", state: "done" },
-    { label: "3. 竞争格局", state: "done" },
-    { label: "4. 主要玩家分析", state: "done" },
-    { label: "5. 产品与模式", state: "done" },
-    { label: "6. 趋势与机会", state: "active" },
-    { label: "6.1 发展趋势", state: "child" },
-    { label: "6.2 增长机会", state: "child" },
-    { label: "6.3 风险挑战", state: "child" },
-    { label: "7. 监管环境", state: "waiting" },
-    { label: "8. 结论与建议", state: "waiting" },
-    { label: "附录", state: "waiting" },
-  ];
-
-  const changePage = (value: number) => setCurrentPage(Math.min(45, Math.max(1, value)));
+  const [showOutline, setShowOutline] = useState(true);
+  const [activeSection, setActiveSection] = useState("");
+  const reportAsset = outputs.find(
+    (asset) => asset.type === "report" || asset.type === "document" || asset.type === "markdown",
+  );
+  const { data: reportDetail, isLoading } = useQuery<
+    Asset & { content?: { kind: string; text?: string } }
+  >({
+    queryKey: ["asset", reportAsset?.id],
+    queryFn: () => api(`/assets/${reportAsset!.id}`),
+    enabled: Boolean(reportAsset?.id),
+  });
+  const reportText = reportDetail?.content?.text ?? "";
+  const outline = useMemo(() => extractMarkdownHeadings(reportText), [reportText]);
   const changeZoom = (value: number) => setZoom(Math.min(140, Math.max(70, value)));
 
   return (
     <div className="sg-task-report">
-      <aside className="sg-task-report-outline">
-        <div>
-          <h3>报告大纲</h3>
-          <ListTree size={15} />
-        </div>
-        <nav aria-label="报告大纲">
-          {outline.map((item) => (
-            <button
-              type="button"
-              className={`${item.state}${activeSection === item.label ? " selected" : ""}`}
-              key={item.label}
-              onClick={() => {
-                setActiveSection(item.label);
-                if (item.label.startsWith("6.")) setCurrentPage(18);
-              }}
-            >
-              {item.state === "done" ? (
-                <CheckCircle2 size={13} />
-              ) : item.state === "active" ? (
-                <span>6</span>
-              ) : item.state === "child" ? null : (
-                <Circle size={13} />
-              )}
-              <b>{item.label}</b>
-              {item.state === "active" && <ChevronDown size={12} />}
-            </button>
-          ))}
-        </nav>
-      </aside>
+      {showOutline && (
+        <aside className="sg-task-report-outline">
+          <div>
+            <h3>报告大纲</h3>
+            <ListTree size={15} />
+          </div>
+          <nav aria-label="报告大纲">
+            {outline.length === 0 ? (
+              <p className="sg-subtle">暂无章节目录</p>
+            ) : (
+              outline.map((label, index) => (
+                <button
+                  type="button"
+                  className={`done${activeSection === label ? " selected" : ""}`}
+                  key={`${label}-${index}`}
+                  onClick={() => setActiveSection(label)}
+                >
+                  <CheckCircle2 size={13} />
+                  <b>{label}</b>
+                </button>
+              ))
+            )}
+          </nav>
+        </aside>
+      )}
       <main className="sg-task-report-viewer">
         <div className="sg-task-report-toolbar">
           <div className="sg-task-report-toolbar-start">
-            <button type="button" title="显示大纲" aria-label="显示大纲">
+            <button
+              type="button"
+              title="显示/隐藏大纲"
+              aria-label="显示/隐藏大纲"
+              onClick={() => setShowOutline((v) => !v)}
+            >
               <ListTree size={15} />
             </button>
-            <button
-              type="button"
-              title="上一页"
-              aria-label="上一页"
-              onClick={() => changePage(currentPage - 1)}
-            >
-              <ChevronLeft size={15} />
-            </button>
-            <button
-              type="button"
-              title="下一页"
-              aria-label="下一页"
-              onClick={() => changePage(currentPage + 1)}
-            >
-              <ChevronRight size={15} />
-            </button>
-          </div>
-          <div className="sg-task-report-page-control">
-            <Input
-              className="sg-task-report-page-input"
-              type="number"
-              aria-label="当前页"
-              min={1}
-              max={45}
-              value={currentPage}
-              onChange={(event) => changePage(Number(event.target.value))}
-            />
-            <span>/ 45</span>
           </div>
           <div className="sg-task-report-zoom">
             <button
@@ -2074,86 +2154,16 @@ function TaskReport({ task, onDownload }: { task: Task; onDownload: () => void }
         </div>
         <Scrollbar className="sg-task-report-canvas">
           <TaskZoomCanvas scale={zoom / 100}>
-            <h1>6. 趋势与机会</h1>
-            <h2>6.1 发展趋势</h2>
-            <div className="sg-task-report-block">
-              <span>
-                <Sparkles size={21} />
-              </span>
-              <div>
-                <h3>数字化与线上化加速</h3>
-                <p>
-                  {taskDescription(task)}。线上服务占比持续提升，AI 风控和自动化流程显著改善效率。
-                </p>
-              </div>
-              <div className="sg-task-report-bars">
-                <b>线上贷款占比</b>
-                {[32, 46, 62, 78].map((height, index) => (
-                  <TaskHeightFill key={height} value={height}>
-                    <em>{height}%</em>
-                    <small>{2020 + index}</small>
-                  </TaskHeightFill>
-                ))}
-              </div>
-            </div>
-            <div className="sg-task-report-block">
-              <span>
-                <Users size={21} />
-              </span>
-              <div>
-                <h3>场景化与生态化服务</h3>
-                <p>消费金融逐步嵌入电商、出行、教育、医疗等多元场景，形成更完整的服务生态。</p>
-              </div>
-              <div className="sg-task-report-donut-wrap">
-                <b>主要场景渗透率（2025）</b>
-                <div className="sg-task-report-donut">
-                  <i />
-                  <ul>
-                    <li>电商购物 42%</li>
-                    <li>出行服务 21%</li>
-                    <li>教育培训 15%</li>
-                    <li>医疗健康 12%</li>
-                  </ul>
-                </div>
-              </div>
-            </div>
-            <div className="sg-task-report-block">
-              <span>
-                <ShieldCheck size={21} />
-              </span>
-              <div>
-                <h3>监管趋严与合规化</h3>
-                <p>资本、利率和数据合规监管持续加强，推动行业规范发展，头部平台优势进一步扩大。</p>
-              </div>
-              <div className="sg-task-report-line-chart">
-                <b>监管政策数量（累计）</b>
-                <div>
-                  {[8, 12, 18, 26].map((value, index) => (
-                    <TaskPoint key={value} bottom={value * 2} left={8 + index * 29}>
-                      <em>{value}</em>
-                      <small>{2020 + index}</small>
-                    </TaskPoint>
-                  ))}
-                </div>
-              </div>
-            </div>
-            <div className="sg-task-report-block">
-              <span>
-                <Gauge size={21} />
-              </span>
-              <div>
-                <h3>AI 与大数据驱动风控升级</h3>
-                <p>AI 模型与大数据分析广泛应用于反欺诈、信用评估和贷后管理，风险能力持续提升。</p>
-              </div>
-              <div className="sg-task-report-rings">
-                {[28, 46, 68].map((value, index) => (
-                  <TaskRing key={value} progress={value * 3.6}>
-                    <b>{value}%</b>
-                    <small>{2021 + index}</small>
-                  </TaskRing>
-                ))}
-              </div>
-            </div>
+            {isLoading ? (
+              <Loading loading />
+            ) : reportText ? (
+              <DocumentMarkdown source={reportText} />
+            ) : (
+              <Empty
+                title="报告尚未生成"
+                hint={`任务“${taskTitle(task)}”完成后，完整报告正文与大纲将在此处展示。`}
+              />
+            )}
           </TaskZoomCanvas>
         </Scrollbar>
       </main>
@@ -2218,27 +2228,22 @@ function TaskReportSidebar({
             <dd>{dateTime(task.createdAt)}</dd>
           </div>
           <div>
-            <dt>预计完成</dt>
+            <dt>完成时间</dt>
             <dd>{task.completedAt ? dateTime(task.completedAt) : remaining(task)}</dd>
           </div>
           <div>
-            <dt>资料数量</dt>
-            <dd>{Math.max(task.evidence?.length ?? 0, 128)} 篇</dd>
+            <dt>输出产物</dt>
+            <dd>{outputs.length} 份</dd>
           </div>
           <div>
             <dt>数据来源</dt>
-            <dd>{Math.max(task.evidence?.length ?? 0, 37)} 个</dd>
+            <dd>{task.evidence?.length ?? 0} 个</dd>
+          </div>
+          <div>
+            <dt>负责人</dt>
+            <dd>{getAuthSession()?.displayName ?? "工作区成员"}</dd>
           </div>
         </dl>
-        <div className="sg-task-report-team">
-          <span>参与团队</span>
-          <div className="sg-task-team">
-            <Avatar name="张伟" size={28} />
-            <Avatar name="李然" size={28} />
-            <Avatar name="周宁" size={28} />
-            <b>+2</b>
-          </div>
-        </div>
       </section>
       <section className="sg-task-side-card sg-task-report-notify">
         <div className="sg-task-side-title">

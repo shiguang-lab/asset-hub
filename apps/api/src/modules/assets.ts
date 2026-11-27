@@ -1,4 +1,5 @@
 import { posix as pathPosix } from "node:path";
+import { inflateSync } from "node:zlib";
 import {
   extractMarkdownReferences,
   isLocalReference,
@@ -77,6 +78,7 @@ export function registerAssets(app: FastifyInstance): void {
       // 表达的是回收站视图（只看已删）。带 since 时切换到 all 范围。
       ...(query.since ? { deletedScope: "all" as const, since: query.since } : {}),
       ...(query.pathPrefix !== undefined ? { pathPrefix: query.pathPrefix } : {}),
+      ...(query.sort !== undefined ? { sort: query.sort } : {}),
       limit: query.limit,
       after: query.cursor,
       subject: req.actor.subject,
@@ -92,7 +94,7 @@ export function registerAssets(app: FastifyInstance): void {
   app.post("/api/v1/assets", async (req) => {
     const input = createAssetInputSchema.parse(req.body);
     if (req.idempotencyKey) {
-      return await ctx.store.idempotent(
+      const result = await ctx.store.idempotent(
         `create-asset:${req.idempotencyKey}`,
         req.actor.workspaceId,
         async () => {
@@ -116,7 +118,7 @@ export function registerAssets(app: FastifyInstance): void {
             trace: {},
             data: { assetId: asset.id, assetType: asset.type },
           });
-          ctx.store.audit(
+          await ctx.store.audit(
             req.actor.workspaceId,
             req.actor.subject,
             "asset.create",
@@ -127,6 +129,7 @@ export function registerAssets(app: FastifyInstance): void {
           return asset;
         },
       );
+      return result.value;
     }
     const content = contentFromInput(input.type, input.content);
     const asset = await ctx.store.createAsset(req.actor, {
@@ -169,6 +172,10 @@ export function registerAssets(app: FastifyInstance): void {
     if (buffer.byteLength > 100 * 1024 * 1024) {
       throw badRequest("FILE_TOO_LARGE", "文件不能超过 100MB");
     }
+    const usage = await ctx.store.getStorageUsage(req.actor.workspaceId);
+    if (usage.usedBytes + buffer.byteLength > usage.quotaBytes) {
+      throw badRequest("STORAGE_QUOTA_EXCEEDED", "工作区存储配额不足");
+    }
     const fileName = part.filename || "file";
     const mediaType = part.mimetype || "application/octet-stream";
     const objectKey = `assets/${req.actor.workspaceId}/files/${Date.now()}-${safeFileName(fileName)}`;
@@ -191,6 +198,17 @@ export function registerAssets(app: FastifyInstance): void {
           },
         ],
       },
+    });
+    await ctx.bus.emit({
+      eventId: nextId("evt"),
+      eventType: "asset.created",
+      schemaVersion: 1,
+      occurredAt: nowIso(),
+      producer: "api",
+      tenantId: req.actor.workspaceId,
+      aggregate: { type: "asset", id: asset.id, version: 1 },
+      trace: {},
+      data: { assetId: asset.id, assetType: asset.type },
     });
     return reply.code(201).send({
       ...asset,
@@ -227,6 +245,10 @@ export function registerAssets(app: FastifyInstance): void {
     const totalSize = parts.reduce((sum, part) => sum + part.data.byteLength, 0);
     if (totalSize > MAX_IMPORTED_ARCHIVE_SIZE) {
       throw badRequest("DOCUMENT_TOO_LARGE", "导入内容不能超过 50MB");
+    }
+    const usage = await ctx.store.getStorageUsage(req.actor.workspaceId);
+    if (usage.usedBytes + totalSize > usage.quotaBytes) {
+      throw badRequest("STORAGE_QUOTA_EXCEEDED", "工作区存储配额不足");
     }
 
     const imported = await importDocumentEntries(
@@ -319,7 +341,11 @@ export function registerAssets(app: FastifyInstance): void {
     if (blob) {
       const data = await ctx.storage.get(blob.objectKey);
       if (data) {
-        payload = { data, mediaType: blob.mediaType, fileName: asset.title || "download" };
+        payload = {
+          data,
+          mediaType: blob.mediaType,
+          fileName: downloadFileName(asset, blob.mediaType),
+        };
       }
     } else {
       payload = downloadableAssetContent(asset, await ctx.store.readContent(id));
@@ -390,6 +416,13 @@ export function registerAssets(app: FastifyInstance): void {
     }
     const updated = await ctx.store.updateAssetMeta(req.actor, id, body, expectedVersion);
     const result = updated ?? asset;
+    if (updated) {
+      ctx.sse.broadcast(req.actor.workspaceId, {
+        id: nextId("evt"),
+        event: "asset.updated",
+        data: { assetId: id, lockVersion: result.lockVersion },
+      });
+    }
     return reply.header("etag", `"${result.lockVersion}"`).send(result);
   });
 
@@ -444,6 +477,11 @@ export function registerAssets(app: FastifyInstance): void {
     const asset = await ctx.store.getAsset(req.actor.workspaceId, id);
     if (!asset) throw notFound("资产");
     await permanentDeleteAsset(ctx, req.actor, id);
+    ctx.sse.broadcast(req.actor.workspaceId, {
+      id: nextId("evt"),
+      event: "asset.updated",
+      data: { assetId: id, permanentDeleted: true },
+    });
     await ctx.store.audit(
       req.actor.workspaceId,
       req.actor.subject,
@@ -527,6 +565,7 @@ export function registerAssets(app: FastifyInstance): void {
           "knowledge_source_of",
           "output_of",
           "references",
+          "version_of",
           "source_of",
         ]),
       })
@@ -578,6 +617,13 @@ export function registerAssets(app: FastifyInstance): void {
       }
     } else if (targetIds.length > 0) {
       changed = await ctx.store.batchUpdateAssets(req.actor, targetIds, body.action);
+    }
+    if (changed > 0) {
+      ctx.sse.broadcast(req.actor.workspaceId, {
+        id: nextId("evt"),
+        event: "asset.updated",
+        data: { assetIds: targetIds, action: body.action },
+      });
     }
     await ctx.store.audit(
       req.actor.workspaceId,
@@ -635,6 +681,8 @@ export function registerAssets(app: FastifyInstance): void {
 
   app.post("/api/v1/assets/:id/patches/:patchId/apply", async (req) => {
     const { id, patchId } = req.params as { id: string; patchId: string };
+    const asset = await ctx.store.getAsset(req.actor.workspaceId, id);
+    if (!asset) throw notFound("资产");
     const patch = await ctx.store.getProposedPatch(id, patchId);
     if (!patch) throw notFound("AI 补丁");
     const proposed = await ctx.store.applyProposedPatch(id, patchId);
@@ -645,12 +693,16 @@ export function registerAssets(app: FastifyInstance): void {
     const replaced = current.includes(selection)
       ? current.replace(selection, proposed)
       : `${current}\n\n${proposed}`;
+    const kind = asset.type === "html" ? "html" : "markdown";
     const saved = await ctx.store.saveContent(
       req.actor,
       id,
-      { kind: "markdown", text: replaced, manifest: null, refs: [] },
+      { kind, text: replaced, manifest: null, refs: [] },
       { changeKind: "ai_patch" },
     );
+    if (asset.type === "document" || asset.type === "report") {
+      await syncContentLinkRelations(ctx, req.actor.workspaceId, id, replaced);
+    }
     await ctx.bus.emit({
       eventId: nextId("evt"),
       eventType: "asset.version.created",
@@ -746,6 +798,24 @@ function withExtension(fileName: string, extension: string): string {
   return fileName.toLowerCase().endsWith(extension) ? fileName : `${fileName}${extension}`;
 }
 
+function downloadFileName(asset: Pick<Asset, "type" | "title">, mediaType: string): string {
+  const baseName = asset.title.trim() || "download";
+  if (asset.type === "document" || asset.type === "report" || mediaType === "text/markdown") {
+    return withExtension(baseName, ".md");
+  }
+  if (asset.type === "html" || mediaType === "text/html") {
+    return withExtension(baseName, ".html");
+  }
+  if (
+    asset.type === "presentation" ||
+    asset.type === "dataset" ||
+    mediaType === "application/json"
+  ) {
+    return withExtension(baseName, ".json");
+  }
+  return baseName;
+}
+
 function contentFromInput(
   type: string,
   content?: Record<string, unknown>,
@@ -773,24 +843,158 @@ function contentFromInput(
   return undefined;
 }
 
-const MAX_IMPORTED_DOCUMENT_SIZE = 5 * 1024 * 1024;
-const IMPORTED_DOCUMENT_EXTENSIONS = new Set(["md", "markdown", "txt", "html", "htm"]);
+const MAX_IMPORTED_DOCUMENT_SIZE = 10 * 1024 * 1024;
+const IMPORTED_DOCUMENT_EXTENSIONS = new Set([
+  "md",
+  "markdown",
+  "txt",
+  "html",
+  "htm",
+  "docx",
+  "pdf",
+]);
+
+function extractDocxToMarkdown(buffer: Buffer): string {
+  try {
+    const entries = readZipEntries(buffer);
+    const docXmlBuf = entries.get("word/document.xml");
+    if (!docXmlBuf) {
+      throw new Error("DOCX 缺少 word/document.xml");
+    }
+    const xml = docXmlBuf.toString("utf8");
+    const paragraphs: string[] = [];
+    const pMatches = xml.matchAll(/<w:p(?:\s[^>]*)?>([\s\S]*?)<\/w:p>/g);
+    for (const match of pMatches) {
+      const pBody = match[1];
+      if (!pBody) continue;
+      const headingMatch = pBody.match(/<w:pStyle\s+w:val="Heading(\d)"\s*\/>/i);
+      const headingLevel =
+        headingMatch && headingMatch[1] ? Number.parseInt(headingMatch[1], 10) : 0;
+
+      const texts: string[] = [];
+      const tMatches = pBody.matchAll(/<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>/g);
+      for (const tm of tMatches) {
+        if (tm[1]) texts.push(tm[1]);
+      }
+      const pText = texts.join("").trim();
+      if (!pText) continue;
+
+      if (headingLevel > 0 && headingLevel <= 6) {
+        paragraphs.push(`${"#".repeat(headingLevel)} ${pText}`);
+      } else {
+        paragraphs.push(pText);
+      }
+    }
+    const result = paragraphs.join("\n\n").trim();
+    if (!result) throw new Error("DOCX 内容为空");
+    return result;
+  } catch (err) {
+    throw badRequest(
+      "DOCUMENT_CONTENT_INVALID",
+      `DOCX 解析失败: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
+
+function decodePdfString(str: string): string {
+  return str
+    .replace(/\\n/g, "\n")
+    .replace(/\\r/g, "\r")
+    .replace(/\\t/g, "\t")
+    .replace(/\\\(/g, "(")
+    .replace(/\\\)/g, ")")
+    .replace(/\\\\/g, "\\");
+}
+
+function extractPdfToMarkdown(buffer: Buffer): string {
+  try {
+    const raw = buffer.toString("latin1");
+    if (!raw.startsWith("%PDF-")) {
+      throw new Error("不是有效的 PDF 格式");
+    }
+    const lines: string[] = [];
+    const streamMatches = raw.matchAll(/stream[\r\n]+([\s\S]*?)[\r\n]+endstream/g);
+    for (const sm of streamMatches) {
+      const rawStream = sm[1];
+      if (!rawStream) continue;
+      const streamBytes = Buffer.from(rawStream, "latin1");
+      let decompressed = streamBytes;
+      try {
+        decompressed = inflateSync(streamBytes);
+      } catch {
+        // Stream may be plain ASCII or already decoded
+      }
+      const streamText = decompressed.toString("latin1");
+      const btMatches = streamText.matchAll(/BT[\r\n]+([\s\S]*?)[\r\n]+ET/g);
+      for (const bt of btMatches) {
+        const btBody = bt[1];
+        if (!btBody) continue;
+        const blockTokens: string[] = [];
+        const tjMatches = btBody.matchAll(/\(([^)]*)\)\s*(?:Tj|'|")/g);
+        for (const tm of tjMatches) {
+          if (tm[1]) blockTokens.push(decodePdfString(tm[1]));
+        }
+        const tjArrayMatches = btBody.matchAll(/\[([\s\S]*?)\]\s*TJ/g);
+        for (const tam of tjArrayMatches) {
+          const arrayContent = tam[1];
+          if (!arrayContent) continue;
+          const parts = arrayContent.matchAll(/\(([^)]*)\)/g);
+          for (const pm of parts) {
+            if (pm[1]) blockTokens.push(decodePdfString(pm[1]));
+          }
+        }
+        const combined = blockTokens.join("").trim();
+        if (combined.length > 0) {
+          lines.push(combined);
+        }
+      }
+    }
+
+    if (lines.length === 0) {
+      const directMatches = raw.matchAll(/\(([^)\\]{3,})\)\s*Tj/g);
+      for (const dm of directMatches) {
+        if (dm[1]) lines.push(decodePdfString(dm[1]));
+      }
+    }
+
+    const text = lines.join("\n\n").trim();
+    if (text.length === 0) {
+      throw new Error("未能从 PDF 中提取出可读文本");
+    }
+    return text;
+  } catch (err) {
+    throw badRequest(
+      "DOCUMENT_CONTENT_INVALID",
+      `PDF 解析失败: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
 
 export function parseImportedDocumentFile(
   fileName: string,
   buffer: Buffer,
 ): { title: string; markdown: string } {
   if (buffer.byteLength > MAX_IMPORTED_DOCUMENT_SIZE) {
-    throw badRequest("DOCUMENT_TOO_LARGE", "导入文档不能超过 5MB");
+    throw badRequest("DOCUMENT_TOO_LARGE", "导入文档不能超过 10MB");
   }
   const extension = fileName.split(".").at(-1)?.toLowerCase() ?? "";
   if (!IMPORTED_DOCUMENT_EXTENSIONS.has(extension)) {
-    throw badRequest("DOCUMENT_FORMAT_UNSUPPORTED", "仅支持 Markdown、HTML 和纯文本文档");
+    throw badRequest("DOCUMENT_FORMAT_UNSUPPORTED", "仅支持 Markdown、HTML、TXT、DOCX 和 PDF 文档");
   }
+
+  const title =
+    fileName.replace(/\.(?:md|markdown|txt|html|htm|docx|pdf)$/i, "").trim() || "未命名文档";
+
+  if (extension === "docx") {
+    return { title, markdown: extractDocxToMarkdown(buffer) };
+  }
+  if (extension === "pdf") {
+    return { title, markdown: extractPdfToMarkdown(buffer) };
+  }
+
   if (buffer.includes(0)) {
     throw badRequest("DOCUMENT_CONTENT_INVALID", "文档不是有效的文本内容");
   }
-  const title = fileName.replace(/\.(?:md|markdown|txt|html|htm)$/i, "").trim() || "未命名文档";
   const markdown = buffer
     .toString("utf8")
     .replace(/^\uFEFF/, "")
@@ -943,6 +1147,7 @@ async function importDocumentEntries(
     let replaced = false;
     if (resolution === "replace" && existingByTitle.has(parsed.title)) {
       asset = existingByTitle.get(parsed.title) as Asset;
+      await requireAssetAccess(ctx, actor, asset.id, "write");
       replaced = true;
       if (isHtml || asset.type === "html") {
         const saved = await ctx.store.saveContent(

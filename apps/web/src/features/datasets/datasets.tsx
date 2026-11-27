@@ -14,6 +14,7 @@ import {
 } from "../../entities/api.js";
 import { AppPagination } from "../../shared/AppPagination.js";
 import { AppTable } from "../../shared/AppTable.js";
+import { useDeleteConfirm } from "../../shared/useDeleteConfirm";
 
 const useDatasetStyles = createStyles(() => ({
   uploadLabel: { cursor: "pointer" },
@@ -22,7 +23,7 @@ const useDatasetStyles = createStyles(() => ({
     "@media (max-width: 760px)": { gridTemplateColumns: "1fr" },
   },
   datasetMeta: { margin: "6px 0 0" },
-  hiddenColumn: { maxWidth: 200, display: "none" },
+  columnSelect: { minWidth: 220, maxWidth: 360 },
   sortColumn: { width: 180 },
   sortDirection: { width: 100 },
   rowLimit: { width: 110 },
@@ -40,7 +41,13 @@ const useDatasetStyles = createStyles(() => ({
   },
   quickChartTitle: { marginTop: 20 },
   chartName: { maxWidth: 160 },
-  chart: { width: "100%", height: 420 },
+  chartField: { minWidth: 120 },
+  chartGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(360px, 1fr))",
+    gap: 16,
+  },
+  chart: { width: "100%", height: 340 },
   qualityTitle: { marginTop: 16 },
 }));
 
@@ -110,9 +117,10 @@ interface QueryRow {
 export function DatasetDetailPage() {
   const { styles } = useDatasetStyles();
   const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
   const toast = useToast();
+  const { confirmDelete } = useDeleteConfirm();
   const queryClient = useQueryClient();
-  const chartRef = useRef<HTMLDivElement>(null);
   const [tab, setTab] = useState("table");
   const [query, setQuery] = useState<{
     select: string[];
@@ -133,6 +141,11 @@ export function DatasetDetailPage() {
   const [sortCol, setSortCol] = useState("");
   const [sortDir, setSortDir] = useState("asc");
   const [viewName, setViewName] = useState("");
+  const [chartName, setChartName] = useState("");
+  const [chartType, setChartType] = useState<"bar" | "line" | "pie">("bar");
+  const [chartX, setChartX] = useState("");
+  const [chartY, setChartY] = useState("");
+  const [chartAgg, setChartAgg] = useState<"sum" | "avg" | "count" | "min" | "max">("sum");
   const [insights, setInsights] = useState<string[]>([]);
 
   const { data: dataset } = useQuery<Dataset>({
@@ -141,6 +154,17 @@ export function DatasetDetailPage() {
     refetchInterval: (q) => (q.state.data?.status === "processing" ? 3000 : false),
   });
   const version = dataset?.currentVersion;
+
+  useEffect(() => {
+    if (!version?.schema.length) return;
+    if (!chartX) {
+      setChartX(version.schema[0]?.name ?? "");
+    }
+    if (!chartY) {
+      const numericCol = version.schema.find((c) => c.type === "number" || c.type === "integer");
+      setChartY(numericCol?.name ?? version.schema[1]?.name ?? version.schema[0]?.name ?? "");
+    }
+  }, [version, chartX, chartY]);
 
   const queryResult = useQuery<QueryRow>({
     queryKey: ["dataset-query", id, query],
@@ -176,6 +200,16 @@ export function DatasetDetailPage() {
       setViewName("");
       void queryClient.invalidateQueries({ queryKey: ["dataset", id] });
     },
+    onError: (e: Error) => toast("error", e.message),
+  });
+
+  const deleteView = useMutation({
+    mutationFn: (viewId: string) => api(`/datasets/${id}/views/${viewId}`, { method: "DELETE" }),
+    onSuccess: () => {
+      toast("success", "视图已删除");
+      void queryClient.invalidateQueries({ queryKey: ["dataset", id] });
+    },
+    onError: (e: Error) => toast("error", e.message),
   });
 
   const addChart = useMutation({
@@ -188,45 +222,38 @@ export function DatasetDetailPage() {
     }) => api<ChartSpec>(`/datasets/${id}/charts`, { method: "POST", body: chart }),
     onSuccess: () => {
       toast("success", "图表已创建");
+      setChartName("");
+      setTab("charts");
       void queryClient.invalidateQueries({ queryKey: ["dataset", id] });
     },
+    onError: (e: Error) => toast("error", e.message),
+  });
+
+  const deleteChart = useMutation({
+    mutationFn: (chartId: string) => api(`/datasets/${id}/charts/${chartId}`, { method: "DELETE" }),
+    onSuccess: () => {
+      toast("success", "图表已删除");
+      void queryClient.invalidateQueries({ queryKey: ["dataset", id] });
+    },
+    onError: (e: Error) => toast("error", e.message),
+  });
+
+  const deleteDataset = useMutation({
+    mutationFn: () => api(`/datasets/${id}`, { method: "DELETE" }),
+    onSuccess: () => {
+      toast("success", "数据集已删除");
+      void queryClient.invalidateQueries({ queryKey: ["datasets"] });
+      navigate("/datasets");
+    },
+    onError: (e: Error) => toast("error", e.message),
   });
 
   const aiInsights = useMutation({
     mutationFn: () =>
       api<{ insights: string[] }>(`/datasets/${id}/ai-insights`, { method: "POST" }),
     onSuccess: (data) => setInsights(data.insights),
+    onError: (e: Error) => toast("error", e.message),
   });
-
-  useEffect(() => {
-    if (tab !== "charts" || !chartRef.current || !dataset?.charts?.length) return;
-    const chart = echarts.init(chartRef.current);
-    const spec = dataset.charts[0];
-    if (spec && queryResult.data) {
-      const rows = queryResult.data.rows;
-      chart.setOption({
-        tooltip: { trigger: "axis" },
-        xAxis: {
-          type: "category",
-          data: rows.map((r) => r[spec.x ?? "index"]).slice(0, 20),
-          axisLabel: { rotate: 30 },
-        },
-        yAxis: { type: "value" },
-        series: [
-          {
-            type: spec.chartType === "pie" ? "pie" : "bar",
-            data: rows.map((r) => Number(r[spec.y ?? "index"] ?? 0)).slice(0, 20),
-          },
-        ],
-      });
-    }
-    const onResize = () => chart.resize();
-    window.addEventListener("resize", onResize);
-    return () => {
-      window.removeEventListener("resize", onResize);
-      chart.dispose();
-    };
-  }, [tab, dataset?.charts, queryResult.data]);
 
   if (!dataset) return <Loading loading />;
   if (!version) {
@@ -257,7 +284,24 @@ export function DatasetDetailPage() {
             {version.columnCount} 列 · 查询耗时 {queryResult.data?.elapsedMs ?? "-"}ms
           </p>
         </div>
-        <Button onClick={() => aiInsights.mutate()}>AI 洞察</Button>
+        <div className="sg-row">
+          <Button loading={aiInsights.isPending} onClick={() => aiInsights.mutate()}>
+            AI 洞察
+          </Button>
+          <Button
+            danger
+            loading={deleteDataset.isPending}
+            onClick={() =>
+              confirmDelete({
+                title: `删除数据集「${dataset.name}」？`,
+                content: "删除后数据表、视图与图表配置将一并移除。",
+                onConfirm: () => deleteDataset.mutate(),
+              })
+            }
+          >
+            删除
+          </Button>
+        </div>
       </div>
 
       {insights.length > 0 && (
@@ -286,11 +330,15 @@ export function DatasetDetailPage() {
       {tab === "table" && (
         <Card>
           <div className="sg-dataset-toolbar">
-            <Input
-              placeholder="筛选列名…"
-              value={query.select.length ? "" : ""}
-              readOnly
-              className={styles.hiddenColumn}
+            <Select
+              mode="multiple"
+              allowClear
+              maxTagCount="responsive"
+              placeholder="选择显示列（默认全部）"
+              value={query.select}
+              onChange={(cols) => setQuery((q) => ({ ...q, select: cols, offset: 0 }))}
+              options={version.schema.map((c) => ({ value: c.name, label: c.name }))}
+              className={styles.columnSelect}
             />
             <Select
               value={sortCol}
@@ -421,25 +469,73 @@ export function DatasetDetailPage() {
               placeholder="视图名称"
               className={styles.viewName}
             />
-            <Button size="small" disabled={!viewName} onClick={() => saveView.mutate()}>
+            <Button
+              size="small"
+              loading={saveView.isPending}
+              disabled={!viewName.trim()}
+              onClick={() => saveView.mutate()}
+            >
               保存视图
             </Button>
           </div>
           <h3 className={`sg-h3 ${styles.quickChartTitle}`}>快速建图</h3>
-          <div className="sg-row">
-            <Input placeholder="图表名" id="chart-name" className={styles.chartName} />
+          <div className="sg-row sg-wrap">
+            <Input
+              placeholder="图表名"
+              value={chartName}
+              onChange={(e) => setChartName(e.target.value)}
+              className={styles.chartName}
+            />
+            <Select
+              value={chartType}
+              onChange={(v) => setChartType(v as "bar" | "line" | "pie")}
+              options={[
+                { value: "bar", label: "柱状图" },
+                { value: "line", label: "折线图" },
+                { value: "pie", label: "饼图" },
+              ]}
+              className={styles.chartField}
+            />
+            <Select
+              value={chartX || undefined}
+              placeholder="维度列 (X)"
+              onChange={setChartX}
+              options={version.schema.map((c) => ({ value: c.name, label: c.name }))}
+              className={styles.chartField}
+            />
+            <Select
+              value={chartY || undefined}
+              placeholder="指标列 (Y)"
+              onChange={setChartY}
+              options={version.schema.map((c) => ({ value: c.name, label: c.name }))}
+              className={styles.chartField}
+            />
+            <Select
+              value={chartAgg}
+              onChange={(v) => setChartAgg(v as "sum" | "avg" | "count" | "min" | "max")}
+              options={[
+                { value: "sum", label: "求和" },
+                { value: "avg", label: "平均" },
+                { value: "count", label: "计数" },
+                { value: "min", label: "最小" },
+                { value: "max", label: "最大" },
+              ]}
+              className={styles.chartField}
+            />
             <Button
               size="small"
-              onClick={() => {
-                const name =
-                  (document.getElementById("chart-name") as HTMLInputElement)?.value || "图表";
-                const x = version.schema[0]?.name ?? "";
-                const y =
-                  version.schema.find((c) => c.type === "number" || c.type === "integer")?.name ??
-                  version.schema[1]?.name ??
-                  x;
-                addChart.mutate({ name, chartType: "bar", x, y, aggregation: "sum" });
-              }}
+              type="primary"
+              loading={addChart.isPending}
+              disabled={!chartX || !chartY}
+              onClick={() =>
+                addChart.mutate({
+                  name: chartName.trim() || `${chartY} / ${chartX}`,
+                  chartType,
+                  x: chartX,
+                  y: chartY,
+                  aggregation: chartAgg,
+                })
+              }
             >
               生成图表
             </Button>
@@ -448,13 +544,31 @@ export function DatasetDetailPage() {
       )}
 
       {tab === "charts" && (
-        <Card>
+        <div>
           {(dataset.charts?.length ?? 0) === 0 ? (
-            <Empty title="还没有图表" hint="在“查询构建”中快速生成图表。" />
+            <Card>
+              <Empty title="还没有图表" hint="在“查询构建”中快速生成图表。" />
+            </Card>
           ) : (
-            <div ref={chartRef} className={styles.chart} />
+            <div className={styles.chartGrid}>
+              {dataset.charts?.map((spec) => (
+                <DatasetChartCard
+                  key={spec.id}
+                  spec={spec}
+                  rows={queryResult.data?.rows ?? []}
+                  chartClassName={styles.chart}
+                  deleting={deleteChart.isPending}
+                  onDelete={() =>
+                    confirmDelete({
+                      title: `删除图表「${spec.name}」？`,
+                      onConfirm: () => deleteChart.mutate(spec.id),
+                    })
+                  }
+                />
+              ))}
+            </div>
           )}
-        </Card>
+        </div>
       )}
 
       {tab === "views" && (
@@ -463,27 +577,43 @@ export function DatasetDetailPage() {
             <Empty title="还没有保存的视图" />
           ) : (
             dataset.views?.map((v) => (
-              <div key={v.id} className="sg-row-between">
+              <div key={v.id} className="sg-row-between sg-mb-sm">
                 <strong>{v.name}</strong>
-                <Button
-                  size="small"
-                  onClick={() => {
-                    const saved = v.query as {
-                      filters?: unknown;
-                      sort?: unknown;
-                      select?: string[];
-                    };
-                    setQuery((q) => ({
-                      ...q,
-                      filters: (saved.filters ?? []) as never,
-                      sort: (saved.sort ?? []) as never,
-                      select: saved.select ?? [],
-                    }));
-                    setTab("table");
-                  }}
-                >
-                  应用
-                </Button>
+                <div className="sg-row">
+                  <Button
+                    size="small"
+                    onClick={() => {
+                      const saved = v.query as {
+                        filters?: unknown;
+                        sort?: unknown;
+                        select?: string[];
+                      };
+                      setQuery((q) => ({
+                        ...q,
+                        filters: (saved.filters ?? []) as never,
+                        sort: (saved.sort ?? []) as never,
+                        select: saved.select ?? [],
+                        offset: 0,
+                      }));
+                      setTab("table");
+                    }}
+                  >
+                    应用
+                  </Button>
+                  <Button
+                    size="small"
+                    danger
+                    loading={deleteView.isPending}
+                    onClick={() =>
+                      confirmDelete({
+                        title: `删除视图「${v.name}」？`,
+                        onConfirm: () => deleteView.mutate(v.id),
+                      })
+                    }
+                  >
+                    删除
+                  </Button>
+                </div>
               </div>
             ))
           )}
@@ -622,6 +752,110 @@ export function DatasetDetailPage() {
         </Card>
       )}
     </div>
+  );
+}
+
+function aggregateChartPoints(
+  rows: Array<Record<string, unknown>>,
+  spec: ChartSpec,
+): Array<{ name: string; value: number }> {
+  const xKey = spec.x ?? "";
+  const yKey = spec.y ?? "";
+  if (!xKey) return [];
+  const buckets = new Map<string, number[]>();
+  for (const row of rows) {
+    const label = String(row[xKey] ?? "(空)");
+    const raw = row[yKey];
+    const numVal = typeof raw === "number" ? raw : Number(raw ?? 0);
+    const list = buckets.get(label) ?? [];
+    list.push(Number.isFinite(numVal) ? numVal : 0);
+    buckets.set(label, list);
+  }
+  const agg = spec.aggregation || "sum";
+  return [...buckets.entries()].slice(0, 24).map(([name, vals]) => {
+    let value = 0;
+    if (agg === "count") value = vals.length;
+    else if (agg === "avg") value = vals.reduce((a, b) => a + b, 0) / Math.max(1, vals.length);
+    else if (agg === "min") value = Math.min(...vals);
+    else if (agg === "max") value = Math.max(...vals);
+    else value = vals.reduce((a, b) => a + b, 0);
+    return { name, value: Number(value.toFixed(2)) };
+  });
+}
+
+function DatasetChartCard({
+  spec,
+  rows,
+  chartClassName,
+  deleting,
+  onDelete,
+}: {
+  spec: ChartSpec;
+  rows: Array<Record<string, unknown>>;
+  chartClassName: string;
+  deleting: boolean;
+  onDelete: () => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!ref.current) return;
+    const chart = echarts.init(ref.current);
+    const points = aggregateChartPoints(rows, spec);
+    if (spec.chartType === "pie") {
+      chart.setOption({
+        tooltip: { trigger: "item" },
+        series: [
+          {
+            name: spec.name,
+            type: "pie",
+            radius: ["35%", "70%"],
+            data: points,
+          },
+        ],
+      });
+    } else {
+      chart.setOption({
+        tooltip: { trigger: "axis" },
+        xAxis: {
+          type: "category",
+          data: points.map((p) => p.name),
+          axisLabel: { rotate: 25 },
+        },
+        yAxis: { type: "value" },
+        series: [
+          {
+            name: spec.y ?? spec.name,
+            type: spec.chartType === "line" ? "line" : "bar",
+            smooth: spec.chartType === "line",
+            data: points.map((p) => p.value),
+          },
+        ],
+      });
+    }
+    const onResize = () => chart.resize();
+    window.addEventListener("resize", onResize);
+    return () => {
+      window.removeEventListener("resize", onResize);
+      chart.dispose();
+    };
+  }, [rows, spec]);
+
+  return (
+    <Card>
+      <div className="sg-row-between sg-mb-sm">
+        <div>
+          <strong>{spec.name}</strong>
+          <div className="sg-subtle">
+            {spec.chartType} · {spec.x ?? "-"} × {spec.y ?? "-"} ({spec.aggregation})
+          </div>
+        </div>
+        <Button size="small" danger loading={deleting} onClick={onDelete}>
+          删除
+        </Button>
+      </div>
+      <div ref={ref} className={chartClassName} />
+    </Card>
   );
 }
 

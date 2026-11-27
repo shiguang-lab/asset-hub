@@ -6,7 +6,11 @@ import { memo } from "react";
 
 const documentImageConfig = { mode: "document" } as const;
 
-export const InteractiveMarkdown = memo(function InteractiveMarkdown({ source }: { source: string }) {
+export const InteractiveMarkdown = memo(function InteractiveMarkdown({
+  source,
+}: {
+  source: string;
+}) {
   return (
     <>
       <MarkdownSurfaceStyles />

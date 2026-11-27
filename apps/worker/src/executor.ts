@@ -41,11 +41,8 @@ export class Executor {
     }
     for (const event of events) {
       if (this.stopped) return;
-      if (this.state.hasEvent(event.id)) {
-        await this.api.ackOutbox(event.id).catch(() => undefined);
-        continue;
-      }
-      this.state.markEvent(event.id, event.eventType);
+      const runId = `run_${event.id}`;
+      if (this.active.has(runId)) continue;
       void this.dispatch(event);
     }
   }
@@ -76,22 +73,38 @@ export class Executor {
         this.logger.info({ eventType: event.eventType }, "no handler, acking");
       }
       await this.api.ackOutbox(event.id);
+      this.state.markEvent(event.id, event.eventType);
       this.state.finishRun(runId, "completed");
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       this.logger.error({ eventId: event.id, err: message }, "workflow failed");
       this.state.finishRun(runId, "failed");
-      const taskId = String(event.data.taskId ?? event.data.sourceId ?? event.id);
-      await this.api
-        .projectResult({
-          resultSchema: "failure/v1",
-          taskId,
-          runId,
-          attempt: 1,
-          outputs: [],
-          failures: [{ item: "workflow", reason: message, retryable: true }],
-        })
-        .catch(() => undefined);
+      if (event.eventType === "knowledge.source.added") {
+        await this.api
+          .postComputeResults({
+            kind: "knowledge.failed",
+            taskId: String(event.data.sourceId ?? event.id),
+            runId,
+            data: {
+              kbId: String(event.data.kbId ?? ""),
+              sourceId: String(event.data.sourceId ?? event.id),
+              error: message,
+            },
+          })
+          .catch(() => undefined);
+      } else {
+        const taskId = String(event.data.taskId ?? event.data.sourceId ?? event.id);
+        await this.api
+          .projectResult({
+            resultSchema: "failure/v1",
+            taskId,
+            runId,
+            attempt: 1,
+            outputs: [],
+            failures: [{ item: "workflow", reason: message, retryable: true }],
+          })
+          .catch(() => undefined);
+      }
       await this.api.nackOutbox(event.id).catch(() => undefined);
     } finally {
       this.active.delete(runId);

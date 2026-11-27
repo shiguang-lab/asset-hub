@@ -236,7 +236,7 @@ func main() {
 	mux.HandleFunc("POST /p/{slug}/presence", func(w http.ResponseWriter, r *http.Request) {
 		slug := r.PathValue("slug")
 		meta, status := cache.resolve(slug)
-		if status != http.StatusOK || meta.Release == nil || !isMarkdownPublish(meta) {
+		if status != http.StatusOK || meta.Release == nil || (!isMarkdownPublish(meta) && !isPresentationPublish(meta)) {
 			writeJSON(w, statusOrNotFound(status), map[string]string{"code": "CONTENT_NOT_FOUND"})
 			return
 		}
@@ -287,7 +287,7 @@ func main() {
 	mux.HandleFunc("GET /p/{slug}/comments", func(w http.ResponseWriter, r *http.Request) {
 		slug := r.PathValue("slug")
 		meta, status := cache.resolve(slug)
-		if status != http.StatusOK || meta.Release == nil || !isMarkdownPublish(meta) {
+		if status != http.StatusOK || meta.Release == nil || (!isMarkdownPublish(meta) && !isPresentationPublish(meta)) {
 			writeJSON(w, statusOrNotFound(status), map[string]string{"code": "CONTENT_NOT_FOUND"})
 			return
 		}
@@ -330,10 +330,12 @@ func main() {
 		}
 		if isMarkdownPublish(meta) {
 			serveSSR(w, r, cfg, slug)
+			go recordAccess(cfg, meta, "ssr", r)
 			return
 		}
 		if isPresentationPublish(meta) {
 			serveSSRPresentation(w, r, cfg, slug)
+			go recordAccess(cfg, meta, "presentation", r)
 			return
 		}
 		serveReleaseFile(w, r, cfg, meta, "index.html", false, "")
@@ -441,10 +443,12 @@ func main() {
 		}
 		if isMarkdownPublish(meta) {
 			serveSSR(w, r, cfg, meta.Publish.Slug)
+			go recordAccess(cfg, meta, "ssr", r)
 			return
 		}
 		if isPresentationPublish(meta) {
 			serveSSRPresentation(w, r, cfg, meta.Publish.Slug)
+			go recordAccess(cfg, meta, "presentation", r)
 			return
 		}
 		serveReleaseFile(w, r, cfg, meta, "index.html", false, "")
@@ -567,8 +571,14 @@ func main() {
 			serveUnlockPage(w, basePath, basePath)
 			return
 		}
+		if isMarkdownPublish(meta) {
+			serveSSR(w, r, cfg, meta.Publish.Slug)
+			go recordAccess(cfg, meta, "ssr", r)
+			return
+		}
 		if isPresentationPublish(meta) {
 			serveSSRPresentation(w, r, cfg, meta.Publish.Slug)
+			go recordAccess(cfg, meta, "presentation", r)
 			return
 		}
 		serveReleaseFile(w, r, cfg, meta, "index.html", false, "")
@@ -836,6 +846,7 @@ func servePresentationSource(w http.ResponseWriter, r *http.Request, cfg platfor
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Cache-Control", "private, no-store")
+	w.Header().Set("Content-Security-Policy", "default-src 'self' data: blob:; script-src 'self' 'unsafe-inline' https:; style-src 'self' 'unsafe-inline' https:; img-src 'self' data: blob: https:; font-src 'self' data: https:; frame-ancestors 'none';")
 	if download {
 		name := safeDownloadName(meta.Asset.Title)
 		w.Header().Set("Content-Disposition", "attachment; filename=download.html; filename*=UTF-8''"+url.PathEscape(name))

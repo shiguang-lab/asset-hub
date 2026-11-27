@@ -5,7 +5,13 @@ import { createStyles } from "antd-style";
 import { Download, FilePenLine, Pencil, RotateCcw, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { canWriteWorkspace, getAuthSession, isWorkspaceAdmin } from "../../auth/session.js";
+import {
+  canWriteWorkspace,
+  fetchOrganizationMembers,
+  getAuthSession,
+  isWorkspaceAdmin,
+  type OrganizationMember,
+} from "../../auth/session.js";
 import {
   type Asset,
   api,
@@ -100,6 +106,11 @@ export function AssetDetailPage() {
     queryKey: ["knowledge"],
     queryFn: () => api<KnowledgeBase[]>("/knowledge-bases"),
     enabled: kbModal,
+  });
+  const { data: orgMembers = [] } = useQuery<OrganizationMember[]>({
+    queryKey: ["org-members", session?.tenantId],
+    queryFn: () => fetchOrganizationMembers(session!.tenantId),
+    enabled: shareModal && session?.tenantType === "org" && Boolean(session.tenantId),
   });
   const { data: publishes } = useQuery<Publish[]>({
     queryKey: ["publishes"],
@@ -291,7 +302,7 @@ export function AssetDetailPage() {
               {workspaceWritable && <Button onClick={() => setKbModal(true)}>加入知识库</Button>}
               {canManageAsset && <Button onClick={() => setShareModal(true)}>分享</Button>}
               {workspaceWritable && (
-                <Button onClick={() => navigate(`/presentations/new?asset=${asset.id}`)}>
+                <Button onClick={() => navigate(`/presentations/new?assetId=${asset.id}`)}>
                   生成演示
                 </Button>
               )}
@@ -465,9 +476,20 @@ export function AssetDetailPage() {
                       <Button
                         size="small"
                         onClick={() =>
-                          api(`/assets/${id}/versions/${v.id}/restore`, { method: "POST" }).then(
-                            () => toast("success", "已恢复该版本"),
-                          )
+                          api(`/assets/${id}/versions/${v.id}/restore`, { method: "POST" })
+                            .then(() => {
+                              toast("success", "已恢复该版本");
+                              void queryClient.invalidateQueries({ queryKey: ["asset", id] });
+                              void queryClient.invalidateQueries({
+                                queryKey: ["asset-versions", id],
+                              });
+                            })
+                            .catch((error) =>
+                              toast(
+                                "error",
+                                error instanceof Error ? error.message : "版本恢复失败",
+                              ),
+                            )
                         }
                       >
                         恢复
@@ -557,6 +579,24 @@ export function AssetDetailPage() {
         destroyOnHidden
       >
         <div className="sg-col">
+          {orgMembers.length > 0 && (
+            <Field label="从组织成员选择">
+              <Select
+                showSearch
+                allowClear
+                placeholder="选择成员"
+                optionFilterProp="label"
+                value={
+                  orgMembers.some((m) => m.loginName === shareSubject) ? shareSubject : undefined
+                }
+                onChange={(val) => setShareSubject(val ?? "")}
+                options={orgMembers.map((m) => ({
+                  value: m.loginName,
+                  label: `${m.displayName} (${m.loginName})`,
+                }))}
+              />
+            </Field>
+          )}
           <Field label="成员 subject">
             <Input
               value={shareSubject}

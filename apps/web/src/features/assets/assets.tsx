@@ -31,6 +31,7 @@ import { OwnerAvatar } from "../../shared/OwnerAvatar.js";
 import { isOwnedBySession, ownerDisplayName } from "../../shared/owner.js";
 import { AssetMiniPreview } from "../../shared/studio-visuals.js";
 import { useDeleteConfirm } from "../../shared/useDeleteConfirm";
+import { useShellDocumentActions } from "../../shell/layout.js";
 
 const TYPE_ORDER = [
   { id: "all", label: "全部" },
@@ -143,6 +144,7 @@ export function AssetsPage() {
   const toast = useToast();
   const { modal } = App.useApp();
   const { confirmDelete } = useDeleteConfirm();
+  const documentActions = useShellDocumentActions();
   const queryClient = useQueryClient();
   const authSession = getAuthSession();
   const workspaceWritable = canWriteWorkspace(authSession);
@@ -320,7 +322,11 @@ export function AssetsPage() {
               <i style={{ width: `${Math.max(4, storageSummary.pct)}%` }} />
             </span>
           </div>
-          <button type="button" className="zx-btn-glass" onClick={() => navigate("/knowledge/new")}>
+          <button
+            type="button"
+            className="zx-btn-glass"
+            onClick={() => documentActions?.openDocumentFilePicker()}
+          >
             <Upload size={14} /> 导入
           </button>
           <button type="button" className="zx-btn-cta" onClick={() => navigate("/documents/new")}>
@@ -663,5 +669,9 @@ export function AssetsPage() {
 }
 
 function assetHref(asset: Asset): string {
+  if (asset.type === "document" || asset.type === "report") return `/documents/${asset.id}`;
+  if (asset.type === "html") return `/html/${asset.id}`;
+  if (asset.type === "presentation") return `/presentations/${asset.id}`;
+  if (asset.type === "dataset") return `/datasets/${asset.id}`;
   return `/assets/${asset.id}`;
 }

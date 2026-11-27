@@ -48,7 +48,8 @@ export function zodToJsonSchema(schema: z.ZodType): Record<string, unknown> {
     }
 
     case "ZodObject": {
-      const rawShape = typeof def.shape === "function" ? def.shape() : (def.shape || (schema as any).shape || {});
+      const rawShape =
+        typeof def.shape === "function" ? def.shape() : def.shape || (schema as any).shape || {};
       const properties: Record<string, unknown> = {};
       const required: string[] = [];
 
@@ -58,7 +59,8 @@ export function zodToJsonSchema(schema: z.ZodType): Record<string, unknown> {
         const isOptional =
           typeof (propSchema as any).isOptional === "function"
             ? (propSchema as any).isOptional()
-            : (propSchema as any)._def?.typeName === "ZodOptional" || (propSchema as any)._def?.typeName === "ZodDefault";
+            : (propSchema as any)._def?.typeName === "ZodOptional" ||
+              (propSchema as any)._def?.typeName === "ZodDefault";
 
         if (!isOptional) {
           required.push(key);

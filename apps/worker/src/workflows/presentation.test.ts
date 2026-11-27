@@ -3,26 +3,26 @@ import {
   applyPresentationRepairsPreservingPageCount,
   assemblePresentationFoundation,
   derivePresentationPageBudget,
-  removeBoilerplateClosingSlides,
   globalVisualReviewContent,
   issuePageNumbers,
   matchRepairSections,
   mergeVisualReviews,
-  normalizePresentationDataAttributes,
   namespacePresentationPageAnimations,
+  normalizePresentationDataAttributes,
   pageTitlesForStreamPhase,
   parsePresentationAnnotation,
   parseVisualReview,
   preservePageIdentity,
+  removeBoilerplateClosingSlides,
   renderAuditErrorSignature,
   repairEscalationInstruction,
-  shouldParkNoEffectRepair,
   repairGeneratedPresentationPageContract,
   repairGeneratedPresentationPageTitle,
   repairPresentationHtmlContract,
   replacePresentationPages,
   sanitizePresentationStyles,
   selectRepairSection,
+  shouldParkNoEffectRepair,
   strictRetryInstruction,
   validateFinalPresentationPageSet,
   validateGeneratedPresentationPage,
@@ -63,7 +63,9 @@ describe("presentation narrative budget", () => {
     expect(removeBoilerplateClosingSlides(plan).slides).toHaveLength(1);
     plan.slides[1]!.title = "谢谢观看";
     expect(removeBoilerplateClosingSlides(plan).slides).toHaveLength(1);
-    expect(removeBoilerplateClosingSlides(plan, "请添加一页谢谢观看作为结束页").slides).toHaveLength(2);
+    expect(
+      removeBoilerplateClosingSlides(plan, "请添加一页谢谢观看作为结束页").slides,
+    ).toHaveLength(2);
     expect(removeBoilerplateClosingSlides(plan, "不要加谢谢观看页面").slides).toHaveLength(1);
   });
 });
@@ -93,7 +95,9 @@ describe("presentation page-local repair", () => {
     const normalized = normalizePresentationDataAttributes(
       `<div data-sg-source="[{\\"label\\":\\"已加固\\",\\"value\\":7}]" data-sg-kind="chart"></div>`,
     );
-    expect(normalized).toContain('data-sg-source="[{&quot;label&quot;:&quot;已加固&quot;,&quot;value&quot;:7}]"');
+    expect(normalized).toContain(
+      'data-sg-source="[{&quot;label&quot;:&quot;已加固&quot;,&quot;value&quot;:7}]"',
+    );
   });
 
   it("salvages a section wrapped in a full document with scripts and head styles", () => {

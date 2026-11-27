@@ -3,8 +3,8 @@ import { createRequire } from "node:module";
 import {
   type AssetLinkResolver,
   renderPresentationHtml,
-  stripPresentationPlatformShell,
   rewriteAssetLinks,
+  stripPresentationPlatformShell,
   validatePresentationHtml,
   validatePresentationHtmlVisualQuality,
 } from "@shiguang/content";
@@ -94,7 +94,10 @@ export function buildReleaseBundle(input: {
   const manifest = {
     schemaVersion: 1,
     entrypoint:
-      input.assetType === "document" || input.assetType === "report" || input.assetType === "file"
+      input.assetType === "document" ||
+      input.assetType === "report" ||
+      input.assetType === "file" ||
+      input.assetType === "dataset"
         ? "index.md"
         : input.assetType === "presentation"
           ? "presentation-source"

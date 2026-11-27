@@ -22,35 +22,53 @@ export async function runGitSyncWorkflow(
   const connectionId = String(spec.connectionId ?? "");
   const connection = await ctx.api.getInternal<GitConnection>(`/internal/v1/git/${connectionId}`);
 
-  let files: Array<{ path: string; content: string }> = [];
-  await step(ctx, "git.fetch", 40, "拉取仓库内容", async () => {
-    files = await fetchRepoFiles(connection);
-    if (files.length === 0) throw new Error("仓库中没有可导入的文档文件");
-  });
-
-  await step(ctx, "git.import", 90, "导入文档资产", async () => {
-    const outputs = files.map((file) => ({
-      kind: "git-document",
-      assetType: "document",
-      title: titleFromPath(file.path),
-      content: { markdown: file.content.slice(0, 500_000) },
-    }));
-    const result = await ctx.api.projectResult({
-      resultSchema: "git-sync-result/v1",
-      taskId: ctx.taskId,
-      runId: ctx.runId,
-      attempt: 1,
-      outputs,
-      failures: [],
+  try {
+    let files: Array<{ path: string; content: string }> = [];
+    await step(ctx, "git.fetch", 40, "拉取仓库内容", async () => {
+      files = fetchRepoFiles(connection);
+      if (files.length === 0) throw new Error("仓库中没有可导入的文档文件");
     });
-    if (!result.ok) throw new Error("git import projection failed");
+
+    await step(ctx, "git.import", 90, "导入文档资产", async () => {
+      const outputs = files.map((file) => {
+        const isHtml = file.path.toLowerCase().endsWith(".html");
+        return {
+          kind: "git-document",
+          assetType: isHtml ? "html" : "document",
+          title: titleFromPath(file.path),
+          content: {
+            kind: isHtml ? "html" : "markdown",
+            text: file.content.slice(0, 500_000),
+          },
+        };
+      });
+      const result = await ctx.api.projectResult({
+        resultSchema: "git-sync-result/v1",
+        taskId: ctx.taskId,
+        runId: ctx.runId,
+        attempt: 1,
+        outputs,
+        failures: [],
+      });
+      if (!result.ok) throw new Error("git import projection failed");
+      await ctx.api
+        .postInternal(`/internal/v1/git/${connectionId}/status`, {
+          status: "idle",
+          lastSyncStatus: `imported ${outputs.length} documents`,
+        })
+        .catch(() => undefined);
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
     await ctx.api
       .postInternal(`/internal/v1/git/${connectionId}/status`, {
-        status: "success",
-        lastSyncStatus: `imported ${outputs.length} documents`,
+        status: "failed",
+        lastSyncStatus: "failed",
+        lastError: message,
       })
       .catch(() => undefined);
-  });
+    throw err;
+  }
 }
 
 function fetchRepoFiles(connection: GitConnection): Array<{ path: string; content: string }> {
@@ -72,11 +90,16 @@ function fetchRepoFiles(connection: GitConnection): Array<{ path: string; conten
 }
 
 function resolveSourceDir(connection: GitConnection): string | null {
-  if (!connection.local_dir) return null;
-  try {
-    if (statSync(connection.local_dir).isDirectory()) return connection.local_dir;
-  } catch {
-    return null;
+  const candidates = [
+    connection.local_dir,
+    connection.provider === "local" ? connection.repo_url : null,
+  ].filter((v): v is string => Boolean(v && v.trim()));
+  for (const candidate of candidates) {
+    try {
+      if (statSync(candidate).isDirectory()) return candidate;
+    } catch {
+      // try next candidate
+    }
   }
   return null;
 }

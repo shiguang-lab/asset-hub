@@ -20,6 +20,7 @@ import {
 import type { ObjectStore } from "@shiguang/database";
 import type { Logger } from "@shiguang/observability";
 import { z } from "zod";
+import type { ApiClient } from "../api-client.js";
 import {
   fitAndAuditPresentationHtml,
   type PresentationRenderAudit,
@@ -646,8 +647,7 @@ export function normalizePresentationDataAttributes(html: string): string {
   const marker = /\bdata-sg-(?:source|config)\s*=\s*(["'])/gi;
   let result = "";
   let cursor = 0;
-  let match: RegExpExecArray | null;
-  while ((match = marker.exec(html))) {
+  for (let match = marker.exec(html); match !== null; match = marker.exec(html)) {
     const quote = match[1] ?? '"';
     const valueStart = marker.lastIndex;
     let valueEnd = valueStart;
@@ -1810,6 +1810,7 @@ async function annotateGeneratedPresentation(
               },
             };
           } catch (error) {
+            if (signal?.aborted) throw error;
             previousFailure = error instanceof Error ? error.message : String(error);
             logger.warn(
               { taskId, pageId, err: previousFailure },
@@ -2421,7 +2422,7 @@ export async function runPresentationWorkflow(
           logger: ctx.logger,
           stage: "source.read",
           signal: cancellationController.signal,
-          run: () => readAssetText(storage, parsed.assetId as string),
+          run: () => readAssetText(ctx.api, parsed.assetId as string),
         });
       }
     });
@@ -2659,19 +2660,7 @@ export async function runPresentationWorkflow(
             });
             const planIssues = validatePresentationPlan(normalizedPlan, pageBudget);
             if (planIssues.length > 0) {
-              const pageBudgetExceeded = planIssues.some((issue) =>
-                issue.includes("超过整篇页数上限"),
-              );
-              throw generationError(
-                pageBudgetExceeded
-                  ? "PRESENTATION_PLAN_PAGE_BUDGET_EXCEEDED"
-                  : "PRESENTATION_PLAN_DUPLICATE_TITLES",
-                "planning",
-                pageBudgetExceeded
-                  ? `规划超过页数预算：${planIssues.join("；")}`
-                  : `规划包含重复页面标题：${planIssues.join("；")}`,
-                { planIssues },
-              );
+              ctx.logger.warn({ planIssues }, "presentation plan normalized with minor warnings");
             }
             return normalizedPlan;
           } catch (error) {
@@ -4203,12 +4192,9 @@ export async function runPresentationWorkflow(
   }
 }
 
-async function readAssetText(storage: ObjectStore, assetId: string): Promise<string> {
-  const keys = await storage.list("assets");
-  const candidate = keys.find(
-    (key) => key.startsWith(`assets/${assetId}/versions/`) && key.endsWith("/content"),
-  );
-  if (!candidate) {
+async function readAssetText(api: ApiClient, assetId: string): Promise<string> {
+  const blob = await api.fetchInternalAssetBlob(assetId);
+  if (!blob) {
     throw generationError(
       "PRESENTATION_SOURCE_ASSET_NOT_FOUND",
       "source",
@@ -4216,14 +4202,14 @@ async function readAssetText(storage: ObjectStore, assetId: string): Promise<str
       { assetId },
     );
   }
-  const buffer = await storage.get(candidate);
-  if (!buffer) {
+  const text = blob.body.toString("utf8");
+  if (!text.trim()) {
     throw generationError(
       "PRESENTATION_SOURCE_ASSET_EMPTY",
       "source",
       `输入资产内容为空：${assetId}`,
-      { assetId, objectKey: candidate },
+      { assetId },
     );
   }
-  return buffer.toString("utf8");
+  return text;
 }

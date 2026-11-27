@@ -155,8 +155,12 @@ export class ModelGatewayClient {
   constructor(private readonly config: ModelGatewayConfig) {}
 
   private resolveRoute(request: ChatCompletionRequest): ResolvedModelRoute {
-    const baseUrl = (this.config.baseUrl ?? "https://ai.shiguanglab.com/v1").replace(/\/+$/, "");
-    const apiKey = this.config.apiKey ?? "sk-9532ceff57cbb74d-804864-b3a07f46";
+    const rawBaseUrl = this.config.baseUrl?.trim();
+    if (!rawBaseUrl) {
+      throw new Error("MODEL_GATEWAY_URL is not configured");
+    }
+    const baseUrl = rawBaseUrl.replace(/\/+$/, "");
+    const apiKey = this.config.apiKey?.trim() ?? "";
 
     const taskKey = request.modelTaskKey ?? "";
 
@@ -956,6 +960,44 @@ export class LocalModel {
     const rest = prompt.slice(idx + marker.length).trim();
     return rest.slice(0, max);
   }
+
+  static generateEmbedding(text: string, dimensions = 1536): number[] {
+    const vec: number[] = new Array<number>(dimensions).fill(0);
+    const clean = text.toLowerCase().trim();
+    if (clean.length === 0) {
+      return vec;
+    }
+    const tokens = clean.split(/\s+|[^\p{L}\p{N}]+/u).filter((t) => t.length > 0);
+    for (const token of tokens) {
+      let h = 0x811c9dc5;
+      for (let j = 0; j < token.length; j++) {
+        h ^= token.charCodeAt(j);
+        h = Math.imul(h, 0x01000193);
+      }
+      const idx = Math.abs(h) % dimensions;
+      const sign = (h & 1) === 0 ? 1 : -1;
+      vec[idx] = (vec[idx] ?? 0) + sign * (1 + Math.log(1 + token.length));
+    }
+    for (let i = 0; i < clean.length - 1; i++) {
+      const c1 = clean.charCodeAt(i);
+      const c2 = clean.charCodeAt(i + 1);
+      const h = ((c1 << 5) - c1 + c2) >>> 0;
+      const idx = h % dimensions;
+      vec[idx] = (vec[idx] ?? 0) + 0.5;
+    }
+    let norm = 0;
+    for (let i = 0; i < dimensions; i++) {
+      const val = vec[i] ?? 0;
+      norm += val * val;
+    }
+    norm = Math.sqrt(norm);
+    if (norm > 0) {
+      for (let i = 0; i < dimensions; i++) {
+        vec[i] = (vec[i] ?? 0) / norm;
+      }
+    }
+    return vec;
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -993,6 +1035,43 @@ export class AiService {
       process.env.MODEL_GATEWAY_URL === undefined ||
       process.env.MODEL_GATEWAY_URL === ""
     );
+  }
+
+  /**
+   * Generates text embeddings for retrieval and vector search.
+   * Returns an array of 1536-dimensional normalized vectors.
+   */
+  async embed(input: string | string[]): Promise<number[][]> {
+    const texts = Array.isArray(input) ? input : [input];
+    if (texts.length === 0) return [];
+    if (!this.useLocal()) {
+      try {
+        const base = (process.env.MODEL_GATEWAY_URL ?? "").replace(/\/+$/, "");
+        const url = base.endsWith("/v1") ? `${base}/embeddings` : `${base}/v1/embeddings`;
+        const res = await fetch(url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(process.env.MODEL_GATEWAY_API_KEY
+              ? { Authorization: `Bearer ${process.env.MODEL_GATEWAY_API_KEY}` }
+              : {}),
+          },
+          body: JSON.stringify({
+            model: process.env.EMBEDDING_MODEL || "text-embedding-3-small",
+            input: texts,
+          }),
+        });
+        if (res.ok) {
+          const data = (await res.json()) as { data: Array<{ embedding: number[] }> };
+          if (Array.isArray(data.data) && data.data.length === texts.length) {
+            return data.data.map((d) => d.embedding);
+          }
+        }
+      } catch (err) {
+        console.warn("[ai-core] embedding request failed, falling back to local:", err);
+      }
+    }
+    return texts.map((t) => LocalModel.generateEmbedding(t));
   }
 
   async complete(request: ChatCompletionRequest): Promise<AiResult> {

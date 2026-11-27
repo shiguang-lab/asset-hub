@@ -251,6 +251,7 @@ export const knowledgeSourceSchema = z.object({
   sourceType: z.enum(["asset", "upload", "url"]),
   assetVersionId: z.string().nullable().default(null),
   url: z.string().nullable().default(null),
+  objectKey: z.string().nullable().optional(),
   title: z.string(),
   status: sourceStatusSchema.default("pending"),
   error: z.string().nullable().default(null),
@@ -272,6 +273,7 @@ export const knowledgeChunkSchema = z.object({
   textHash: z.string(),
   charStart: z.number(),
   charEnd: z.number(),
+  embedding: z.array(z.number()).optional(),
 });
 export type KnowledgeChunk = z.infer<typeof knowledgeChunkSchema>;
 
@@ -570,6 +572,7 @@ export const apiTokenSchema = z.object({
   workspaceId: workspaceIdSchema,
   name: z.string(),
   secretHash: z.string(),
+  createdBy: z.string().nullable().optional(),
   scopes: z.array(z.enum(["read", "write"])).default(["read"]),
   expiresAt: z.string().nullable().default(null),
   revokedAt: z.string().nullable().default(null),
@@ -729,6 +732,7 @@ export const sseEventSchema = z.object({
     "notification.created",
     "knowledge.updated",
     "asset.updated",
+    "asset.thumbnail.updated",
     "credit.updated",
     "ping",
   ]),
@@ -1067,6 +1071,7 @@ export const actorContextSchema = z.object({
   requestId: z.string(),
   isService: z.boolean().default(false),
   tokenScopes: z.array(z.enum(["read", "write"])).default([]),
+  tokenOwnerSubject: z.string().optional(),
   displayName: z.string().optional(),
 });
 export type ActorContext = z.infer<typeof actorContextSchema>;

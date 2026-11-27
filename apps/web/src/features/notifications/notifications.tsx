@@ -28,7 +28,11 @@ export function NotificationsPage() {
   });
   const markRead = useMutation({
     mutationFn: (id: string) => api(`/notifications/${id}/read`, { method: "POST" }),
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["notifications"] }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["notifications"] });
+      void queryClient.invalidateQueries({ queryKey: ["home"] });
+    },
+    onError: (e: Error) => toast("error", e.message),
   });
   const markAll = useMutation({
     mutationFn: () => api("/notifications/read-all", { method: "POST" }),
@@ -37,6 +41,7 @@ export function NotificationsPage() {
       void queryClient.invalidateQueries({ queryKey: ["notifications"] });
       void queryClient.invalidateQueries({ queryKey: ["home"] });
     },
+    onError: (e: Error) => toast("error", e.message),
   });
   return (
     <div className="sg-page-fill">
