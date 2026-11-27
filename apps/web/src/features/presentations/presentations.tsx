@@ -66,6 +66,7 @@ import { AppTable } from "../../shared/AppTable.js";
 import { AppTabs } from "../../shared/AppTabs.js";
 import { OwnerAvatar } from "../../shared/OwnerAvatar.js";
 import { isOwnedBySession, ownerDisplayName } from "../../shared/owner.js";
+import { AssetMiniPreview } from "../../shared/studio-visuals.js";
 import { useDeleteConfirm } from "../../shared/useDeleteConfirm";
 import { useShellBreadcrumb } from "../../shell/layout.js";
 import { PublishDialog } from "../publishing/publish-dialog.js";
@@ -1967,9 +1968,9 @@ export function PresentationsPage() {
                     title: "演示标题",
                     dataIndex: "title",
                     width: "47%",
-                    render: (_v, item, index) => (
+                    render: (_v, item) => (
                       <div className="sg-presentation-name">
-                        <PresentationThumbnail title={item.title} tone={index} />
+                        <PresentationThumbnail asset={item} title={item.title} />
                         <div>
                           <button
                             type="button"
@@ -2087,9 +2088,9 @@ export function PresentationsPage() {
             </div>
           ) : (
             <div className="sg-presentation-grid">
-              {pageItems.map((item, index) => (
+              {pageItems.map((item) => (
                 <article key={item.id}>
-                  <PresentationThumbnail title={item.title} tone={index} />
+                  <PresentationThumbnail asset={item} title={item.title} />
                   <div>
                     <button
                       type="button"
@@ -2240,13 +2241,13 @@ export function PresentationsPage() {
               {[...presentations]
                 .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
                 .slice(0, 6)
-                .map((item, index) => (
+                .map((item) => (
                   <button
                     type="button"
                     key={item.id}
                     onClick={() => navigate(`/presentations/${item.id}`)}
                   >
-                    <PresentationThumbnail title={item.title} tone={index} />
+                    <PresentationThumbnail asset={item} title={item.title} />
                     <span>
                       <b>{item.title}</b>
                       <small>
@@ -2266,12 +2267,12 @@ export function PresentationsPage() {
   );
 }
 
-function PresentationThumbnail({ title, tone }: { title: string; tone: number }) {
+function PresentationThumbnail({ asset, title }: { asset?: Asset; title?: string }) {
   return (
-    <span className={`sg-presentation-thumb tone-${tone % 4}`} aria-hidden="true">
-      <i />
-      <b>{title.slice(0, 12)}</b>
-      <small>SHIGUANG LAB</small>
+    <span className="sg-presentation-thumb" aria-hidden="true">
+      <AssetMiniPreview
+        asset={asset ?? (title ? { type: "presentation", title, path: "" } : undefined)}
+      />
     </span>
   );
 }

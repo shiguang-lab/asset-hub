@@ -216,70 +216,11 @@ export const usePresentationsStyles = createStyles(({ css }) => ({
   width: 110px;
   aspect-ratio: 16 / 9;
   flex: none;
-  flex-direction: column;
-  justify-content: flex-end;
   overflow: hidden;
-  padding: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.09);
-  border-radius: 4px;
-  color: #fff;
-  background: #312168;
-}
-.sg-presentation-thumb::before,
-.sg-presentation-thumb::after,
-.sg-presentation-thumb > i {
-  position: absolute;
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  content: "";
-}
-.sg-presentation-thumb::before {
-  top: 11px;
-  right: 11px;
-  width: 31px;
-  height: 19px;
-}
-.sg-presentation-thumb::after {
-  top: 17px;
-  right: 17px;
-  width: 17px;
-  height: 17px;
-  border-radius: 50%;
-}
-.sg-presentation-thumb > i {
-  top: 12px;
-  left: 11px;
-  width: 24px;
-  height: 4px;
-  border: 0;
-  background: rgba(255, 255, 255, 0.75);
-  box-shadow: 0 8px rgba(255, 255, 255, 0.28);
-}
-.sg-presentation-thumb > b,
-.sg-presentation-thumb > small {
-  position: relative;
-  z-index: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.sg-presentation-thumb > b {
-  font-size: 12px;
-}
-.sg-presentation-thumb > small {
-  margin-top: 2px;
-  opacity: 0.62;
-  font-size: 11px;
-}
-.sg-presentation-thumb.tone-1 {
-  color: #38324b;
-  background: #eeedf6;
-}
-.sg-presentation-thumb.tone-2 {
-  background: #11565b;
-}
-.sg-presentation-thumb.tone-3 {
-  color: #34303d;
-  background: #d8e7ec;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  background: #0B0E1A;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.28);
 }
 .sg-presentation-favorite {
   display: inline-flex;
@@ -325,13 +266,11 @@ export const usePresentationsStyles = createStyles(({ css }) => ({
 }
 .sg-presentation-grid .sg-presentation-thumb {
   width: 100%;
+  aspect-ratio: 16 / 9;
   border: 0;
   border-bottom: 1px solid var(--sg-border);
-  border-radius: 0;
-  padding: 16px;
-}
-.sg-presentation-grid .sg-presentation-thumb > b {
-  font-size: 12px;
+  border-radius: 6px 6px 0 0;
+  padding: 0;
 }
 .sg-presentation-grid article > div {
   padding: 10px;
@@ -591,12 +530,11 @@ export const usePresentationsStyles = createStyles(({ css }) => ({
   cursor: pointer;
 }
 .sg-presentation-recent .sg-presentation-thumb {
-  width: 54px;
-  padding: 4px;
-}
-.sg-presentation-recent .sg-presentation-thumb > b,
-.sg-presentation-recent .sg-presentation-thumb > small {
-  display: none;
+  width: 58px;
+  aspect-ratio: 16 / 9;
+  border-radius: 4px;
+  flex-shrink: 0;
+  padding: 0;
 }
 .sg-presentation-recent > button > span {
   min-width: 0;
